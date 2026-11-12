@@ -36,6 +36,7 @@ import {
   Share2,
   StickyNote,
   ListTodo,
+  Settings,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import EmiCalculator from '../components/EmiCalculator';
@@ -306,10 +307,20 @@ export default function RetailCalc() {
     allCalculators: boolean;
     quickTools: boolean;
     notesManager: boolean;
+    settings: boolean;
   }>({
-    allCalculators: true,
+    allCalculators: false,
     quickTools: false,
     notesManager: false,
+    settings: false,
+  });
+
+  const [openSettingsSub, setOpenSettingsSub] = useState<{
+    countryCurrency: boolean;
+    socialMedia: boolean;
+  }>({
+    countryCurrency: false,
+    socialMedia: false,
   });
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -2063,6 +2074,7 @@ export default function RetailCalc() {
                                   allCalculators: !prev.allCalculators,
                                   quickTools: false,
                                   notesManager: false,
+                                  settings: false,
                                 }));
                                 triggerVibration('click');
                               }}
@@ -2110,6 +2122,7 @@ export default function RetailCalc() {
                                   allCalculators: false,
                                   quickTools: !prev.quickTools,
                                   notesManager: false,
+                                  settings: false,
                                 }));
                                 triggerVibration('click');
                               }}
@@ -2157,6 +2170,7 @@ export default function RetailCalc() {
                                   allCalculators: false,
                                   quickTools: false,
                                   notesManager: !prev.notesManager,
+                                  settings: false,
                                 }));
                                 triggerVibration('click');
                               }}
@@ -2201,128 +2215,236 @@ export default function RetailCalc() {
                               {renderSidebarToolItem(historyTool)}
                             </div>
                           )}
+
+                          {/* Dropdown Category 4: Settings (Positioned directly below Calculator History) */}
+                          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenCategories((prev) => ({
+                                  allCalculators: false,
+                                  quickTools: false,
+                                  notesManager: false,
+                                  settings: !prev.settings,
+                                }));
+                                triggerVibration('click');
+                              }}
+                              className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-slate-100/80 transition-colors cursor-pointer"
+                            >
+                              <div className="flex items-center gap-2">
+                                <Settings className="w-4 h-4 text-indigo-600" />
+                                <span className="text-xs font-extrabold text-slate-800 tracking-tight">
+                                  Settings
+                                </span>
+                                <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100/80 px-1.5 py-0.5 rounded-md">
+                                  2
+                                </span>
+                              </div>
+                              <ChevronDown
+                                className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
+                                  openCategories.settings ? 'rotate-180 text-indigo-600' : ''
+                                }`}
+                              />
+                            </button>
+
+                            <AnimatePresence initial={false}>
+                              {openCategories.settings && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: 0.2 }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="p-2 pt-0 space-y-2 border-t border-slate-100 bg-white">
+                                    {/* Nested Option 1: Country and Currency */}
+                                    <div className="rounded-2xl border border-slate-200/70 bg-slate-50/50 overflow-hidden mt-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setOpenSettingsSub((prev) => ({
+                                            ...prev,
+                                            countryCurrency: !prev.countryCurrency,
+                                          }));
+                                          triggerVibration('click');
+                                        }}
+                                        className="w-full flex items-center justify-between p-2.5 text-left hover:bg-slate-100/70 transition-colors cursor-pointer"
+                                      >
+                                        <div className="flex items-center gap-2.5 min-w-0">
+                                          <div className="w-7 h-7 rounded-lg bg-blue-100/80 text-blue-700 flex items-center justify-center shrink-0">
+                                            <Globe className="w-4 h-4" />
+                                          </div>
+                                          <div className="min-w-0">
+                                            <div className="text-xs font-bold text-slate-800 leading-tight">Country and Currency</div>
+                                            <div className="text-[10px] text-slate-400">Default currency & symbol</div>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                          <span className="text-xs font-black text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded-md">{currency}</span>
+                                          <ChevronDown
+                                            className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
+                                              openSettingsSub.countryCurrency ? 'rotate-180 text-blue-600' : ''
+                                            }`}
+                                          />
+                                        </div>
+                                      </button>
+
+                                      <AnimatePresence initial={false}>
+                                        {openSettingsSub.countryCurrency && (
+                                          <motion.div
+                                            initial={{ height: 0, opacity: 0 }}
+                                            animate={{ height: 'auto', opacity: 1 }}
+                                            exit={{ height: 0, opacity: 0 }}
+                                            transition={{ duration: 0.2 }}
+                                            className="overflow-hidden p-2.5 pt-1 space-y-2 border-t border-slate-100 bg-white"
+                                          >
+                                            <div className="relative">
+                                              <select
+                                                id="country-selection-dropdown"
+                                                value={CURRENCIES.find((c) => c.symbol === currency)?.code || 'INR'}
+                                                onChange={(e) => {
+                                                  const selected = CURRENCIES.find((c) => c.code === e.target.value);
+                                                  if (selected) {
+                                                    setCurrency(selected.symbol);
+                                                    triggerVibration('click');
+                                                  }
+                                                }}
+                                                className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200/90 text-slate-800 font-bold text-xs py-2.5 pl-10 pr-8 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all appearance-none cursor-pointer shadow-xs"
+                                              >
+                                                {CURRENCIES.map((c) => (
+                                                  <option key={c.code} value={c.code} className="text-slate-800 py-1">
+                                                    {c.flag} {c.country} ({c.code} {c.symbol})
+                                                  </option>
+                                                ))}
+                                              </select>
+
+                                              <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center pointer-events-none text-base">
+                                                {CURRENCIES.find((c) => c.symbol === currency)?.flag || '🌐'}
+                                              </div>
+
+                                              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                                                <ChevronDown className="w-3.5 h-3.5" />
+                                              </div>
+                                            </div>
+
+                                            {(() => {
+                                              const activeCurr = CURRENCIES.find((c) => c.symbol === currency) || CURRENCIES[0];
+                                              return (
+                                                <div className="p-2 bg-blue-50/70 rounded-xl border border-blue-100 flex items-center justify-between text-xs">
+                                                  <div className="flex items-center gap-2 min-w-0">
+                                                    <span className="text-base shrink-0">{activeCurr.flag}</span>
+                                                    <div className="min-w-0">
+                                                      <div className="font-bold text-slate-800 leading-tight truncate">{activeCurr.country}</div>
+                                                      <div className="text-[10px] text-slate-500 truncate">{activeCurr.name}</div>
+                                                    </div>
+                                                  </div>
+                                                  <div className="text-right shrink-0 ml-2">
+                                                    <div className="font-black text-blue-700 font-mono text-xs">{activeCurr.symbol}</div>
+                                                    <div className="text-[9px] font-bold text-blue-500 uppercase">{activeCurr.code}</div>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })()}
+                                          </motion.div>
+                                        )}
+                                      </AnimatePresence>
+                                    </div>
+
+                                    {/* Nested Option 2: Social Media */}
+                                    <div className="rounded-2xl border border-slate-200/70 bg-slate-50/50 overflow-hidden">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setOpenSettingsSub((prev) => ({
+                                            ...prev,
+                                            socialMedia: !prev.socialMedia,
+                                          }));
+                                          triggerVibration('click');
+                                        }}
+                                        className="w-full flex items-center justify-between p-2.5 text-left hover:bg-slate-100/70 transition-colors cursor-pointer"
+                                      >
+                                        <div className="flex items-center gap-2.5 min-w-0">
+                                          <div className="w-7 h-7 rounded-lg bg-pink-100/80 text-pink-700 flex items-center justify-center shrink-0">
+                                            <Share2 className="w-4 h-4" />
+                                          </div>
+                                          <div className="min-w-0">
+                                            <div className="text-xs font-bold text-slate-800 leading-tight">Social Media</div>
+                                            <div className="text-[10px] text-slate-400">Official links & channels</div>
+                                          </div>
+                                        </div>
+                                        <ChevronDown
+                                          className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
+                                            openSettingsSub.socialMedia ? 'rotate-180 text-pink-600' : ''
+                                          }`}
+                                        />
+                                      </button>
+
+                                      <AnimatePresence initial={false}>
+                                        {openSettingsSub.socialMedia && (
+                                          <motion.div
+                                            initial={{ height: 0, opacity: 0 }}
+                                            animate={{ height: 'auto', opacity: 1 }}
+                                            exit={{ height: 0, opacity: 0 }}
+                                            transition={{ duration: 0.2 }}
+                                            className="overflow-hidden p-2.5 pt-1 space-y-2 border-t border-slate-100 bg-white"
+                                          >
+                                            <a
+                                              href="https://www.facebook.com/share/1K2QJZzRQY/"
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              onClick={() => triggerVibration('click')}
+                                              className="w-full p-2 rounded-xl bg-slate-50 hover:bg-blue-50/80 border border-slate-200/80 hover:border-blue-200 flex items-center justify-between transition-all group cursor-pointer shadow-2xs"
+                                            >
+                                              <div className="flex items-center gap-2.5 min-w-0">
+                                                <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
+                                                  <Facebook className="w-3.5 h-3.5" />
+                                                </div>
+                                                <div className="min-w-0">
+                                                  <div className="text-xs font-bold text-slate-800 group-hover:text-blue-700 transition-colors truncate">
+                                                    Facebook Page
+                                                  </div>
+                                                  <div className="text-[10px] text-slate-400 truncate">
+                                                    Official updates & community
+                                                  </div>
+                                                </div>
+                                              </div>
+                                              <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 shrink-0 ml-1.5 transition-colors" />
+                                            </a>
+
+                                            <a
+                                              href="https://www.instagram.com/sudipdebnath416?srtk=MWUzbTA1ZW43a2w4Ng=="
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              onClick={() => triggerVibration('click')}
+                                              className="w-full p-2 rounded-xl bg-slate-50 hover:bg-pink-50/80 border border-slate-200/80 hover:border-pink-200 flex items-center justify-between transition-all group cursor-pointer shadow-2xs"
+                                            >
+                                              <div className="flex items-center gap-2.5 min-w-0">
+                                                <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
+                                                  <Instagram className="w-3.5 h-3.5" />
+                                                </div>
+                                                <div className="min-w-0">
+                                                  <div className="text-xs font-bold text-slate-800 group-hover:text-rose-600 transition-colors truncate">
+                                                    Instagram Feed
+                                                  </div>
+                                                  <div className="text-[10px] text-slate-400 truncate">
+                                                    @sudipdebnath416
+                                                  </div>
+                                                </div>
+                                              </div>
+                                              <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-rose-500 shrink-0 ml-1.5 transition-colors" />
+                                            </a>
+                                          </motion.div>
+                                        )}
+                                      </AnimatePresence>
+                                    </div>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
                         </div>
                       );
                     })()}
-                  </div>
-
-                  {/* Country / Currency Selection Dropdown Section */}
-                  <div className="pt-4 border-t border-slate-100">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2.5 px-1 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <Globe className="w-3.5 h-3.5 text-blue-600" />
-                        <span>Country & Currency</span>
-                      </span>
-                      <span className="text-blue-600 font-black bg-blue-50 px-2 py-0.5 rounded-md text-xs">{currency}</span>
-                    </div>
-
-                    {/* Styled Dropdown Selector */}
-                    <div className="relative">
-                      <select
-                        id="country-selection-dropdown"
-                        value={CURRENCIES.find((c) => c.symbol === currency)?.code || 'INR'}
-                        onChange={(e) => {
-                          const selected = CURRENCIES.find((c) => c.code === e.target.value);
-                          if (selected) {
-                            setCurrency(selected.symbol);
-                            triggerVibration('click');
-                          }
-                        }}
-                        className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200/90 text-slate-800 font-bold text-xs py-3 pl-11 pr-10 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all appearance-none cursor-pointer shadow-xs"
-                      >
-                        {CURRENCIES.map((c) => (
-                          <option key={c.code} value={c.code} className="text-slate-800 py-1">
-                            {c.flag} {c.country} ({c.code} {c.symbol})
-                          </option>
-                        ))}
-                      </select>
-
-                      <div className="absolute left-3.5 top-1/2 -translate-y-1/2 flex items-center pointer-events-none text-base">
-                        {CURRENCIES.find((c) => c.symbol === currency)?.flag || '🌐'}
-                      </div>
-
-                      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                        <ChevronDown className="w-4 h-4" />
-                      </div>
-                    </div>
-
-                    {/* Active Country / Currency Card */}
-                    {(() => {
-                      const activeCurr = CURRENCIES.find((c) => c.symbol === currency) || CURRENCIES[0];
-                      return (
-                        <div className="mt-2.5 p-2.5 bg-blue-50/70 rounded-xl border border-blue-100 flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-lg shrink-0">{activeCurr.flag}</span>
-                            <div className="min-w-0">
-                              <div className="font-bold text-slate-800 leading-tight truncate">{activeCurr.country}</div>
-                              <div className="text-[10px] text-slate-500 truncate">{activeCurr.name}</div>
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0 ml-2">
-                            <div className="font-black text-blue-700 font-mono text-sm">{activeCurr.symbol}</div>
-                            <div className="text-[9px] font-bold text-blue-500 uppercase">{activeCurr.code}</div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  {/* Social Media Links Section */}
-                  <div className="pt-4 border-t border-slate-100">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2.5 px-1 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <Share2 className="w-3.5 h-3.5 text-blue-600" />
-                        <span>Social Media</span>
-                      </span>
-                    </div>
-
-                    <div className="space-y-2">
-                      <a
-                        href="https://www.facebook.com/share/1K2QJZzRQY/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() => triggerVibration('click')}
-                        className="w-full p-2.5 rounded-2xl bg-slate-50 hover:bg-blue-50/80 border border-slate-200/80 hover:border-blue-200 flex items-center justify-between transition-all group cursor-pointer shadow-2xs"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
-                            <Facebook className="w-4 h-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-xs font-bold text-slate-800 group-hover:text-blue-700 transition-colors truncate">
-                              Facebook Link
-                            </div>
-                            <div className="text-[10px] text-slate-400 truncate">
-                              https://www.facebook.com/share/1K2QJZzRQY/
-                            </div>
-                          </div>
-                        </div>
-                        <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 shrink-0 ml-2 transition-colors" />
-                      </a>
-
-                      <a
-                        href="https://www.instagram.com/sudipdebnath416?srtk=MWUzbTA1ZW43a2w4Ng=="
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() => triggerVibration('click')}
-                        className="w-full p-2.5 rounded-2xl bg-slate-50 hover:bg-pink-50/80 border border-slate-200/80 hover:border-pink-200 flex items-center justify-between transition-all group cursor-pointer shadow-2xs"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
-                            <Instagram className="w-4 h-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-xs font-bold text-slate-800 group-hover:text-rose-600 transition-colors truncate">
-                              Instagram Link
-                            </div>
-                            <div className="text-[10px] text-slate-400 truncate">
-                              https://www.instagram.com/sudipdebnath416?srtk=MWUzbTA1ZW43a2w4Ng==
-                            </div>
-                          </div>
-                        </div>
-                        <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-rose-500 shrink-0 ml-2 transition-colors" />
-                      </a>
-                    </div>
                   </div>
                 </div>
 

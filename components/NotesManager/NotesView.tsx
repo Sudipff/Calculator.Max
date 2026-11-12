@@ -15,13 +15,14 @@ import {
   Clock,
   AlertTriangle,
   RotateCcw,
+  RotateCw,
   Sparkles,
   Check,
   Calendar,
   ChevronDown,
   ArrowLeft,
-  CloudCheck,
-  ExternalLink,
+  CheckCircle2,
+  Layers,
 } from 'lucide-react';
 import { NoteItem, ChecklistItem, NOTE_COLORS } from '@/lib/types/notes-tasks';
 import {
@@ -29,6 +30,7 @@ import {
   saveLocalNotes,
   upsertNoteToSupabase,
   deleteNoteFromSupabase,
+  deleteNotesBatchFromSupabase,
 } from '@/lib/notesTasksStorage';
 import { playReminderChime, sendDeviceNotification, requestNotificationPermission } from '@/lib/reminderService';
 
@@ -40,8 +42,20 @@ interface NotesViewProps {
 export default function NotesView({ currentUser, triggerVibration }: NotesViewProps) {
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
+
+  // Batch Selection State
+  const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
+  const [isSelectMode, setIsSelectMode] = useState(false);
+
+  // Deletion Safeguard Modal State
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<
+    { type: 'single'; note: NoteItem } | { type: 'batch'; ids: string[] } | null
+  >(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Quick Creator states
   const [isEditorExpanded, setIsEditorExpanded] = useState(false);
@@ -126,6 +140,25 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
     return () => clearInterval(interval);
   }, [notes]);
 
+  // Manual Real-Time Data Refresh (Without page reload)
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    triggerVibration?.('click');
+    try {
+      const freshNotes = await fetchNotes(currentUser?.id);
+      setNotes(freshNotes);
+      setRefreshNotice('Notes synchronized in real-time');
+      setTimeout(() => setRefreshNotice(null), 3000);
+      triggerVibration?.('success');
+    } catch (err) {
+      console.warn('Manual refresh notice:', err);
+    } finally {
+      setTimeout(() => {
+        setIsRefreshing(false);
+      }, 500);
+    }
+  };
+
   const resetEditor = () => {
     setTitle('');
     setContent('');
@@ -181,19 +214,83 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
     }
   };
 
-  const handleDeleteNote = async (id: string, e?: React.MouseEvent) => {
+  // Safe Deletion Handlers (Requires explicit confirmation modal)
+  const promptDeleteSingle = (note: NoteItem, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const updated = notes.filter((n) => n.id !== id);
-    setNotes(updated);
-    saveLocalNotes(updated, currentUser?.id);
-    if (editingNote?.id === id) {
-      setEditingNote(null);
+    triggerVibration?.('click');
+    setConfirmDeleteTarget({ type: 'single', note });
+  };
+
+  const promptDeleteBatch = () => {
+    if (selectedNoteIds.length === 0) return;
+    triggerVibration?.('click');
+    setConfirmDeleteTarget({ type: 'batch', ids: selectedNoteIds });
+  };
+
+  const executeConfirmedDeletion = async () => {
+    if (!confirmDeleteTarget) return;
+    setIsDeleting(true);
+
+    if (confirmDeleteTarget.type === 'single') {
+      const noteId = confirmDeleteTarget.note.id;
+      const updated = notes.filter((n) => n.id !== noteId);
+      setNotes(updated);
+      saveLocalNotes(updated, currentUser?.id);
+
+      if (editingNote?.id === noteId) {
+        setEditingNote(null);
+      }
+      setSelectedNoteIds((prev) => prev.filter((id) => id !== noteId));
+      triggerVibration?.('success');
+
+      if (currentUser?.id) {
+        await deleteNoteFromSupabase(noteId, currentUser.id);
+      }
+    } else {
+      const idsToDelete = confirmDeleteTarget.ids;
+      const updated = notes.filter((n) => !idsToDelete.includes(n.id));
+      setNotes(updated);
+      saveLocalNotes(updated, currentUser?.id);
+
+      if (editingNote && idsToDelete.includes(editingNote.id)) {
+        setEditingNote(null);
+      }
+      setSelectedNoteIds([]);
+      setIsSelectMode(false);
+      triggerVibration?.('success');
+
+      if (currentUser?.id) {
+        await deleteNotesBatchFromSupabase(idsToDelete, currentUser.id);
+      }
+    }
+
+    setIsDeleting(false);
+    setConfirmDeleteTarget(null);
+  };
+
+  // Batch Selection Handlers
+  const handleToggleSelectNote = (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    triggerVibration?.('click');
+    setSelectedNoteIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAll = () => {
+    const allFilteredIds = filteredNotes.map((n) => n.id);
+    if (selectedNoteIds.length === allFilteredIds.length) {
+      setSelectedNoteIds([]);
+    } else {
+      setSelectedNoteIds(allFilteredIds);
     }
     triggerVibration?.('click');
+  };
 
-    if (currentUser?.id) {
-      await deleteNoteFromSupabase(id, currentUser.id);
-    }
+  const handleCancelSelection = () => {
+    setSelectedNoteIds([]);
+    setIsSelectMode(false);
+    triggerVibration?.('click');
   };
 
   const handleTogglePin = async (id: string, e?: React.MouseEvent) => {
@@ -324,40 +421,128 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
 
   return (
     <div className="space-y-6">
-      {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2.5">
-            <span className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
-              <Sparkles className="w-4 h-4" />
-            </span>
-            <span>Notes Manager</span>
-          </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            Google Keep-style full-page notes, entire card background colors, high-contrast pins &amp; live sync ticks.
-          </p>
+      {/* Header Bar with Distinct Round Refresh Button Positioned Above Search */}
+      <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-4">
+        {/* Top Header Row: Title & Top-Right Round Refresh Button */}
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2.5">
+              <span className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
+                <Sparkles className="w-4 h-4" />
+              </span>
+              <span>Notes Manager</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Google Keep-style full-page notes, batch selection, real-time sync &amp; deletion safeguards.
+            </p>
+          </div>
+
+          {/* Distinct Round Refresh Button Positioned at Top Right Above Search Option */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            {refreshNotice && (
+              <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
+                <Check className="w-3 h-3 text-emerald-600" />
+                <span>{refreshNotice}</span>
+              </span>
+            )}
+            <button
+              type="button"
+              id="notes-realtime-refresh-btn"
+              onClick={handleManualRefresh}
+              disabled={isRefreshing}
+              className="w-10 h-10 rounded-full bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 text-slate-700 hover:text-amber-700 flex items-center justify-center shadow-xs transition-all cursor-pointer active:scale-90 disabled:opacity-50"
+              title="Refresh notes data in real-time (no page reload)"
+            >
+              <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-amber-600' : ''}`} />
+            </button>
+          </div>
         </div>
 
-        {/* Search Bar */}
-        <div className="relative min-w-[240px] max-w-sm">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search notes & checklists..."
-            className="w-full bg-slate-50 border border-slate-200 text-slate-800 font-medium text-xs rounded-2xl py-2.5 pl-10 pr-8 focus:outline-none focus:ring-2 focus:ring-amber-200 transition-all"
-          />
-          {searchQuery && (
+        {/* Search Bar & Batch Selection Controls (Positioned Below the Refresh Button) */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
+          <div className="relative flex-1 max-w-md">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search notes & checklists..."
+              className="w-full bg-slate-50 border border-slate-200 text-slate-800 font-medium text-xs rounded-2xl py-2.5 pl-10 pr-8 focus:outline-none focus:ring-2 focus:ring-amber-200 transition-all"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Batch Mode Trigger Button */}
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+              type="button"
+              onClick={() => {
+                setIsSelectMode(!isSelectMode);
+                if (isSelectMode) setSelectedNoteIds([]);
+                triggerVibration?.('click');
+              }}
+              className={`px-3.5 py-2 rounded-2xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                isSelectMode || selectedNoteIds.length > 0
+                  ? 'bg-amber-500 text-white shadow-xs'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+              }`}
             >
-              <X className="w-3.5 h-3.5" />
+              <Layers className="w-3.5 h-3.5" />
+              <span>{isSelectMode || selectedNoteIds.length > 0 ? 'Batch Active' : 'Batch Select'}</span>
             </button>
-          )}
+          </div>
         </div>
       </div>
+
+      {/* Floating or Sticky Batch Action Bar when items are selected */}
+      {(isSelectMode || selectedNoteIds.length > 0) && (
+        <div className="bg-slate-900 text-white p-3 sm:p-4 rounded-3xl shadow-xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-2.5">
+            <span className="w-7 h-7 rounded-xl bg-amber-500 text-white flex items-center justify-center text-xs font-black">
+              {selectedNoteIds.length}
+            </span>
+            <span className="text-xs font-bold">
+              {selectedNoteIds.length} {selectedNoteIds.length === 1 ? 'note' : 'notes'} selected
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSelectAll}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+            >
+              {selectedNoteIds.length === filteredNotes.length ? 'Deselect All' : 'Select All'}
+            </button>
+
+            <button
+              type="button"
+              onClick={promptDeleteBatch}
+              disabled={selectedNoteIds.length === 0}
+              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Selected ({selectedNoteIds.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCancelSelection}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              title="Cancel batch selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Label Filter Pills */}
       {allLabels.length > 0 && (
@@ -391,7 +576,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
         </div>
       )}
 
-      {/* Google Keep-style Note Creator with Full Background Coloring */}
+      {/* Note Creator Box */}
       <div
         ref={editorRef}
         style={{
@@ -490,7 +675,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                     <button
                       type="button"
                       onClick={() => handleRemoveChecklistItemFromEditor(item.id)}
-                      className="text-slate-400 hover:text-rose-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="text-slate-400 hover:text-rose-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -825,10 +1010,10 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 <span>{editingNote.isPinned ? 'Pinned' : 'Pin Note'}</span>
               </button>
 
-              {/* Delete Note */}
+              {/* Delete Note with Confirmation Safeguard */}
               <button
                 type="button"
-                onClick={() => handleDeleteNote(editingNote.id)}
+                onClick={(e) => promptDeleteSingle(editingNote, e)}
                 className="p-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
                 title="Delete note"
               >
@@ -848,7 +1033,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
 
           {/* Full-Page Content Workspace */}
           <div className="max-w-4xl mx-auto w-full px-4 sm:px-8 py-6 sm:py-10 flex-1 flex flex-col space-y-6">
-            {/* Color Palette Strip - Changes ENTIRE PAGE background */}
+            {/* Color Palette Strip */}
             <div className="p-3 bg-white/70 backdrop-blur-md rounded-2xl border border-black/10 shadow-xs flex flex-wrap items-center gap-2">
               <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider mr-2 flex items-center gap-1.5">
                 <Palette className="w-3.5 h-3.5" />
@@ -1135,29 +1320,132 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
           </div>
         </div>
       )}
+
+      {/* EXPLICIT CONFIRMATION DIALOG (DELETION SAFEGUARD) */}
+      {confirmDeleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 border border-rose-100">
+                <AlertTriangle className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900">
+                  {confirmDeleteTarget.type === 'single'
+                    ? 'Delete Note Permanently?'
+                    : `Delete ${confirmDeleteTarget.ids.length} Selected Notes?`}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  This action requires explicit approval and cannot be reversed.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 text-xs text-slate-600 leading-relaxed">
+              {confirmDeleteTarget.type === 'single' ? (
+                <span>
+                  Are you sure you want to delete{' '}
+                  <strong className="text-slate-900 font-bold">
+                    &quot;{confirmDeleteTarget.note.title || 'Untitled Note'}&quot;
+                  </strong>
+                  ? It will be permanently removed from your device storage and cloud database.
+                </span>
+              ) : (
+                <span>
+                  Are you sure you want to delete all{' '}
+                  <strong className="text-rose-700 font-bold">{confirmDeleteTarget.ids.length}</strong> selected
+                  notes? All their contents, checklists, and labels will be deleted permanently.
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteTarget(null)}
+                disabled={isDeleting}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeConfirmedDeletion}
+                disabled={isDeleting}
+                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>
+                      {confirmDeleteTarget.type === 'single'
+                        ? 'Delete Permanently'
+                        : `Delete ${confirmDeleteTarget.ids.length} Notes`}
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
   function renderNoteCard(note: NoteItem) {
     const colorTheme = NOTE_COLORS.find((c) => c.id === note.color) || NOTE_COLORS[0];
     const isOverdue = note.reminderAt && new Date(note.reminderAt) < new Date();
+    const isSelected = selectedNoteIds.includes(note.id);
 
     return (
       <div
         key={note.id}
-        onClick={() => setEditingNote(note)}
+        onClick={() => {
+          if (isSelectMode || selectedNoteIds.length > 0) {
+            handleToggleSelectNote(note.id);
+          } else {
+            setEditingNote(note);
+          }
+        }}
         style={{
           backgroundColor: colorTheme.hex,
-          borderColor: colorTheme.borderHex,
+          borderColor: isSelected ? '#3b82f6' : colorTheme.borderHex,
         }}
-        className="group relative rounded-3xl p-5 border transition-all duration-200 hover:shadow-xl hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between"
+        className={`group relative rounded-3xl p-5 border-2 transition-all duration-200 hover:shadow-xl hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between ${
+          isSelected ? 'ring-2 ring-blue-500 shadow-md' : ''
+        }`}
       >
         <div>
-          {/* Header, Visual Sync Indicator & High Visibility Pin Action */}
+          {/* Header with Batch Checkbox, Title, Sync Indicator & High Visibility Pin */}
           <div className="flex items-start justify-between gap-2 mb-2.5">
-            <h4 className="font-black text-slate-900 text-sm tracking-tight leading-snug line-clamp-2">
-              {note.title || 'Untitled Note'}
-            </h4>
+            <div className="flex items-start gap-2 min-w-0 flex-1">
+              {/* Batch Selection Checkbox */}
+              {(isSelectMode || selectedNoteIds.length > 0) && (
+                <button
+                  type="button"
+                  onClick={(e) => handleToggleSelectNote(note.id, e)}
+                  className={`mt-0.5 p-0.5 rounded-lg transition-transform hover:scale-110 cursor-pointer shrink-0 ${
+                    isSelected ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                  title={isSelected ? 'Deselect note' : 'Select note'}
+                >
+                  {isSelected ? (
+                    <CheckCircle2 className="w-5 h-5 fill-blue-600 text-white" />
+                  ) : (
+                    <Square className="w-5 h-5 bg-white/80 rounded-md" />
+                  )}
+                </button>
+              )}
+
+              <h4 className="font-black text-slate-900 text-sm tracking-tight leading-snug line-clamp-2">
+                {note.title || 'Untitled Note'}
+              </h4>
+            </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
               {/* Visual Sync Indicator Next to Pin */}
@@ -1247,7 +1535,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
           )}
         </div>
 
-        {/* Footer info: Reminders & Quick Color Swatches */}
+        {/* Footer info: Reminders, Quick Color Swatches & Delete Safeguard Prompt */}
         <div className="pt-2 border-t border-black/10 space-y-2">
           {note.reminderAt && (
             <div
@@ -1284,7 +1572,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                     type="button"
                     onClick={(e) => handleUpdateNoteColor(note.id, c.id, e)}
                     style={{ backgroundColor: c.hex }}
-                    className={`w-4 h-4 rounded-full border border-slate-400 hover:scale-125 transition-transform ${
+                    className={`w-4 h-4 rounded-full border border-slate-400 hover:scale-125 transition-transform cursor-pointer ${
                       note.color === c.id ? 'ring-1 ring-slate-900' : ''
                     }`}
                     title={c.name}
@@ -1292,11 +1580,12 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 ))}
               </div>
 
+              {/* Single Delete Button with Confirmation Safeguard */}
               <button
                 type="button"
-                onClick={(e) => handleDeleteNote(note.id, e)}
+                onClick={(e) => promptDeleteSingle(note, e)}
                 className="p-1 hover:text-rose-600 rounded-lg hover:bg-black/5 transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
-                title="Delete note"
+                title="Delete note permanently"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>

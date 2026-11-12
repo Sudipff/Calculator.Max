@@ -213,6 +213,22 @@ export async function deleteNoteFromSupabase(
   }
 }
 
+export async function deleteNotesBatchFromSupabase(
+  noteIds: string[],
+  userId?: string | null
+): Promise<{ success: boolean }> {
+  if (!userId || !noteIds || noteIds.length === 0) return { success: false };
+
+  try {
+    const supabase = createClient();
+    const { error } = await supabase.from('notes').delete().in('id', noteIds).eq('user_id', userId);
+    return { success: !error };
+  } catch (err) {
+    console.warn('Supabase batch delete notes notice:', err);
+    return { success: false };
+  }
+}
+
 // ----------------- TASK LISTS CRUD -----------------
 
 export function getLocalTaskLists(userId?: string | null): TaskList[] {
@@ -508,6 +524,25 @@ export async function deleteTaskFromSupabase(
     return { success: !error };
   } catch (err) {
     console.warn('Supabase delete task notice:', err);
+    return { success: false };
+  }
+}
+
+export async function deleteTasksBatchFromSupabase(
+  taskIds: string[],
+  userId?: string | null
+): Promise<{ success: boolean }> {
+  if (!userId || !taskIds || taskIds.length === 0) return { success: false };
+
+  try {
+    const supabase = createClient();
+    // Delete subtasks of any of the selected tasks
+    await supabase.from('tasks').delete().in('parent_id', taskIds).eq('user_id', userId);
+    // Delete selected tasks
+    const { error } = await supabase.from('tasks').delete().in('id', taskIds).eq('user_id', userId);
+    return { success: !error };
+  } catch (err) {
+    console.warn('Supabase batch delete tasks notice:', err);
     return { success: false };
   }
 }

@@ -20,8 +20,12 @@ import {
   X,
   FolderPlus,
   AlertCircle,
+  AlertTriangle,
   Volume2,
   Sparkles,
+  RotateCw,
+  Layers,
+  Square,
 } from 'lucide-react';
 import { TaskItem, TaskList } from '@/lib/types/notes-tasks';
 import {
@@ -29,6 +33,7 @@ import {
   saveLocalTasks,
   upsertTaskToSupabase,
   deleteTaskFromSupabase,
+  deleteTasksBatchFromSupabase,
   fetchTaskLists,
   saveLocalTaskLists,
   upsertTaskListToSupabase,
@@ -48,10 +53,22 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
   const [activeListId, setActiveListId] = useState<string>('default-my-tasks');
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
 
   // Filter & UI states
   const [onlyStarred, setOnlyStarred] = useState(false);
   const [showCompleted, setShowCompleted] = useState(true);
+
+  // Batch Selection State
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+  const [isSelectMode, setIsSelectMode] = useState(false);
+
+  // Deletion Safeguard Modal State
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<
+    { type: 'single'; task: TaskItem } | { type: 'batch'; ids: string[] } | null
+  >(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Reliable Notification Toggle State
   const [alertsEnabled, setAlertsEnabled] = useState<boolean>(true);
@@ -142,10 +159,32 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     return () => clearInterval(interval);
   }, [tasks, alertsEnabled]);
 
+  // Manual Real-Time Tasks Refresh (No page reload)
+  const handleManualRefreshTasks = async () => {
+    setIsRefreshing(true);
+    triggerVibration?.('click');
+    try {
+      const [freshLists, freshTasks] = await Promise.all([
+        fetchTaskLists(currentUser?.id),
+        fetchTasks(currentUser?.id),
+      ]);
+      setTaskLists(freshLists);
+      setTasks(freshTasks);
+      setRefreshNotice('Tasks synchronized in real-time');
+      setTimeout(() => setRefreshNotice(null), 3000);
+      triggerVibration?.('success');
+    } catch (err) {
+      console.warn('Manual tasks refresh notice:', err);
+    } finally {
+      setTimeout(() => {
+        setIsRefreshing(false);
+      }, 500);
+    }
+  };
+
   // Reliable Notification Toggle Switch Handler
   const handleToggleAlerts = async () => {
     if (!alertsEnabled) {
-      // User is enabling alerts
       if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted') {
         const res = await requestNotificationPermission();
         setNotificationPermission(res);
@@ -162,7 +201,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
       localStorage.setItem(ALERTS_STORAGE_KEY, 'true');
       triggerVibration?.('success');
     } else {
-      // User is disabling alerts
       setAlertsEnabled(false);
       localStorage.setItem(ALERTS_STORAGE_KEY, 'false');
       triggerVibration?.('click');
@@ -249,17 +287,75 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     }
   };
 
-  // Delete Task with real-time Supabase deletion
-  const handleDeleteTask = async (taskId: string, e?: React.MouseEvent) => {
+  // Safe Deletion Handlers (Requires explicit confirmation modal)
+  const promptDeleteSingle = (task: TaskItem, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const updated = tasks.filter((t) => t.id !== taskId);
-    setTasks(updated);
-    saveLocalTasks(updated, currentUser?.id);
     triggerVibration?.('click');
+    setConfirmDeleteTarget({ type: 'single', task });
+  };
 
-    if (currentUser?.id) {
-      await deleteTaskFromSupabase(taskId, currentUser.id);
+  const promptDeleteBatch = () => {
+    if (selectedTaskIds.length === 0) return;
+    triggerVibration?.('click');
+    setConfirmDeleteTarget({ type: 'batch', ids: selectedTaskIds });
+  };
+
+  const executeConfirmedDeletion = async () => {
+    if (!confirmDeleteTarget) return;
+    setIsDeleting(true);
+
+    if (confirmDeleteTarget.type === 'single') {
+      const taskId = confirmDeleteTarget.task.id;
+      const updated = tasks.filter((t) => t.id !== taskId);
+      setTasks(updated);
+      saveLocalTasks(updated, currentUser?.id);
+      setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
+      triggerVibration?.('success');
+
+      if (currentUser?.id) {
+        await deleteTaskFromSupabase(taskId, currentUser.id);
+      }
+    } else {
+      const idsToDelete = confirmDeleteTarget.ids;
+      const updated = tasks.filter((t) => !idsToDelete.includes(t.id));
+      setTasks(updated);
+      saveLocalTasks(updated, currentUser?.id);
+      setSelectedTaskIds([]);
+      setIsSelectMode(false);
+      triggerVibration?.('success');
+
+      if (currentUser?.id) {
+        await deleteTasksBatchFromSupabase(idsToDelete, currentUser.id);
+      }
     }
+
+    setIsDeleting(false);
+    setConfirmDeleteTarget(null);
+  };
+
+  // Batch Selection Handlers
+  const handleToggleSelectTask = (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    triggerVibration?.('click');
+    setSelectedTaskIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAll = () => {
+    const allFilteredIds = listTasks.map((t) => t.id);
+    if (selectedTaskIds.length === allFilteredIds.length) {
+      setSelectedTaskIds([]);
+    } else {
+      setSelectedTaskIds(allFilteredIds);
+    }
+    triggerVibration?.('click');
+  };
+
+  const handleCancelSelection = () => {
+    setSelectedTaskIds([]);
+    setIsSelectMode(false);
+    triggerVibration?.('click');
   };
 
   // Add Subtask with real-time Supabase sync
@@ -446,8 +542,8 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
         </div>
       )}
 
-      {/* Header Container with Reliable Notification Toggle Switch */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs">
+      {/* Header Container with Notification Toggle and Corresponding Refresh Button Positioned to its Right */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/80 shadow-xs">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2.5">
             <span className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
@@ -456,21 +552,30 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
             <span>Tasks Manager</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Google Tasks-style nested sub-tasks, priority stars, custom lists &amp; instant database synchronization.
+            Google Tasks-style nested sub-tasks, batch management, real-time sync &amp; deletion safeguards.
           </p>
         </div>
 
-        {/* Reliable Interactive Notification Toggle Switch */}
-        <div className="flex items-center gap-2">
+        {/* Right Action Group: Notification Toggle + Refresh Button Positioned to its Right */}
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {refreshNotice && (
+            <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
+              <Check className="w-3 h-3 text-emerald-600" />
+              <span>{refreshNotice}</span>
+            </span>
+          )}
+
+          {/* Reliable Interactive Notification Toggle Switch */}
           <button
             type="button"
+            id="tasks-notification-toggle-btn"
             onClick={handleToggleAlerts}
             className={`px-3.5 py-2 rounded-2xl text-xs font-bold border transition-all flex items-center gap-2.5 cursor-pointer shadow-xs active:scale-95 select-none ${
               alertsEnabled
                 ? 'bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100'
                 : 'bg-slate-100 border-slate-300 text-slate-600 hover:bg-slate-200'
             }`}
-            title={`Click to ${alertsEnabled ? 'disable' : 'enable'} task notifications`}
+            title={`Click to ${alertsEnabled ? 'disable' : 'enable'} task device alerts`}
           >
             {alertsEnabled ? (
               <Bell className="w-4 h-4 text-emerald-600" />
@@ -493,10 +598,22 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
               />
             </div>
           </button>
+
+          {/* Corresponding Distinct Round Refresh Button Placed Specifically to the Right of the Alert Toggle */}
+          <button
+            type="button"
+            id="tasks-realtime-refresh-btn"
+            onClick={handleManualRefreshTasks}
+            disabled={isRefreshing}
+            className="w-10 h-10 rounded-full bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-700 flex items-center justify-center shadow-xs transition-all cursor-pointer active:scale-90 disabled:opacity-50"
+            title="Refresh tasks data in real-time (no page reload)"
+          >
+            <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
+          </button>
         </div>
       </div>
 
-      {/* Custom Lists Tabs & Starred Filter */}
+      {/* Custom Lists Tabs, Starred Filter & Batch Select Trigger */}
       <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 scrollbar-none">
         <div className="flex items-center gap-1.5 min-w-0">
           {/* Starred High-Priority Tab */}
@@ -556,7 +673,70 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
             </button>
           )}
         </div>
+
+        {/* Batch Selection Mode Button for Tasks */}
+        <div className="shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setIsSelectMode(!isSelectMode);
+              if (isSelectMode) setSelectedTaskIds([]);
+              triggerVibration?.('click');
+            }}
+            className={`px-3.5 py-2 rounded-2xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+              isSelectMode || selectedTaskIds.length > 0
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>{isSelectMode || selectedTaskIds.length > 0 ? 'Batch Active' : 'Batch Select'}</span>
+          </button>
+        </div>
       </div>
+
+      {/* Floating or Top Batch Action Bar for Tasks */}
+      {(isSelectMode || selectedTaskIds.length > 0) && (
+        <div className="bg-slate-900 text-white p-3 sm:p-4 rounded-3xl shadow-xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-2.5">
+            <span className="w-7 h-7 rounded-xl bg-blue-600 text-white flex items-center justify-center text-xs font-black">
+              {selectedTaskIds.length}
+            </span>
+            <span className="text-xs font-bold">
+              {selectedTaskIds.length} {selectedTaskIds.length === 1 ? 'task' : 'tasks'} selected
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSelectAll}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+            >
+              {selectedTaskIds.length === listTasks.length ? 'Deselect All' : 'Select All'}
+            </button>
+
+            <button
+              type="button"
+              onClick={promptDeleteBatch}
+              disabled={selectedTaskIds.length === 0}
+              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Selected ({selectedTaskIds.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCancelSelection}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              title="Cancel batch selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Task Creator & List Card */}
       <div className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-6">
@@ -734,6 +914,80 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
           </div>
         </div>
       )}
+
+      {/* EXPLICIT CONFIRMATION DIALOG (DELETION SAFEGUARD FOR TASKS) */}
+      {confirmDeleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 border border-rose-100">
+                <AlertTriangle className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900">
+                  {confirmDeleteTarget.type === 'single'
+                    ? 'Delete Task Permanently?'
+                    : `Delete ${confirmDeleteTarget.ids.length} Selected Tasks?`}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  This action requires explicit approval and cannot be undone.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 text-xs text-slate-600 leading-relaxed">
+              {confirmDeleteTarget.type === 'single' ? (
+                <span>
+                  Are you sure you want to delete{' '}
+                  <strong className="text-slate-900 font-bold">
+                    &quot;{confirmDeleteTarget.task.title}&quot;
+                  </strong>
+                  ? Any nested sub-tasks will also be removed permanently.
+                </span>
+              ) : (
+                <span>
+                  Are you sure you want to delete all{' '}
+                  <strong className="text-rose-700 font-bold">{confirmDeleteTarget.ids.length}</strong> selected
+                  tasks? Any of their nested sub-tasks will also be permanently deleted.
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteTarget(null)}
+                disabled={isDeleting}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeConfirmedDeletion}
+                disabled={isDeleting}
+                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>
+                      {confirmDeleteTarget.type === 'single'
+                        ? 'Delete Permanently'
+                        : `Delete ${confirmDeleteTarget.ids.length} Tasks`}
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -741,17 +995,40 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     const isAddingSub = addingSubtaskForId === task.id;
     const subtaskCount = task.subtasks?.length || 0;
     const completedSubtaskCount = (task.subtasks || []).filter((s) => s.completed).length;
+    const isSelected = selectedTaskIds.includes(task.id);
 
     return (
       <div
         key={task.id}
-        className={`group border border-slate-200/80 rounded-2xl p-3 sm:p-3.5 transition-all hover:border-slate-300 ${
-          task.completed ? 'bg-slate-50/60' : 'bg-white hover:shadow-xs'
+        className={`group border-2 rounded-2xl p-3 sm:p-3.5 transition-all ${
+          isSelected
+            ? 'border-blue-500 bg-blue-50/40 ring-1 ring-blue-400'
+            : task.completed
+            ? 'border-slate-200/80 bg-slate-50/60'
+            : 'border-slate-200/80 bg-white hover:border-slate-300 hover:shadow-xs'
         }`}
       >
         <div className="flex items-start justify-between gap-3">
-          {/* Checkbox and Title */}
+          {/* Batch Selection Checkbox, Checkbox and Title */}
           <div className="flex items-start gap-3 flex-1 min-w-0">
+            {/* Batch Selection Checkbox */}
+            {(isSelectMode || selectedTaskIds.length > 0) && (
+              <button
+                type="button"
+                onClick={(e) => handleToggleSelectTask(task.id, e)}
+                className={`mt-0.5 text-blue-600 shrink-0 cursor-pointer hover:scale-110 transition-transform ${
+                  isSelected ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'
+                }`}
+                title={isSelected ? 'Deselect task' : 'Select task'}
+              >
+                {isSelected ? (
+                  <CheckCircle2 className="w-5 h-5 fill-blue-600 text-white" />
+                ) : (
+                  <Square className="w-5 h-5 bg-white rounded-md" />
+                )}
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => handleToggleComplete(task.id)}
@@ -783,7 +1060,7 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
               {(task.dueDate || task.reminderAt) && (
                 <div className="flex items-center gap-2 mt-1.5">
                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
-                    <Calendar className="w-3 h-3 text-blue-600" />
+                    <Calendar className="w-3.5 h-3.5 text-blue-600" />
                     <span>
                       {new Date(task.dueDate || task.reminderAt!).toLocaleString([], {
                         month: 'short',
@@ -798,7 +1075,7 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
             </div>
           </div>
 
-          {/* Sync Status Badge, Star Priority & Delete Actions */}
+          {/* Sync Status Badge, Star Priority & Safe Delete Action */}
           <div className="flex items-center gap-1.5 shrink-0">
             {/* Visual Sync Status Indicator for Task */}
             {task.syncStatus === 'synced' ? (
@@ -833,12 +1110,12 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
               <Star className={`w-4 h-4 ${task.isStarred ? 'fill-amber-500' : ''}`} />
             </button>
 
-            {/* Delete Task Button */}
+            {/* Safe Delete Task Button (triggers confirmation dialog) */}
             <button
               type="button"
-              onClick={(e) => handleDeleteTask(task.id, e)}
+              onClick={(e) => promptDeleteSingle(task, e)}
               className="p-1.5 text-slate-300 hover:text-rose-500 rounded-lg hover:bg-rose-50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-              title="Delete task"
+              title="Delete task permanently"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -885,6 +1162,7 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
                     type="button"
                     onClick={() => handleDeleteSubtask(task.id, sub.id)}
                     className="text-slate-300 hover:text-rose-500 p-0.5 opacity-0 group-hover/sub:opacity-100 transition-opacity cursor-pointer"
+                    title="Delete subtask"
                   >
                     <X className="w-3 h-3" />
                   </button>
