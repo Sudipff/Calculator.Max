@@ -22,10 +22,10 @@ import {
   Globe,
   ChevronRight,
   CheckCircle2,
-  Database,
+  Check,
+  RotateCw,
   HardDrive,
   Loader2,
-  Trophy,
   Coins,
   Info,
   CalendarDays,
@@ -302,6 +302,7 @@ export default function RetailCalc() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isHeaderVisible, setIsHeaderVisible] = useState(true);
+  const [isNoteFullScreen, setIsNoteFullScreen] = useState(false);
   const [selectedInfoTool, setSelectedInfoTool] = useState<ActiveTab | null>(null);
   const [openCategories, setOpenCategories] = useState<{
     allCalculators: boolean;
@@ -324,6 +325,8 @@ export default function RetailCalc() {
   });
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [isRefreshingHistory, setIsRefreshingHistory] = useState(false);
+  const [historyRefreshNotice, setHistoryRefreshNotice] = useState<string | null>(null);
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<
     { type: 'single'; item: HistoryItem } | { type: 'all' } | null
   >(null);
@@ -453,6 +456,27 @@ export default function RetailCalc() {
       await loadUserHistory(currentUser);
     }
   }, [currentUser, loadUserHistory]);
+
+  // Manual Real-Time Data Refresh for Calculation History (matching Notes and Tasks)
+  const handleManualRefreshHistory = async () => {
+    setIsRefreshingHistory(true);
+    try {
+      if (currentUser?.id) {
+        await loadUserHistory(currentUser);
+      } else {
+        const local = getCalculationHistory();
+        setHistory(local);
+      }
+      setHistoryRefreshNotice('History synchronized in real-time');
+      setTimeout(() => setHistoryRefreshNotice(null), 3000);
+    } catch (err) {
+      console.warn('Manual calculation history refresh notice:', err);
+    } finally {
+      setTimeout(() => {
+        setIsRefreshingHistory(false);
+      }, 500);
+    }
+  };
 
   // Intercept Supabase password recovery links and route to /reset-password
   useEffect(() => {
@@ -897,114 +921,6 @@ export default function RetailCalc() {
 
     triggerVibration('success');
   };
-
-  const handleSyncAllPending = async () => {
-    if (!currentUser) {
-      triggerVibration('error');
-      alert('Please sign in to save records to the database.');
-      return;
-    }
-    const unsynced = history.filter((i) => i.syncStatus !== 'synced' && !i.dbId);
-    if (unsynced.length === 0) return;
-
-    for (const item of unsynced) {
-      await retrySyncItem(item);
-    }
-  };
-
-  // Gamified Savings Summary Calculation
-  const savingsSummary = useMemo(() => {
-    let total = 0;
-    let discountSavings = 0;
-    let wishlistSavings = 0;
-    let savingsEventsCount = 0;
-    let syncedCount = 0;
-    let localCount = 0;
-    let errorCount = 0;
-
-    history.forEach((item) => {
-      if (item.syncStatus === 'synced' || item.dbId) {
-        syncedCount++;
-      } else if (item.syncStatus === 'error') {
-        errorCount++;
-      } else {
-        localCount++;
-      }
-
-      let itemSaved = item.savedAmount;
-      if (itemSaved === undefined) {
-        itemSaved = parseSavedAmountFromText(item.type, item.details, item.result);
-      }
-
-      if (itemSaved && itemSaved > 0) {
-        total += itemSaved;
-        savingsEventsCount++;
-        if (item.type === 'Discount') {
-          discountSavings += itemSaved;
-        } else if (item.type === 'Wishlist') {
-          wishlistSavings += itemSaved;
-        }
-      }
-    });
-
-    let tier = {
-      level: 1,
-      title: 'Savings Beginner',
-      icon: '🌱',
-      badgeText: 'Level 1: Novice',
-      nextMilestone: 1000,
-      progressPercent: Math.min(100, Math.round((total / 1000) * 100)),
-    };
-
-    if (total >= 50000) {
-      tier = {
-        level: 5,
-        title: 'Financial Mastermind',
-        icon: '👑',
-        badgeText: 'Level 5: Master',
-        nextMilestone: 100000,
-        progressPercent: Math.min(100, Math.round((total / 100000) * 100)),
-      };
-    } else if (total >= 20000) {
-      tier = {
-        level: 4,
-        title: 'Wealth Builder',
-        icon: '💎',
-        badgeText: 'Level 4: Elite',
-        nextMilestone: 50000,
-        progressPercent: Math.min(100, Math.round(((total - 20000) / 30000) * 100)),
-      };
-    } else if (total >= 5000) {
-      tier = {
-        level: 3,
-        title: 'Bargain Hunter Pro',
-        icon: '🥇',
-        badgeText: 'Level 3: Pro',
-        nextMilestone: 20000,
-        progressPercent: Math.min(100, Math.round(((total - 5000) / 15000) * 100)),
-      };
-    } else if (total > 0) {
-      tier = {
-        level: 2,
-        title: 'Smart Shopper',
-        icon: '🥈',
-        badgeText: 'Level 2: Smart',
-        nextMilestone: 5000,
-        progressPercent: Math.min(100, Math.round((total / 5000) * 100)),
-      };
-    }
-
-    return {
-      totalSaved: total,
-      discountSavings,
-      wishlistSavings,
-      savingsEventsCount,
-      syncedCount,
-      localCount,
-      errorCount,
-      tier,
-    };
-  }, [history]);
 
   // History search state
   const [historySearch, setHistorySearch] = useState('');
@@ -1774,7 +1690,9 @@ export default function RetailCalc() {
         {/* Header - Solid Blue & Sticky (Auto-hides on scroll down, shows on scroll up) */}
         <header
           className={`bg-blue-600 text-white py-2 px-3 sm:py-2.5 sm:px-4 sticky top-0 z-40 flex justify-between items-center rounded-b-xl md:rounded-t-2xl gap-2 transition-all duration-300 ease-in-out ${
-            isHeaderVisible
+            isNoteFullScreen
+              ? 'hidden pointer-events-none'
+              : isHeaderVisible
               ? 'translate-y-0 opacity-100 shadow-md pointer-events-auto'
               : '-translate-y-full opacity-0 shadow-none pointer-events-none'
           }`}
@@ -2563,6 +2481,7 @@ export default function RetailCalc() {
                   <NotesView
                     currentUser={currentUser}
                     triggerVibration={triggerVibration}
+                    onFullScreenChange={(isFullscreen) => setIsNoteFullScreen(isFullscreen)}
                   />
                 </section>
               )}
@@ -2585,159 +2504,61 @@ export default function RetailCalc() {
                       <Clock className="w-5 h-5 text-indigo-500" /> Calculation History
                     </h3>
 
-                    {history.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={handleDownloadAllPDF}
-                          className="text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/60 px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
-                          title="Download complete history as PDF report"
-                        >
-                          <FileText className="w-3.5 h-3.5 text-blue-600" />
-                          <span>Download PDF</span>
-                        </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {historyRefreshNotice && (
+                        <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
+                          <Check className="w-3 h-3 text-emerald-600" />
+                          <span>{historyRefreshNotice}</span>
+                        </span>
+                      )}
 
-                        <button
-                          type="button"
-                          onClick={exportHistoryCSV}
-                          className="text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/60 px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
-                          title="Export history as CSV spreadsheet"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          <span>Export CSV</span>
-                        </button>
+                      {history.length > 0 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={handleDownloadAllPDF}
+                            className="text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/60 px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+                            title="Download complete history as PDF report"
+                          >
+                            <FileText className="w-3.5 h-3.5 text-blue-600" />
+                            <span>Download PDF</span>
+                          </button>
 
-                        <button
-                          type="button"
-                          onClick={handleRequestClearHistory}
-                          className="text-xs font-bold text-red-500 bg-red-50 hover:bg-red-100 px-3.5 py-2 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
-                          title="Clear all calculation history records"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>Clear All</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                          <button
+                            type="button"
+                            onClick={handleRequestClearHistory}
+                            className="text-xs font-bold text-red-500 bg-red-50 hover:bg-red-100 px-3.5 py-2 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+                            title="Clear all calculation history records"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Clear All</span>
+                          </button>
 
-                  {/* Gamified Total Saved Summary Card */}
-                  {history.length > 0 && (
-                    <div className="bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 rounded-3xl p-5 sm:p-6 text-white shadow-xl border border-blue-800/40 relative overflow-hidden">
-                      {/* Ambient light glow */}
-                      <div className="absolute -top-16 -right-16 w-52 h-52 bg-blue-500/20 rounded-full blur-3xl pointer-events-none" />
-                      <div className="absolute -bottom-16 -left-16 w-52 h-52 bg-emerald-500/15 rounded-full blur-3xl pointer-events-none" />
+                          <button
+                            type="button"
+                            onClick={exportHistoryCSV}
+                            className="text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/60 px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+                            title="Export history as CSV spreadsheet"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Export CSV</span>
+                          </button>
+                        </>
+                      )}
 
-                      <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
-                        {/* Left: Total Saved and Gamified Tier Badge */}
-                        <div className="space-y-2 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[11px] font-bold uppercase tracking-wider text-blue-200 flex items-center gap-1.5 bg-blue-900/60 border border-blue-700/50 px-2.5 py-1 rounded-full">
-                              <Trophy className="w-3.5 h-3.5 text-amber-400" /> Total Money Saved
-                            </span>
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-amber-400/20 border border-amber-400/40 text-amber-300">
-                              <span>{savingsSummary.tier.icon}</span>
-                              <span>{savingsSummary.tier.title}</span>
-                              <span className="opacity-70 font-semibold">• {savingsSummary.tier.badgeText}</span>
-                            </span>
-                          </div>
-
-                          <div className="flex items-baseline gap-2.5">
-                            <div className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-white">
-                              {currency}
-                              {savingsSummary.totalSaved.toLocaleString(undefined, {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
-                              })}
-                            </div>
-                            <span className="text-xs font-medium text-blue-200/90">
-                              accumulated savings across {savingsSummary.savingsEventsCount} milestones
-                            </span>
-                          </div>
-
-                          {/* Gamified Level Progress Bar */}
-                          <div className="pt-1.5 max-w-md">
-                            <div className="flex justify-between items-center text-[11px] font-medium text-blue-200/90 mb-1.5">
-                              <span>Milestone Progress ({savingsSummary.tier.progressPercent}%)</span>
-                              <span className="font-semibold text-amber-300">Next Tier: {currency}{savingsSummary.tier.nextMilestone.toLocaleString()}</span>
-                            </div>
-                            <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden p-0.5">
-                              <div
-                                className="h-full bg-gradient-to-r from-emerald-400 via-teal-300 to-amber-300 rounded-full transition-all duration-500"
-                                style={{ width: `${Math.min(100, Math.max(6, savingsSummary.tier.progressPercent))}%` }}
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Right: Breakdown & Database Status Cards */}
-                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex items-center gap-3 border-t lg:border-t-0 lg:border-l border-white/10 pt-4 lg:pt-0 lg:pl-6">
-                          {/* Discount Savings */}
-                          <div className="bg-white/10 backdrop-blur-xs border border-white/10 rounded-2xl p-3 flex-1 min-w-[120px]">
-                            <div className="text-[11px] text-blue-200 font-medium flex items-center gap-1.5">
-                              <Percent className="w-3.5 h-3.5 text-sky-400" /> Discounts
-                            </div>
-                            <div className="text-base font-black text-white mt-1">
-                              {currency}{savingsSummary.discountSavings.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                            </div>
-                            <div className="text-[9px] text-blue-300/80 mt-0.5">Price savings</div>
-                          </div>
-
-                          {/* Wishlist Funds */}
-                          <div className="bg-white/10 backdrop-blur-xs border border-white/10 rounded-2xl p-3 flex-1 min-w-[120px]">
-                            <div className="text-[11px] text-blue-200 font-medium flex items-center gap-1.5">
-                              <Target className="w-3.5 h-3.5 text-emerald-400" /> Wishlist Funds
-                            </div>
-                            <div className="text-base font-black text-white mt-1">
-                              {currency}{savingsSummary.wishlistSavings.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                            </div>
-                            <div className="text-[9px] text-blue-300/80 mt-0.5">Goal reserves</div>
-                          </div>
-
-                          {/* Database Status Pill */}
-                          <div className="bg-white/10 backdrop-blur-xs border border-white/10 rounded-2xl p-3 col-span-2 sm:col-span-1 flex-1 min-w-[150px]">
-                            <div className="text-[11px] text-blue-200 font-medium flex items-center justify-between gap-1">
-                              <span className="flex items-center gap-1.5">
-                                <Database className="w-3.5 h-3.5 text-indigo-400" /> Database Status
-                              </span>
-                              {currentUser && (savingsSummary.localCount > 0 || savingsSummary.errorCount > 0) && (
-                                <button
-                                  type="button"
-                                  onClick={handleSyncAllPending}
-                                  className="text-[9px] font-bold text-amber-300 bg-amber-400/20 hover:bg-amber-400/30 px-1.5 py-0.5 rounded transition-colors cursor-pointer"
-                                  title="Sync all pending records to cloud database"
-                                >
-                                  Sync All
-                                </button>
-                              )}
-                            </div>
-                            <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                              {savingsSummary.syncedCount > 0 && (
-                                <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400">
-                                  <CheckCircle2 className="w-3.5 h-3.5" />
-                                  {savingsSummary.syncedCount} Saved in DB
-                                </span>
-                              )}
-                              {savingsSummary.errorCount > 0 && (
-                                <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-400">
-                                  <AlertCircle className="w-3.5 h-3.5" />
-                                  {savingsSummary.errorCount} Unsaved
-                                </span>
-                              )}
-                              {savingsSummary.syncedCount === 0 && savingsSummary.errorCount === 0 && (
-                                <span className="text-xs font-medium text-amber-300 flex items-center gap-1">
-                                  <HardDrive className="w-3.5 h-3.5" />
-                                  {currentUser ? 'Local (Synced)' : 'Local Device Only'}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[9px] text-blue-300/80 mt-0.5">
-                              {currentUser ? 'Cloud Sync active' : 'Sign in to auto-save in DB'}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                      {/* Distinct Round Refresh Button Positioned at Far Right Next to Export CSV Controls */}
+                      <button
+                        type="button"
+                        id="history-realtime-refresh-btn"
+                        onClick={handleManualRefreshHistory}
+                        disabled={isRefreshingHistory}
+                        className="w-10 h-10 rounded-full bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 flex items-center justify-center shadow-xs transition-all cursor-pointer active:scale-90 disabled:opacity-50"
+                        title="Refresh calculation history in real-time (no page reload)"
+                      >
+                        <RotateCw className={`w-4 h-4 ${isRefreshingHistory ? 'animate-spin text-indigo-600' : ''}`} />
+                      </button>
                     </div>
-                  )}
+                  </div>
 
                   {/* Search Bar for History */}
                   {history.length > 0 && (

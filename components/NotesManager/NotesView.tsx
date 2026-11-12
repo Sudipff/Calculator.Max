@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Pin,
   CheckSquare,
@@ -36,9 +37,11 @@ import { playReminderChime, sendDeviceNotification, requestNotificationPermissio
 interface NotesViewProps {
   currentUser: any;
   triggerVibration?: (type: 'success' | 'error' | 'click' | 'reset') => void;
+  onFullScreenChange?: (isFullscreen: boolean) => void;
 }
 
-export default function NotesView({ currentUser }: NotesViewProps) {
+export default function NotesView({ currentUser, onFullScreenChange }: NotesViewProps) {
+  const [isMounted, setIsMounted] = useState(false);
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -83,20 +86,36 @@ export default function NotesView({ currentUser }: NotesViewProps) {
   const isLongPressFiredRef = useRef<boolean>(false);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Layout Optimization: Prevent Background Scrolling when Full-Page View is active
+  // Hydration mount tracker
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  // Layout Optimization: Prevent Background Scrolling and Hide Main Header when Full-Page View is active
   useEffect(() => {
     if (editingNote) {
-      const originalOverflow = document.body.style.overflow;
-      const originalOverscroll = document.body.style.overscrollBehavior;
+      onFullScreenChange?.(true);
+      const originalBodyOverflow = document.body.style.overflow;
+      const originalHtmlOverflow = document.documentElement.style.overflow;
+      const originalBodyOverscroll = document.body.style.overscrollBehavior;
+      const originalHtmlOverscroll = document.documentElement.style.overscrollBehavior;
+
       document.body.style.overflow = 'hidden';
+      document.documentElement.style.overflow = 'hidden';
       document.body.style.overscrollBehavior = 'none';
+      document.documentElement.style.overscrollBehavior = 'none';
 
       return () => {
-        document.body.style.overflow = originalOverflow;
-        document.body.style.overscrollBehavior = originalOverscroll;
+        onFullScreenChange?.(false);
+        document.body.style.overflow = originalBodyOverflow;
+        document.documentElement.style.overflow = originalHtmlOverflow;
+        document.body.style.overscrollBehavior = originalBodyOverscroll;
+        document.documentElement.style.overscrollBehavior = originalHtmlOverscroll;
       };
+    } else {
+      onFullScreenChange?.(false);
     }
-  }, [editingNote]);
+  }, [editingNote, onFullScreenChange]);
 
   // Load notes on mount or user change
   useEffect(() => {
@@ -966,21 +985,22 @@ export default function NotesView({ currentUser }: NotesViewProps) {
         </div>
       )}
 
-      {/* FULL-PAGE VIEW (Optimized for Mobile, Solid Background, No Background Scrolling) */}
-      {editingNote && (
+      {/* FULL-PAGE VIEW (Portaled to document.body to cover the entire screen, hide all headers, prevent background scroll, and optimize for mobile) */}
+      {editingNote && isMounted && typeof document !== 'undefined' && createPortal(
         <div
           style={{ backgroundColor: editingColorTheme.hex }}
-          className="fixed inset-0 z-50 w-full h-[100dvh] flex flex-col overscroll-none select-text"
+          className="fixed inset-0 z-[99999] w-screen h-[100dvh] flex flex-col overscroll-none select-text touch-manipulation"
         >
           {/* Top Full-Page Navigation & Action Bar */}
-          <div className="sticky top-0 z-20 bg-white/70 backdrop-blur-md border-b border-black/10 px-3 sm:px-8 py-3 flex items-center justify-between gap-2 shadow-xs shrink-0">
+          <div className="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-black/10 px-3 sm:px-6 py-2.5 sm:py-3.5 flex items-center justify-between gap-2 shadow-xs shrink-0 pt-[max(0.625rem,env(safe-area-inset-top))]">
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={handleSaveEditedNote}
-                className="flex items-center gap-1.5 px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer active:scale-95"
+                className="flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-xs transition-all cursor-pointer active:scale-95 min-h-[42px]"
+                title="Save changes and close note"
               >
-                <ArrowLeft className="w-4 h-4" />
+                <ArrowLeft className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                 <span className="font-extrabold">Back</span>
               </button>
 
@@ -988,30 +1008,30 @@ export default function NotesView({ currentUser }: NotesViewProps) {
               <div className="flex items-center">
                 {editingNote.syncStatus === 'synced' ? (
                   <span
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs select-none"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs select-none"
                     title="All changes synced to cloud database"
                   >
                     <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />
-                    <span className="hidden sm:inline">Database Synced</span>
+                    <span className="hidden xs:inline sm:inline">Database Synced</span>
                   </span>
                 ) : (
                   <span
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-rose-100 text-rose-800 border border-rose-300 shadow-2xs select-none"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-black bg-rose-100 text-rose-800 border border-rose-300 shadow-2xs select-none"
                     title={currentUser?.id ? "Local copy (sync pending)" : "Saved in browser storage"}
                   >
                     <X className="w-3.5 h-3.5 text-rose-600 stroke-[3]" />
-                    <span className="hidden sm:inline">Unsynced (Local)</span>
+                    <span className="hidden xs:inline sm:inline">Unsynced (Local)</span>
                   </span>
                 )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               {/* Pin Toggle Button in Full-Page View */}
               <button
                 type="button"
                 onClick={() => setEditingNote({ ...editingNote, isPinned: !editingNote.isPinned })}
-                className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${
+                className={`px-3 py-2 sm:py-2.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-xs min-h-[42px] ${
                   editingNote.isPinned
                     ? 'bg-amber-500 text-white ring-2 ring-amber-300 hover:bg-amber-600 scale-105'
                     : 'bg-white text-slate-800 border-2 border-slate-300 hover:bg-slate-50 hover:text-amber-600'
@@ -1026,7 +1046,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
               <button
                 type="button"
                 onClick={(e) => promptDeleteSingle(editingNote, e)}
-                className="p-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                className="p-2.5 text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer min-h-[42px] min-w-[42px] flex items-center justify-center"
                 title="Delete note"
               >
                 <Trash2 className="w-4 h-4" />
@@ -1036,7 +1056,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
               <button
                 type="button"
                 onClick={handleSaveEditedNote}
-                className="px-4 sm:px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer active:scale-95"
+                className="px-4 sm:px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-xs transition-all cursor-pointer active:scale-95 min-h-[42px]"
               >
                 Done
               </button>
@@ -1044,9 +1064,9 @@ export default function NotesView({ currentUser }: NotesViewProps) {
           </div>
 
           {/* Full-Page Content Workspace (Optimized for Mobile scroll & touch) */}
-          <div className="flex-1 overflow-y-auto w-full max-w-4xl mx-auto px-4 sm:px-8 py-5 sm:py-8 flex flex-col space-y-5 sm:space-y-6">
+          <div className="flex-1 overflow-y-auto overscroll-contain w-full max-w-4xl mx-auto px-4 sm:px-8 py-5 sm:py-8 flex flex-col space-y-5 sm:space-y-6 pb-[max(2rem,env(safe-area-inset-bottom))]">
             {/* Color Palette Strip - Changes ENTIRE PAGE background */}
-            <div className="p-3 bg-white/70 backdrop-blur-md rounded-2xl border border-black/10 shadow-xs flex flex-wrap items-center gap-2">
+            <div className="p-3 bg-white/75 backdrop-blur-md rounded-2xl border border-black/10 shadow-xs flex flex-wrap items-center gap-2">
               <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wider mr-1 flex items-center gap-1.5">
                 <Palette className="w-3.5 h-3.5" />
                 <span>Card Background Color:</span>
@@ -1058,7 +1078,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                     type="button"
                     onClick={() => setEditingNote({ ...editingNote, color: c.id })}
                     style={{ backgroundColor: c.hex }}
-                    className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
+                    className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full border-2 transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
                       editingNote.color === c.id
                         ? 'border-slate-900 scale-110 shadow-md ring-2 ring-slate-400'
                         : 'border-slate-400'
@@ -1078,7 +1098,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                 value={editingNote.title}
                 onChange={(e) => setEditingNote({ ...editingNote, title: e.target.value })}
                 placeholder="Title"
-                className="w-full bg-transparent font-black text-xl sm:text-3xl text-slate-900 placeholder:text-slate-500 focus:outline-none tracking-tight"
+                className="w-full bg-transparent font-black text-2xl sm:text-4xl text-slate-900 placeholder:text-slate-500/70 focus:outline-none tracking-tight"
               />
             </div>
 
@@ -1089,7 +1109,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                   value={editingNote.content}
                   onChange={(e) => setEditingNote({ ...editingNote, content: e.target.value })}
                   placeholder="Type your detailed notes here..."
-                  className="w-full flex-1 bg-transparent text-base sm:text-lg text-slate-900 placeholder:text-slate-500 focus:outline-none resize-none leading-relaxed min-h-[35vh]"
+                  className="w-full flex-1 bg-transparent text-base sm:text-lg text-slate-900 placeholder:text-slate-500/70 focus:outline-none resize-none leading-relaxed min-h-[35vh]"
                 />
               ) : (
                 <div className="space-y-3 flex-1">
@@ -1099,7 +1119,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                   {editingNote.checklistItems.map((ci) => (
                     <div
                       key={ci.id}
-                      className="flex items-center gap-3 p-2 bg-white/60 backdrop-blur-xs rounded-xl border border-black/5 group"
+                      className="flex items-center gap-3 p-2.5 bg-white/60 backdrop-blur-xs rounded-xl border border-black/5 group"
                     >
                       <button
                         type="button"
@@ -1109,7 +1129,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                           );
                           setEditingNote({ ...editingNote, checklistItems: items });
                         }}
-                        className="text-slate-600 hover:text-blue-600 cursor-pointer shrink-0"
+                        className="text-slate-600 hover:text-blue-600 cursor-pointer shrink-0 min-h-[36px] min-w-[36px] flex items-center justify-center"
                       >
                         {ci.completed ? (
                           <CheckSquare className="w-5 h-5 text-blue-600" />
@@ -1138,7 +1158,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                             checklistItems: editingNote.checklistItems.filter((i) => i.id !== ci.id),
                           });
                         }}
-                        className="text-slate-500 hover:text-rose-600 p-1 opacity-60 group-hover:opacity-100 transition-opacity cursor-pointer"
+                        className="text-slate-500 hover:text-rose-600 p-2 opacity-70 group-hover:opacity-100 transition-opacity cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -1156,7 +1176,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                         ],
                       });
                     }}
-                    className="flex items-center gap-2 px-3.5 py-2.5 bg-white/90 hover:bg-white text-blue-700 font-bold text-xs rounded-xl border border-blue-200 shadow-2xs mt-3 cursor-pointer"
+                    className="flex items-center gap-2 px-4 py-3 bg-white/90 hover:bg-white text-blue-700 font-bold text-xs sm:text-sm rounded-xl border border-blue-200 shadow-2xs mt-3 cursor-pointer min-h-[44px]"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Add Checklist Item</span>
@@ -1175,7 +1195,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                 <button
                   type="button"
                   onClick={() => setShowFullPageTagInput(!showFullPageTagInput)}
-                  className="text-xs font-bold text-blue-700 hover:text-blue-800 cursor-pointer"
+                  className="text-xs font-bold text-blue-700 hover:text-blue-800 cursor-pointer py-1 px-2"
                 >
                   {showFullPageTagInput ? 'Close' : '+ Add Label'}
                 </button>
@@ -1196,8 +1216,8 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                         }
                       }
                     }}
-                    placeholder="Enter new label (e.g. Finance, Warehouse)..."
-                    className="text-xs bg-white border border-slate-300 rounded-xl px-3 py-2 flex-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="Enter new label (e.g. Finance, Shopping)..."
+                    className="text-xs bg-white border border-slate-300 rounded-xl px-3 py-2.5 flex-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                   <button
                     type="button"
@@ -1207,7 +1227,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                         setFullPageNewTag('');
                       }
                     }}
-                    className="px-3.5 py-2 bg-blue-600 text-white font-bold text-xs rounded-xl cursor-pointer"
+                    className="px-4 py-2.5 bg-blue-600 text-white font-bold text-xs rounded-xl cursor-pointer"
                   >
                     Add
                   </button>
@@ -1232,7 +1252,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                             labels: editingNote.labels.filter((l) => l !== lbl),
                           })
                         }
-                        className="text-slate-600 hover:text-rose-600 cursor-pointer"
+                        className="text-slate-600 hover:text-rose-600 cursor-pointer p-0.5"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -1252,7 +1272,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                 <button
                   type="button"
                   onClick={() => setShowFullPageReminder(!showFullPageReminder)}
-                  className="text-xs font-bold text-blue-700 hover:text-blue-800 cursor-pointer"
+                  className="text-xs font-bold text-blue-700 hover:text-blue-800 cursor-pointer py-1 px-2"
                 >
                   {showFullPageReminder ? 'Hide' : editingNote.reminderAt ? 'Change Time' : '+ Set Reminder'}
                 </button>
@@ -1272,7 +1292,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                   <button
                     type="button"
                     onClick={() => setEditingNote({ ...editingNote, reminderAt: null, isEmergency: false })}
-                    className="text-amber-900 hover:text-rose-600 font-bold cursor-pointer"
+                    className="text-amber-900 hover:text-rose-600 font-bold cursor-pointer px-2 py-1"
                   >
                     Remove
                   </button>
@@ -1316,26 +1336,27 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                 <button
                   type="button"
                   onClick={() => setEditingNote(null)}
-                  className="px-4 py-2 font-bold text-slate-700 hover:bg-black/5 rounded-xl cursor-pointer"
+                  className="px-4 py-2.5 font-bold text-slate-700 hover:bg-black/5 rounded-xl cursor-pointer min-h-[42px]"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveEditedNote}
-                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer active:scale-95"
+                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md transition-all cursor-pointer active:scale-95 min-h-[42px]"
                 >
                   Save &amp; Close
                 </button>
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {/* EXPLICIT CONFIRMATION DIALOG (DELETION SAFEGUARD) */}
-      {confirmDeleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+      {/* EXPLICIT CONFIRMATION DIALOG (DELETION SAFEGUARD, Portaled to document.body at z-[100000]) */}
+      {confirmDeleteTarget && isMounted && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
           <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 border border-rose-100">
@@ -1376,7 +1397,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                 type="button"
                 onClick={() => setConfirmDeleteTarget(null)}
                 disabled={isDeleting}
-                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer min-h-[40px]"
               >
                 Cancel
               </button>
@@ -1384,7 +1405,7 @@ export default function NotesView({ currentUser }: NotesViewProps) {
                 type="button"
                 onClick={executeConfirmedDeletion}
                 disabled={isDeleting}
-                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 min-h-[40px]"
               >
                 {isDeleting ? (
                   <>
@@ -1404,7 +1425,8 @@ export default function NotesView({ currentUser }: NotesViewProps) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
