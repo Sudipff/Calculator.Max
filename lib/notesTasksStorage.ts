@@ -120,7 +120,7 @@ export async function fetchNotes(userId?: string | null): Promise<NoteItem[]> {
   const local = getLocalNotes(userId);
 
   if (!userId) {
-    return local;
+    return local.map((n) => ({ ...n, syncStatus: 'unsynced' as const }));
   }
 
   try {
@@ -144,6 +144,7 @@ export async function fetchNotes(userId?: string | null): Promise<NoteItem[]> {
         labels: Array.isArray(n.labels) ? n.labels : [],
         reminderAt: n.reminder_at || null,
         isEmergency: !!n.is_emergency,
+        syncStatus: 'synced' as const,
         createdAt: n.created_at || new Date().toISOString(),
         updatedAt: n.updated_at || new Date().toISOString(),
       }));
@@ -156,41 +157,59 @@ export async function fetchNotes(userId?: string | null): Promise<NoteItem[]> {
     console.warn('Supabase fetch notes notice:', err);
   }
 
-  return local;
+  return local.map((n) => ({ ...n, syncStatus: 'unsynced' as const }));
 }
 
-export async function upsertNoteToSupabase(note: NoteItem, userId?: string | null): Promise<void> {
-  if (!userId) return;
+export async function upsertNoteToSupabase(
+  note: NoteItem,
+  userId?: string | null
+): Promise<{ success: boolean; syncStatus: 'synced' | 'unsynced'; error?: any }> {
+  if (!userId) {
+    return { success: false, syncStatus: 'unsynced' };
+  }
 
   try {
     const supabase = createClient();
-    await supabase.from('notes').upsert({
+    const { error } = await supabase.from('notes').upsert({
       id: note.id,
       user_id: userId,
       title: note.title,
       content: note.content,
       color: note.color,
-      is_pinned: note.isPinned,
-      is_checklist: note.isChecklist,
+      is_pinned: !!note.isPinned,
+      is_checklist: !!note.isChecklist,
       checklist_items: note.checklistItems || [],
       labels: note.labels || [],
       reminder_at: note.reminderAt || null,
       is_emergency: !!note.isEmergency,
       updated_at: new Date().toISOString(),
     });
+
+    if (error) {
+      console.warn('Supabase upsert note error:', error);
+      return { success: false, syncStatus: 'unsynced', error };
+    }
+
+    return { success: true, syncStatus: 'synced' };
   } catch (err) {
-    console.warn('Supabase upsert note notice:', err);
+    console.warn('Supabase upsert note exception:', err);
+    return { success: false, syncStatus: 'unsynced', error: err };
   }
 }
 
-export async function deleteNoteFromSupabase(noteId: string, userId?: string | null): Promise<void> {
-  if (!userId) return;
+export async function deleteNoteFromSupabase(
+  noteId: string,
+  userId?: string | null
+): Promise<{ success: boolean }> {
+  if (!userId) return { success: false };
 
   try {
     const supabase = createClient();
-    await supabase.from('notes').delete().eq('id', noteId).eq('user_id', userId);
+    const { error } = await supabase.from('notes').delete().eq('id', noteId).eq('user_id', userId);
+    return { success: !error };
   } catch (err) {
     console.warn('Supabase delete note notice:', err);
+    return { success: false };
   }
 }
 
@@ -315,7 +334,11 @@ export async function fetchTasks(userId?: string | null): Promise<TaskItem[]> {
   const local = getLocalTasks(userId);
 
   if (!userId) {
-    return local;
+    return local.map((t) => ({
+      ...t,
+      syncStatus: 'unsynced' as const,
+      subtasks: (t.subtasks || []).map((st) => ({ ...st, syncStatus: 'unsynced' as const })),
+    }));
   }
 
   try {
@@ -339,6 +362,7 @@ export async function fetchTasks(userId?: string | null): Promise<TaskItem[]> {
         isStarred: !!t.is_starred,
         dueDate: t.due_date || null,
         reminderAt: t.reminder_at || null,
+        syncStatus: 'synced' as const,
         createdAt: t.created_at || new Date().toISOString(),
         updatedAt: t.updated_at || new Date().toISOString(),
         subtasks: [],
@@ -367,15 +391,44 @@ export async function fetchTasks(userId?: string | null): Promise<TaskItem[]> {
     console.warn('Supabase fetch tasks notice:', err);
   }
 
-  return local;
+  return local.map((t) => ({
+    ...t,
+    syncStatus: 'unsynced' as const,
+    subtasks: (t.subtasks || []).map((st) => ({ ...st, syncStatus: 'unsynced' as const })),
+  }));
 }
 
-export async function upsertTaskToSupabase(task: TaskItem, userId?: string | null): Promise<void> {
-  if (!userId) return;
+export async function upsertTaskToSupabase(
+  task: TaskItem,
+  userId?: string | null
+): Promise<{ success: boolean; syncStatus: 'synced' | 'unsynced'; error?: any }> {
+  if (!userId) {
+    return { success: false, syncStatus: 'unsynced' };
+  }
 
   try {
     const supabase = createClient();
-    await supabase.from('tasks').upsert({
+
+    // Ensure list exists in public.task_lists if listId is supplied
+    if (task.listId) {
+      try {
+        await supabase.from('task_lists').upsert(
+          {
+            id: task.listId,
+            user_id: userId,
+            name: task.listId === 'default-my-tasks' ? 'My Tasks' : 'Tasks List',
+            color: 'blue',
+            is_default: task.listId === 'default-my-tasks',
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        );
+      } catch (e) {
+        // Continue even if list creation had a non-critical notice
+      }
+    }
+
+    const { error } = await supabase.from('tasks').upsert({
       id: task.id,
       user_id: userId,
       list_id: task.listId || null,
@@ -388,6 +441,31 @@ export async function upsertTaskToSupabase(task: TaskItem, userId?: string | nul
       reminder_at: task.reminderAt || null,
       updated_at: new Date().toISOString(),
     });
+
+    if (error) {
+      console.warn('Supabase upsert task error:', error);
+      // Fallback: If foreign key on list_id failed, retry with list_id = null
+      if (error.code === '23503' && task.listId) {
+        const { error: retryErr } = await supabase.from('tasks').upsert({
+          id: task.id,
+          user_id: userId,
+          list_id: null,
+          parent_id: task.parentId || null,
+          title: task.title,
+          description: task.description || '',
+          completed: !!task.completed,
+          is_starred: !!task.isStarred,
+          due_date: task.dueDate || null,
+          reminder_at: task.reminderAt || null,
+          updated_at: new Date().toISOString(),
+        });
+        if (retryErr) {
+          return { success: false, syncStatus: 'unsynced', error: retryErr };
+        }
+      } else {
+        return { success: false, syncStatus: 'unsynced', error };
+      }
+    }
 
     // Also upsert any nested subtasks
     if (task.subtasks && task.subtasks.length > 0) {
@@ -407,19 +485,29 @@ export async function upsertTaskToSupabase(task: TaskItem, userId?: string | nul
         });
       }
     }
+
+    return { success: true, syncStatus: 'synced' };
   } catch (err) {
-    console.warn('Supabase upsert task notice:', err);
+    console.warn('Supabase upsert task exception:', err);
+    return { success: false, syncStatus: 'unsynced', error: err };
   }
 }
 
-export async function deleteTaskFromSupabase(taskId: string, userId?: string | null): Promise<void> {
-  if (!userId) return;
+export async function deleteTaskFromSupabase(
+  taskId: string,
+  userId?: string | null
+): Promise<{ success: boolean }> {
+  if (!userId) return { success: false };
 
   try {
     const supabase = createClient();
-    // Delete task (and by ON DELETE CASCADE, any subtasks referencing parent_id)
-    await supabase.from('tasks').delete().eq('id', taskId).eq('user_id', userId);
+    // Delete any subtasks first to guarantee clean cleanup
+    await supabase.from('tasks').delete().eq('parent_id', taskId).eq('user_id', userId);
+    // Delete main task
+    const { error } = await supabase.from('tasks').delete().eq('id', taskId).eq('user_id', userId);
+    return { success: !error };
   } catch (err) {
     console.warn('Supabase delete task notice:', err);
+    return { success: false };
   }
 }

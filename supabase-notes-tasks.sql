@@ -1,6 +1,7 @@
 -- ====================================================================
 -- SUPABASE SQL SCRIPT: Notes Manager (Notes & Tasks with RLS)
--- Run this in your Supabase Dashboard -> SQL Editor
+-- Run this script in your Supabase Project:
+-- Supabase Dashboard -> SQL Editor -> New Query -> Run
 -- ====================================================================
 
 -- 1. Create table for Notes (Google Keep-style)
@@ -47,15 +48,17 @@ CREATE TABLE IF NOT EXISTS public.tasks (
   updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
--- 4. Create Indexes for High Performance
+-- 4. Create High-Performance Indexes
 CREATE INDEX IF NOT EXISTS idx_notes_user_id ON public.notes(user_id);
 CREATE INDEX IF NOT EXISTS idx_notes_pinned ON public.notes(user_id, is_pinned);
+CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON public.notes(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_lists_user_id ON public.task_lists(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON public.tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent_id ON public.tasks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_list_id ON public.tasks(list_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON public.tasks(due_date);
 
--- 5. Enable Row Level Security (RLS)
+-- 5. Enable Row Level Security (RLS) on all tables
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.task_lists ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
@@ -64,61 +67,105 @@ ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can view their own notes" ON public.notes;
 CREATE POLICY "Users can view their own notes"
   ON public.notes FOR SELECT
+  TO authenticated
   USING (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users can insert their own notes" ON public.notes;
 CREATE POLICY "Users can insert their own notes"
   ON public.notes FOR INSERT
+  TO authenticated
   WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users can update their own notes" ON public.notes;
 CREATE POLICY "Users can update their own notes"
   ON public.notes FOR UPDATE
-  USING (auth.uid() = user_id);
+  TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users can delete their own notes" ON public.notes;
 CREATE POLICY "Users can delete their own notes"
   ON public.notes FOR DELETE
+  TO authenticated
   USING (auth.uid() = user_id);
 
 -- 7. RLS Policies for Task Lists
 DROP POLICY IF EXISTS "Users can view their own task lists" ON public.task_lists;
 CREATE POLICY "Users can view their own task lists"
   ON public.task_lists FOR SELECT
+  TO authenticated
   USING (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users can insert their own task lists" ON public.task_lists;
 CREATE POLICY "Users can insert their own task lists"
   ON public.task_lists FOR INSERT
+  TO authenticated
   WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users can update their own task lists" ON public.task_lists;
 CREATE POLICY "Users can update their own task lists"
   ON public.task_lists FOR UPDATE
-  USING (auth.uid() = user_id);
+  TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users can delete their own task lists" ON public.task_lists;
 CREATE POLICY "Users can delete their own task lists"
   ON public.task_lists FOR DELETE
+  TO authenticated
   USING (auth.uid() = user_id);
 
 -- 8. RLS Policies for Tasks
 DROP POLICY IF EXISTS "Users can view their own tasks" ON public.tasks;
 CREATE POLICY "Users can view their own tasks"
   ON public.tasks FOR SELECT
+  TO authenticated
   USING (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users can insert their own tasks" ON public.tasks;
 CREATE POLICY "Users can insert their own tasks"
   ON public.tasks FOR INSERT
+  TO authenticated
   WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users can update their own tasks" ON public.tasks;
 CREATE POLICY "Users can update their own tasks"
   ON public.tasks FOR UPDATE
-  USING (auth.uid() = user_id);
+  TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users can delete their own tasks" ON public.tasks;
 CREATE POLICY "Users can delete their own tasks"
   ON public.tasks FOR DELETE
+  TO authenticated
   USING (auth.uid() = user_id);
+
+-- 9. Real-time Replication publication (optional, allows Supabase realtime subscriptions)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND tablename = 'notes'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.notes;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND tablename = 'tasks'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.tasks;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND tablename = 'task_lists'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.task_lists;
+  END IF;
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Realtime publication configuration notice
+    NULL;
+END $$;
