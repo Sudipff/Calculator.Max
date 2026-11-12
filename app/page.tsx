@@ -34,6 +34,8 @@ import {
   Instagram,
   ExternalLink,
   Share2,
+  StickyNote,
+  ListTodo,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import EmiCalculator from '../components/EmiCalculator';
@@ -42,6 +44,8 @@ import AgeCalculator from '../components/AgeCalculator';
 import ScientificCalculator from '../components/ScientificCalculator';
 import AuthHeader from '../components/AuthHeader';
 import CurrencyExchange from '../components/CurrencyExchange';
+import NotesView from '../components/NotesManager/NotesView';
+import TasksView from '../components/NotesManager/TasksView';
 import { createClient } from '@/utils/supabase/client';
 import {
   getCalculationHistory,
@@ -54,7 +58,7 @@ import {
 } from '../lib/historyStorage';
 import { exportAllHistoryPDF, exportSingleItemPDF } from '../lib/pdfExport';
 
-type ActiveTab = 'age' | 'calculator' | 'emi' | 'wishlist' | 'discount' | 'weight' | 'unit' | 'currency' | 'quick' | 'history';
+type ActiveTab = 'age' | 'calculator' | 'emi' | 'wishlist' | 'discount' | 'weight' | 'unit' | 'currency' | 'quick' | 'notes' | 'tasks' | 'history';
 export type VibrationType = 'success' | 'error' | 'click' | 'reset';
 
 const TAB_ORDER: Record<ActiveTab, number> = {
@@ -67,7 +71,9 @@ const TAB_ORDER: Record<ActiveTab, number> = {
   unit: 6,
   currency: 7,
   quick: 8,
-  history: 9,
+  notes: 9,
+  tasks: 10,
+  history: 11,
 };
 
 const CURRENCIES = [
@@ -244,6 +250,34 @@ const CALCULATOR_TOOLS_INFO: ToolInfoItem[] = [
     example: 'e.g. Compare discounts & convert units simultaneously',
   },
   {
+    id: 'notes',
+    title: 'Notes',
+    subtitle: 'Google Keep-style color notes',
+    icon: StickyNote,
+    colorBg: 'bg-amber-600',
+    colorText: 'text-amber-600',
+    colorActiveBg: 'bg-amber-50 border-amber-200/80',
+    colorActiveText: 'text-amber-700',
+    colorActiveDot: 'bg-amber-600',
+    summary: 'Google Keep-style color coded notes with interactive checklists, tags/labels, pinning, and emergency reminders.',
+    features: ['Color coding (12 palettes)', 'Interactive checkable checklists', 'Custom tags & labels filtering', 'Pin important notes to top', 'Emergency & time-based reminders'],
+    example: 'e.g. Color coded store checklist & emergency supplier notes',
+  },
+  {
+    id: 'tasks',
+    title: 'Tasks',
+    subtitle: 'Google Tasks-style organizer',
+    icon: ListTodo,
+    colorBg: 'bg-blue-600',
+    colorText: 'text-blue-600',
+    colorActiveBg: 'bg-blue-50 border-blue-200/80',
+    colorActiveText: 'text-blue-700',
+    colorActiveDot: 'bg-blue-600',
+    summary: 'Google Tasks-style organizer supporting nested sub-tasks, priority star marking, custom lists/categories, and device push alerts.',
+    features: ['Nested sub-tasks under main tasks', 'Priority star marking', 'Custom categories/lists', 'Push notifications & audio chime', 'Real-time Supabase synchronization'],
+    example: 'e.g. Retail orders with nested sub-tasks and audio reminder',
+  },
+  {
     id: 'history',
     title: 'Calculation History',
     subtitle: 'Saved records & reports',
@@ -271,9 +305,11 @@ export default function RetailCalc() {
   const [openCategories, setOpenCategories] = useState<{
     allCalculators: boolean;
     quickTools: boolean;
+    notesManager: boolean;
   }>({
     allCalculators: true,
     quickTools: false,
+    notesManager: false,
   });
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -1856,10 +1892,14 @@ export default function RetailCalc() {
                     {(() => {
                       const allCalculatorsIds: ActiveTab[] = ['age', 'calculator', 'emi', 'discount'];
                       const quickToolsIds: ActiveTab[] = ['wishlist', 'weight', 'unit', 'currency'];
+                      const notesManagerIds: ActiveTab[] = ['notes', 'tasks'];
                       const allCalculatorsTools = allCalculatorsIds
                         .map((id) => CALCULATOR_TOOLS_INFO.find((t) => t.id === id))
                         .filter((t): t is ToolInfoItem => Boolean(t));
                       const quickToolsList = quickToolsIds
+                        .map((id) => CALCULATOR_TOOLS_INFO.find((t) => t.id === id))
+                        .filter((t): t is ToolInfoItem => Boolean(t));
+                      const notesManagerTools = notesManagerIds
                         .map((id) => CALCULATOR_TOOLS_INFO.find((t) => t.id === id))
                         .filter((t): t is ToolInfoItem => Boolean(t));
                       const historyTool = CALCULATOR_TOOLS_INFO.find((t) => t.id === 'history');
@@ -2022,6 +2062,7 @@ export default function RetailCalc() {
                                 setOpenCategories((prev) => ({
                                   allCalculators: !prev.allCalculators,
                                   quickTools: false,
+                                  notesManager: false,
                                 }));
                                 triggerVibration('click');
                               }}
@@ -2068,6 +2109,7 @@ export default function RetailCalc() {
                                 setOpenCategories((prev) => ({
                                   allCalculators: false,
                                   quickTools: !prev.quickTools,
+                                  notesManager: false,
                                 }));
                                 triggerVibration('click');
                               }}
@@ -2100,6 +2142,53 @@ export default function RetailCalc() {
                                 >
                                   <div className="p-1.5 pt-0 space-y-1 border-t border-slate-100 bg-white">
                                     {quickToolsList.map((tool) => renderSidebarToolItem(tool))}
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+
+                          {/* Dropdown Category 3: Notes Manager (Directly above History) */}
+                          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenCategories((prev) => ({
+                                  allCalculators: false,
+                                  quickTools: false,
+                                  notesManager: !prev.notesManager,
+                                }));
+                                triggerVibration('click');
+                              }}
+                              className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-slate-100/80 transition-colors cursor-pointer"
+                            >
+                              <div className="flex items-center gap-2">
+                                <StickyNote className="w-4 h-4 text-amber-600" />
+                                <span className="text-xs font-extrabold text-slate-800 tracking-tight">
+                                  Notes Manager
+                                </span>
+                                <span className="text-[10px] font-bold text-amber-700 bg-amber-100/80 px-1.5 py-0.5 rounded-md">
+                                  {notesManagerTools.length}
+                                </span>
+                              </div>
+                              <ChevronDown
+                                className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
+                                  openCategories.notesManager ? 'rotate-180 text-amber-600' : ''
+                                }`}
+                              />
+                            </button>
+
+                            <AnimatePresence initial={false}>
+                              {openCategories.notesManager && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: 0.2 }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="p-1.5 pt-0 space-y-1 border-t border-slate-100 bg-white">
+                                    {notesManagerTools.map((tool) => renderSidebarToolItem(tool))}
                                   </div>
                                 </motion.div>
                               )}
@@ -2362,6 +2451,26 @@ export default function RetailCalc() {
                     appCurrency={currency}
                     triggerVibration={triggerVibration}
                     onSaveHistory={(type, details, result) => saveHistoryItem(type, details, result)}
+                  />
+                </section>
+              )}
+
+              {/* TAB: NOTES (Google Keep-style) */}
+              {activeTab === 'notes' && (
+                <section className="py-2">
+                  <NotesView
+                    currentUser={currentUser}
+                    triggerVibration={triggerVibration}
+                  />
+                </section>
+              )}
+
+              {/* TAB: TASKS (Google Tasks-style) */}
+              {activeTab === 'tasks' && (
+                <section className="py-2">
+                  <TasksView
+                    currentUser={currentUser}
+                    triggerVibration={triggerVibration}
                   />
                 </section>
               )}
