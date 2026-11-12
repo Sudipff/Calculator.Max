@@ -59,16 +59,16 @@ export interface NoteColorOption {
 }
 
 export const NOTE_COLORS: NoteColorOption[] = [
-  { id: 'default', name: 'White', hex: '#ffffff', borderHex: '#cbd5e1', textClass: 'text-slate-900', borderClass: 'border-slate-300', bgClass: 'bg-white' },
-  { id: 'coral', name: 'Coral Red', hex: '#ffe4e6', borderHex: '#fda4af', textClass: 'text-rose-950', borderClass: 'border-rose-300', bgClass: 'bg-rose-100' },
-  { id: 'peach', name: 'Peach Orange', hex: '#ffedd5', borderHex: '#fdba74', textClass: 'text-orange-950', borderClass: 'border-orange-300', bgClass: 'bg-orange-100' },
-  { id: 'sand', name: 'Sand Yellow', hex: '#fef3c7', borderHex: '#fcd34d', textClass: 'text-amber-950', borderClass: 'border-amber-300', bgClass: 'bg-amber-100' },
-  { id: 'mint', name: 'Mint Green', hex: '#d1fae5', borderHex: '#6ee7b7', textClass: 'text-emerald-950', borderClass: 'border-emerald-300', bgClass: 'bg-emerald-100' },
-  { id: 'sage', name: 'Sage Teal', hex: '#ccfbf1', borderHex: '#5eead4', textClass: 'text-teal-950', borderClass: 'border-teal-300', bgClass: 'bg-teal-100' },
-  { id: 'sky', name: 'Sky Blue', hex: '#e0f2fe', borderHex: '#7dd3fc', textClass: 'text-sky-950', borderClass: 'border-sky-300', bgClass: 'bg-sky-100' },
-  { id: 'dusk', name: 'Dusk Blue', hex: '#dbeafe', borderHex: '#93c5fd', textClass: 'text-blue-950', borderClass: 'border-blue-300', bgClass: 'bg-blue-100' },
-  { id: 'lavender', name: 'Lavender Violet', hex: '#f3e8ff', borderHex: '#d8b4fe', textClass: 'text-purple-950', borderClass: 'border-purple-300', bgClass: 'bg-purple-100' },
-  { id: 'blossom', name: 'Blossom Pink', hex: '#fce7f3', borderHex: '#f472b6', textClass: 'text-pink-950', borderClass: 'border-pink-300', bgClass: 'bg-pink-100' },
-  { id: 'clay', name: 'Clay Brown', hex: '#f5f5f4', borderHex: '#a8a29e', textClass: 'text-stone-950', borderClass: 'border-stone-400', bgClass: 'bg-stone-200' },
-  { id: 'charcoal', name: 'Charcoal Gray', hex: '#e2e8f0', borderHex: '#94a3b8', textClass: 'text-slate-950', borderClass: 'border-slate-400', bgClass: 'bg-slate-200' },
+  { id: 'default', name: 'White', hex: '#ffffff', borderHex: '#94a3b8', textClass: 'text-slate-900', borderClass: 'border-slate-300', bgClass: 'bg-white' },
+  { id: 'coral', name: 'Coral Red', hex: '#fecdd3', borderHex: '#f43f5e', textClass: 'text-rose-950', borderClass: 'border-rose-400', bgClass: 'bg-rose-200' },
+  { id: 'peach', name: 'Peach Orange', hex: '#fed7aa', borderHex: '#f97316', textClass: 'text-orange-950', borderClass: 'border-orange-400', bgClass: 'bg-orange-200' },
+  { id: 'sand', name: 'Sand Yellow', hex: '#fef08a', borderHex: '#eab308', textClass: 'text-amber-950', borderClass: 'border-amber-400', bgClass: 'bg-yellow-200' },
+  { id: 'mint', name: 'Mint Green', hex: '#a7f3d0', borderHex: '#10b981', textClass: 'text-emerald-950', borderClass: 'border-emerald-400', bgClass: 'bg-emerald-200' },
+  { id: 'sage', name: 'Sage Teal', hex: '#99f6e4', borderHex: '#0d9488', textClass: 'text-teal-950', borderClass: 'border-teal-400', bgClass: 'bg-teal-200' },
+  { id: 'sky', name: 'Sky Blue', hex: '#bae6fd', borderHex: '#0284c7', textClass: 'text-sky-950', borderClass: 'border-sky-400', bgClass: 'bg-sky-200' },
+  { id: 'dusk', name: 'Dusk Blue', hex: '#bfdbfe', borderHex: '#2563eb', textClass: 'text-blue-950', borderClass: 'border-blue-400', bgClass: 'bg-blue-200' },
+  { id: 'lavender', name: 'Lavender Violet', hex: '#e9d5ff', borderHex: '#9333ea', textClass: 'text-purple-950', borderClass: 'border-purple-400', bgClass: 'bg-purple-200' },
+  { id: 'blossom', name: 'Blossom Pink', hex: '#fbcfe8', borderHex: '#db2777', textClass: 'text-pink-950', borderClass: 'border-pink-400', bgClass: 'bg-pink-200' },
+  { id: 'clay', name: 'Clay Brown', hex: '#e7e5e4', borderHex: '#78716c', textClass: 'text-stone-950', borderClass: 'border-stone-400', bgClass: 'bg-stone-200' },
+  { id: 'charcoal', name: 'Charcoal Gray', hex: '#cbd5e1', borderHex: '#64748b', textClass: 'text-slate-950', borderClass: 'border-slate-400', bgClass: 'bg-slate-300' },
 ];

@@ -22,7 +22,6 @@ import {
   ChevronDown,
   ArrowLeft,
   CheckCircle2,
-  Layers,
 } from 'lucide-react';
 import { NoteItem, ChecklistItem, NOTE_COLORS } from '@/lib/types/notes-tasks';
 import {
@@ -39,7 +38,7 @@ interface NotesViewProps {
   triggerVibration?: (type: 'success' | 'error' | 'click' | 'reset') => void;
 }
 
-export default function NotesView({ currentUser, triggerVibration }: NotesViewProps) {
+export default function NotesView({ currentUser }: NotesViewProps) {
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -47,9 +46,8 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
 
-  // Batch Selection State
+  // Batch Selection State (Activated by Long-Press)
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
-  const [isSelectMode, setIsSelectMode] = useState(false);
 
   // Deletion Safeguard Modal State
   const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<
@@ -81,6 +79,24 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
   const [showFullPageReminder, setShowFullPageReminder] = useState(false);
 
   const editorRef = useRef<HTMLDivElement>(null);
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isLongPressFiredRef = useRef<boolean>(false);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Layout Optimization: Prevent Background Scrolling when Full-Page View is active
+  useEffect(() => {
+    if (editingNote) {
+      const originalOverflow = document.body.style.overflow;
+      const originalOverscroll = document.body.style.overscrollBehavior;
+      document.body.style.overflow = 'hidden';
+      document.body.style.overscrollBehavior = 'none';
+
+      return () => {
+        document.body.style.overflow = originalOverflow;
+        document.body.style.overscrollBehavior = originalOverscroll;
+      };
+    }
+  }, [editingNote]);
 
   // Load notes on mount or user change
   useEffect(() => {
@@ -140,16 +156,45 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
     return () => clearInterval(interval);
   }, [notes]);
 
-  // Manual Real-Time Data Refresh (Without page reload)
+  // Long-press detection helpers for touch and desktop
+  const handleStartLongPress = (id: string, clientX?: number, clientY?: number) => {
+    if (selectedNoteIds.length > 0) return; // In selection mode already
+    isLongPressFiredRef.current = false;
+    if (clientX !== undefined && clientY !== undefined) {
+      touchStartPosRef.current = { x: clientX, y: clientY };
+    }
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      isLongPressFiredRef.current = true;
+      setSelectedNoteIds([id]);
+    }, 500);
+  };
+
+  const handleCancelLongPress = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (touchStartPosRef.current && e.touches[0]) {
+      const dx = Math.abs(e.touches[0].clientX - touchStartPosRef.current.x);
+      const dy = Math.abs(e.touches[0].clientY - touchStartPosRef.current.y);
+      if (dx > 10 || dy > 10) {
+        handleCancelLongPress();
+      }
+    }
+  };
+
+  // Manual Real-Time Data Refresh (No page reload)
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
-    triggerVibration?.('click');
     try {
       const freshNotes = await fetchNotes(currentUser?.id);
       setNotes(freshNotes);
       setRefreshNotice('Notes synchronized in real-time');
       setTimeout(() => setRefreshNotice(null), 3000);
-      triggerVibration?.('success');
     } catch (err) {
       console.warn('Manual refresh notice:', err);
     } finally {
@@ -203,7 +248,6 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
     resetEditor();
-    triggerVibration?.('success');
 
     // Immediate Supabase sync
     if (currentUser?.id) {
@@ -214,16 +258,14 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
     }
   };
 
-  // Safe Deletion Handlers (Requires explicit confirmation modal)
+  // Deletion Safeguards (Requires explicit confirmation modal)
   const promptDeleteSingle = (note: NoteItem, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    triggerVibration?.('click');
     setConfirmDeleteTarget({ type: 'single', note });
   };
 
   const promptDeleteBatch = () => {
     if (selectedNoteIds.length === 0) return;
-    triggerVibration?.('click');
     setConfirmDeleteTarget({ type: 'batch', ids: selectedNoteIds });
   };
 
@@ -241,7 +283,6 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
         setEditingNote(null);
       }
       setSelectedNoteIds((prev) => prev.filter((id) => id !== noteId));
-      triggerVibration?.('success');
 
       if (currentUser?.id) {
         await deleteNoteFromSupabase(noteId, currentUser.id);
@@ -256,8 +297,6 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
         setEditingNote(null);
       }
       setSelectedNoteIds([]);
-      setIsSelectMode(false);
-      triggerVibration?.('success');
 
       if (currentUser?.id) {
         await deleteNotesBatchFromSupabase(idsToDelete, currentUser.id);
@@ -271,7 +310,6 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
   // Batch Selection Handlers
   const handleToggleSelectNote = (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    triggerVibration?.('click');
     setSelectedNoteIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
@@ -284,13 +322,10 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
     } else {
       setSelectedNoteIds(allFilteredIds);
     }
-    triggerVibration?.('click');
   };
 
   const handleCancelSelection = () => {
     setSelectedNoteIds([]);
-    setIsSelectMode(false);
-    triggerVibration?.('click');
   };
 
   const handleTogglePin = async (id: string, e?: React.MouseEvent) => {
@@ -300,7 +335,6 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
     );
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
-    triggerVibration?.('click');
 
     const target = updated.find((n) => n.id === id);
     if (target && currentUser?.id) {
@@ -336,7 +370,6 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
 
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
-    triggerVibration?.('click');
 
     const target = updated.find((n) => n.id === noteId);
     if (target && currentUser?.id) {
@@ -381,7 +414,6 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
     setEditingNote(null);
-    triggerVibration?.('success');
 
     if (currentUser?.id) {
       const res = await upsertNoteToSupabase(noteToSave, currentUser.id);
@@ -420,27 +452,27 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
     : NOTE_COLORS[0];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       {/* Header Bar with Distinct Round Refresh Button Positioned Above Search */}
-      <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-4">
+      <div className="bg-white p-4 sm:p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-3 sm:space-y-4">
         {/* Top Header Row: Title & Top-Right Round Refresh Button */}
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2.5">
-              <span className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2.5 truncate">
+              <span className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs shrink-0">
                 <Sparkles className="w-4 h-4" />
               </span>
-              <span>Notes Manager</span>
+              <span className="truncate">Notes Manager</span>
             </h2>
-            <p className="text-xs text-slate-500 mt-1">
-              Google Keep-style full-page notes, batch selection, real-time sync &amp; deletion safeguards.
+            <p className="text-xs text-slate-500 mt-1 line-clamp-1 sm:line-clamp-none">
+              Google Keep-style full-page notes, entire card colors &amp; long-press batch selection.
             </p>
           </div>
 
           {/* Distinct Round Refresh Button Positioned at Top Right Above Search Option */}
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
             {refreshNotice && (
-              <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
+              <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
                 <Check className="w-3 h-3 text-emerald-600" />
                 <span>{refreshNotice}</span>
               </span>
@@ -458,9 +490,9 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
           </div>
         </div>
 
-        {/* Search Bar & Batch Selection Controls (Positioned Below the Refresh Button) */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
-          <div className="relative flex-1 max-w-md">
+        {/* Search Bar (Positioned Below the Refresh Button) */}
+        <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
+          <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
@@ -478,32 +510,12 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
               </button>
             )}
           </div>
-
-          {/* Batch Mode Trigger Button */}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setIsSelectMode(!isSelectMode);
-                if (isSelectMode) setSelectedNoteIds([]);
-                triggerVibration?.('click');
-              }}
-              className={`px-3.5 py-2 rounded-2xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
-                isSelectMode || selectedNoteIds.length > 0
-                  ? 'bg-amber-500 text-white shadow-xs'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5" />
-              <span>{isSelectMode || selectedNoteIds.length > 0 ? 'Batch Active' : 'Batch Select'}</span>
-            </button>
-          </div>
         </div>
       </div>
 
-      {/* Floating or Sticky Batch Action Bar when items are selected */}
-      {(isSelectMode || selectedNoteIds.length > 0) && (
-        <div className="bg-slate-900 text-white p-3 sm:p-4 rounded-3xl shadow-xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-200">
+      {/* Floating or Sticky Batch Action Bar when items are selected via Long-Press */}
+      {selectedNoteIds.length > 0 && (
+        <div className="sticky top-3 z-30 bg-slate-900 text-white p-3 sm:p-4 rounded-3xl shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-200 border border-slate-700">
           <div className="flex items-center gap-2.5">
             <span className="w-7 h-7 rounded-xl bg-amber-500 text-white flex items-center justify-center text-xs font-black">
               {selectedNoteIds.length}
@@ -529,14 +541,14 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
               className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete Selected ({selectedNoteIds.length})</span>
+              <span>Delete ({selectedNoteIds.length})</span>
             </button>
 
             <button
               type="button"
               onClick={handleCancelSelection}
               className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
-              title="Cancel batch selection"
+              title="Cancel selection"
             >
               <X className="w-4 h-4" />
             </button>
@@ -576,21 +588,21 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
         </div>
       )}
 
-      {/* Note Creator Box */}
+      {/* Note Creator Box with Rich Background Color */}
       <div
         ref={editorRef}
         style={{
           backgroundColor: activeColorTheme.hex,
           borderColor: activeColorTheme.borderHex,
         }}
-        className="max-w-2xl mx-auto rounded-3xl transition-colors duration-200 shadow-md border"
+        className="max-w-2xl mx-auto rounded-3xl transition-colors duration-200 shadow-md border-2"
       >
         {!isEditorExpanded ? (
           <div
             onClick={() => setIsEditorExpanded(true)}
             className="flex items-center justify-between p-3.5 sm:p-4 cursor-text"
           >
-            <span className="text-sm font-semibold text-slate-500 pl-2">
+            <span className="text-sm font-semibold text-slate-700 pl-2">
               Take a note...
             </span>
             <div className="flex items-center gap-2">
@@ -601,7 +613,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                   setIsChecklist(true);
                   setIsEditorExpanded(true);
                 }}
-                className="p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-black/5 transition-colors cursor-pointer"
+                className="p-2 rounded-xl text-slate-700 hover:text-slate-950 hover:bg-black/5 transition-colors cursor-pointer"
                 title="New checklist"
               >
                 <CheckSquare className="w-4 h-4" />
@@ -613,7 +625,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                   setIsEditorExpanded(true);
                   setShowColorPicker(true);
                 }}
-                className="p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-black/5 transition-colors cursor-pointer"
+                className="p-2 rounded-xl text-slate-700 hover:text-slate-950 hover:bg-black/5 transition-colors cursor-pointer"
                 title="Color palette"
               >
                 <Palette className="w-4 h-4" />
@@ -629,7 +641,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Title"
-                className="w-full bg-transparent font-extrabold text-base text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                className="w-full bg-transparent font-extrabold text-base text-slate-900 placeholder:text-slate-500 focus:outline-none"
               />
               <button
                 type="button"
@@ -637,7 +649,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 className={`p-2 rounded-xl transition-all cursor-pointer shadow-xs ${
                   isPinned
                     ? 'text-white bg-amber-500 ring-2 ring-amber-300 scale-105'
-                    : 'text-slate-700 bg-white/80 border border-slate-300 hover:bg-white hover:text-amber-600'
+                    : 'text-slate-800 bg-white border-2 border-slate-300 hover:bg-slate-50 hover:text-amber-600'
                 }`}
                 title={isPinned ? 'Unpin note' : 'Pin note to top'}
               >
@@ -652,7 +664,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 onChange={(e) => setContent(e.target.value)}
                 placeholder="Take a note..."
                 rows={3}
-                className="w-full bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none resize-none leading-relaxed"
+                className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none resize-none leading-relaxed"
               />
             ) : (
               <div className="space-y-2 pt-1">
@@ -665,17 +677,17 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                           checklistItems.map((ci) => (ci.id === item.id ? { ...ci, completed: !ci.completed } : ci))
                         );
                       }}
-                      className="text-slate-400 hover:text-blue-600 cursor-pointer"
+                      className="text-slate-600 hover:text-blue-600 cursor-pointer"
                     >
                       {item.completed ? <CheckSquare className="w-4 h-4 text-blue-600" /> : <Square className="w-4 h-4" />}
                     </button>
-                    <span className={`text-sm flex-1 ${item.completed ? 'line-through text-slate-400' : 'text-slate-800 font-medium'}`}>
+                    <span className={`text-sm flex-1 ${item.completed ? 'line-through text-slate-500' : 'text-slate-900 font-semibold'}`}>
                       {item.text}
                     </span>
                     <button
                       type="button"
                       onClick={() => handleRemoveChecklistItemFromEditor(item.id)}
-                      className="text-slate-400 hover:text-rose-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                      className="text-slate-500 hover:text-rose-600 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -684,7 +696,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
 
                 {/* Add new checklist item line */}
                 <div className="flex items-center gap-2 pt-1">
-                  <Plus className="w-4 h-4 text-slate-400" />
+                  <Plus className="w-4 h-4 text-slate-600" />
                   <input
                     type="text"
                     value={newChecklistText}
@@ -696,12 +708,12 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                       }
                     }}
                     placeholder="List item (press Enter to add)"
-                    className="w-full bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none"
+                    className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={handleAddChecklistItemToEditor}
-                    className="text-xs font-bold text-blue-600 hover:text-blue-700 px-2 py-1 shrink-0 cursor-pointer"
+                    className="text-xs font-bold text-blue-700 hover:text-blue-800 px-2 py-1 shrink-0 cursor-pointer"
                   >
                     Add
                   </button>
@@ -715,7 +727,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 {labels.map((lbl) => (
                   <span
                     key={lbl}
-                    className="inline-flex items-center gap-1 bg-black/5 text-slate-700 text-[11px] font-bold px-2 py-0.5 rounded-md"
+                    className="inline-flex items-center gap-1 bg-black/10 text-slate-800 text-[11px] font-bold px-2 py-0.5 rounded-md"
                   >
                     #{lbl}
                     <button
@@ -732,9 +744,9 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
 
             {/* Reminder Badge in Editor */}
             {reminderAt && (
-              <div className="flex items-center justify-between text-xs font-semibold bg-amber-100/70 text-amber-900 px-3 py-1.5 rounded-xl">
+              <div className="flex items-center justify-between text-xs font-semibold bg-amber-100/90 text-amber-950 px-3 py-1.5 rounded-xl border border-amber-300">
                 <span className="flex items-center gap-1.5">
-                  <Bell className="w-3.5 h-3.5 text-amber-600" />
+                  <Bell className="w-3.5 h-3.5 text-amber-700" />
                   <span>Reminder: {new Date(reminderAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span>
                   {isEmergency && <span className="bg-rose-600 text-white text-[10px] px-1.5 py-0.2 rounded-md font-bold uppercase tracking-wider ml-1">Emergency</span>}
                 </span>
@@ -744,7 +756,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                     setReminderAt('');
                     setIsEmergency(false);
                   }}
-                  className="text-amber-800 hover:text-rose-600 cursor-pointer"
+                  className="text-amber-900 hover:text-rose-600 cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -753,8 +765,8 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
 
             {/* Palette Selector Dropdown */}
             {showColorPicker && (
-              <div className="pt-2 border-t border-black/5 flex flex-wrap gap-2 items-center">
-                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">Card Color:</span>
+              <div className="pt-2 border-t border-black/10 flex flex-wrap gap-2 items-center">
+                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider mr-1">Card Color:</span>
                 {NOTE_COLORS.map((c) => (
                   <button
                     key={c.id}
@@ -765,7 +777,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                     }}
                     style={{ backgroundColor: c.hex }}
                     className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
-                      color === c.id ? 'border-slate-900 scale-110 shadow-md ring-2 ring-slate-400' : 'border-slate-300'
+                      color === c.id ? 'border-slate-900 scale-110 shadow-md ring-2 ring-slate-400' : 'border-slate-400'
                     }`}
                     title={c.name}
                   >
@@ -777,8 +789,8 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
 
             {/* Tag Input Dropdown */}
             {showTagInput && (
-              <div className="flex items-center gap-2 pt-2 border-t border-black/5">
-                <Tag className="w-3.5 h-3.5 text-slate-500" />
+              <div className="flex items-center gap-2 pt-2 border-t border-black/10">
+                <Tag className="w-3.5 h-3.5 text-slate-600" />
                 <input
                   type="text"
                   value={newTagInput}
@@ -790,7 +802,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                     }
                   }}
                   placeholder="Enter tag name (e.g. Work, Store, Budget)"
-                  className="text-xs bg-transparent border-b border-slate-300 focus:border-blue-600 focus:outline-none flex-1 py-1"
+                  className="text-xs bg-transparent border-b border-slate-400 focus:border-blue-600 focus:outline-none flex-1 py-1 text-slate-900 placeholder:text-slate-500"
                 />
                 <button
                   type="button"
@@ -804,7 +816,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
 
             {/* Reminder Date Picker Dropdown */}
             {showReminderPicker && (
-              <div className="p-3 bg-white/95 backdrop-blur-sm border border-slate-200 rounded-2xl shadow-md space-y-2.5 text-xs">
+              <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-md space-y-2.5 text-xs">
                 <div className="font-bold text-slate-800 flex items-center gap-1.5">
                   <Bell className="w-3.5 h-3.5 text-blue-600" />
                   <span>Set Time Reminder</span>
@@ -844,12 +856,12 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
             )}
 
             {/* Bottom Actions Toolbar */}
-            <div className="flex items-center justify-between pt-2 border-t border-black/5">
+            <div className="flex items-center justify-between pt-2 border-t border-black/10">
               <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => setShowColorPicker(!showColorPicker)}
-                  className="p-2 text-slate-700 hover:text-slate-900 rounded-xl hover:bg-black/5 transition-colors cursor-pointer"
+                  className="p-2 text-slate-800 hover:text-slate-950 rounded-xl hover:bg-black/5 transition-colors cursor-pointer"
                   title="Card Color Palette"
                 >
                   <Palette className="w-4 h-4" />
@@ -858,7 +870,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                   type="button"
                   onClick={() => setIsChecklist(!isChecklist)}
                   className={`p-2 rounded-xl transition-colors cursor-pointer ${
-                    isChecklist ? 'text-blue-600 bg-blue-100/50' : 'text-slate-700 hover:text-slate-900 hover:bg-black/5'
+                    isChecklist ? 'text-blue-700 bg-blue-100' : 'text-slate-800 hover:text-slate-950 hover:bg-black/5'
                   }`}
                   title={isChecklist ? 'Switch to text note' : 'Switch to checklist'}
                 >
@@ -867,7 +879,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 <button
                   type="button"
                   onClick={() => setShowReminderPicker(!showReminderPicker)}
-                  className="p-2 text-slate-700 hover:text-slate-900 rounded-xl hover:bg-black/5 transition-colors cursor-pointer"
+                  className="p-2 text-slate-800 hover:text-slate-950 rounded-xl hover:bg-black/5 transition-colors cursor-pointer"
                   title="Add reminder"
                 >
                   <Bell className="w-4 h-4" />
@@ -875,7 +887,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 <button
                   type="button"
                   onClick={() => setShowTagInput(!showTagInput)}
-                  className="p-2 text-slate-700 hover:text-slate-900 rounded-xl hover:bg-black/5 transition-colors cursor-pointer"
+                  className="p-2 text-slate-800 hover:text-slate-950 rounded-xl hover:bg-black/5 transition-colors cursor-pointer"
                   title="Add label/tag"
                 >
                   <Tag className="w-4 h-4" />
@@ -886,7 +898,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 <button
                   type="button"
                   onClick={resetEditor}
-                  className="text-xs font-semibold text-slate-500 hover:text-slate-700 px-3 py-1.5 cursor-pointer"
+                  className="text-xs font-semibold text-slate-600 hover:text-slate-800 px-3 py-1.5 cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -928,8 +940,8 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
           {/* Pinned Notes Section */}
           {pinnedNotes.length > 0 && (
             <div className="space-y-3">
-              <div className="text-[11px] font-black uppercase tracking-widest text-slate-500 px-1 flex items-center gap-1.5">
-                <Pin className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+              <div className="text-[11px] font-black uppercase tracking-widest text-slate-600 px-1 flex items-center gap-1.5">
+                <Pin className="w-3.5 h-3.5 text-amber-600 fill-amber-500" />
                 <span>Pinned ({pinnedNotes.length})</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -942,7 +954,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
           {otherNotes.length > 0 && (
             <div className="space-y-3">
               {pinnedNotes.length > 0 && (
-                <div className="text-[11px] font-black uppercase tracking-widest text-slate-500 px-1">
+                <div className="text-[11px] font-black uppercase tracking-widest text-slate-600 px-1">
                   <span>Others ({otherNotes.length})</span>
                 </div>
               )}
@@ -954,41 +966,41 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
         </div>
       )}
 
-      {/* FULL-PAGE VIEW UPON CLICKING (Full Editing View) */}
+      {/* FULL-PAGE VIEW (Optimized for Mobile, Solid Background, No Background Scrolling) */}
       {editingNote && (
         <div
           style={{ backgroundColor: editingColorTheme.hex }}
-          className="fixed inset-0 z-50 w-full h-[100dvh] flex flex-col overflow-y-auto transition-colors duration-200"
+          className="fixed inset-0 z-50 w-full h-[100dvh] flex flex-col overscroll-none select-text"
         >
           {/* Top Full-Page Navigation & Action Bar */}
-          <div className="sticky top-0 z-20 backdrop-blur-md bg-white/40 border-b border-black/10 px-4 sm:px-8 py-3.5 flex items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-center gap-3">
+          <div className="sticky top-0 z-20 bg-white/70 backdrop-blur-md border-b border-black/10 px-3 sm:px-8 py-3 flex items-center justify-between gap-2 shadow-xs shrink-0">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={handleSaveEditedNote}
-                className="flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer active:scale-95"
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer active:scale-95"
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span>Back to Notes</span>
+                <span className="font-extrabold">Back</span>
               </button>
 
               {/* Sync Status Tick in Full Page */}
-              <div className="hidden sm:flex items-center">
+              <div className="flex items-center">
                 {editingNote.syncStatus === 'synced' ? (
                   <span
-                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs select-none"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs select-none"
                     title="All changes synced to cloud database"
                   >
                     <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />
-                    <span>Database Synced</span>
+                    <span className="hidden sm:inline">Database Synced</span>
                   </span>
                 ) : (
                   <span
-                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-rose-100 text-rose-800 border border-rose-300 shadow-2xs select-none"
-                    title={currentUser?.id ? "Local copy (sync pending)" : "Saved in browser storage (log in to sync to cloud)"}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-rose-100 text-rose-800 border border-rose-300 shadow-2xs select-none"
+                    title={currentUser?.id ? "Local copy (sync pending)" : "Saved in browser storage"}
                   >
                     <X className="w-3.5 h-3.5 text-rose-600 stroke-[3]" />
-                    <span>Unsynced (Local)</span>
+                    <span className="hidden sm:inline">Unsynced (Local)</span>
                   </span>
                 )}
               </div>
@@ -1002,12 +1014,12 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${
                   editingNote.isPinned
                     ? 'bg-amber-500 text-white ring-2 ring-amber-300 hover:bg-amber-600 scale-105'
-                    : 'bg-white/90 text-slate-700 border border-slate-300 hover:bg-white hover:text-amber-600'
+                    : 'bg-white text-slate-800 border-2 border-slate-300 hover:bg-slate-50 hover:text-amber-600'
                 }`}
                 title={editingNote.isPinned ? 'Unpin note' : 'Pin note to top'}
               >
                 <Pin className={`w-4 h-4 ${editingNote.isPinned ? 'rotate-45 fill-white' : ''}`} />
-                <span>{editingNote.isPinned ? 'Pinned' : 'Pin Note'}</span>
+                <span className="hidden sm:inline">{editingNote.isPinned ? 'Pinned' : 'Pin Note'}</span>
               </button>
 
               {/* Delete Note with Confirmation Safeguard */}
@@ -1024,18 +1036,18 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
               <button
                 type="button"
                 onClick={handleSaveEditedNote}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer active:scale-95"
+                className="px-4 sm:px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer active:scale-95"
               >
                 Done
               </button>
             </div>
           </div>
 
-          {/* Full-Page Content Workspace */}
-          <div className="max-w-4xl mx-auto w-full px-4 sm:px-8 py-6 sm:py-10 flex-1 flex flex-col space-y-6">
-            {/* Color Palette Strip */}
+          {/* Full-Page Content Workspace (Optimized for Mobile scroll & touch) */}
+          <div className="flex-1 overflow-y-auto w-full max-w-4xl mx-auto px-4 sm:px-8 py-5 sm:py-8 flex flex-col space-y-5 sm:space-y-6">
+            {/* Color Palette Strip - Changes ENTIRE PAGE background */}
             <div className="p-3 bg-white/70 backdrop-blur-md rounded-2xl border border-black/10 shadow-xs flex flex-wrap items-center gap-2">
-              <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider mr-2 flex items-center gap-1.5">
+              <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wider mr-1 flex items-center gap-1.5">
                 <Palette className="w-3.5 h-3.5" />
                 <span>Card Background Color:</span>
               </span>
@@ -1046,10 +1058,10 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                     type="button"
                     onClick={() => setEditingNote({ ...editingNote, color: c.id })}
                     style={{ backgroundColor: c.hex }}
-                    className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
+                    className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
                       editingNote.color === c.id
                         ? 'border-slate-900 scale-110 shadow-md ring-2 ring-slate-400'
-                        : 'border-slate-300'
+                        : 'border-slate-400'
                     }`}
                     title={c.name}
                   >
@@ -1060,34 +1072,34 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
             </div>
 
             {/* Note Title Input */}
-            <div className="border-b border-black/10 pb-4">
+            <div className="border-b border-black/10 pb-3">
               <input
                 type="text"
                 value={editingNote.title}
                 onChange={(e) => setEditingNote({ ...editingNote, title: e.target.value })}
                 placeholder="Title"
-                className="w-full bg-transparent font-black text-2xl sm:text-3xl text-slate-900 placeholder:text-slate-400 focus:outline-none tracking-tight"
+                className="w-full bg-transparent font-black text-xl sm:text-3xl text-slate-900 placeholder:text-slate-500 focus:outline-none tracking-tight"
               />
             </div>
 
             {/* Note Content / Checklist Body */}
-            <div className="flex-1 flex flex-col min-h-[300px]">
+            <div className="flex-1 flex flex-col min-h-[260px]">
               {!editingNote.isChecklist ? (
                 <textarea
                   value={editingNote.content}
                   onChange={(e) => setEditingNote({ ...editingNote, content: e.target.value })}
                   placeholder="Type your detailed notes here..."
-                  className="w-full flex-1 bg-transparent text-base sm:text-lg text-slate-800 placeholder:text-slate-400 focus:outline-none resize-none leading-relaxed min-h-[40vh]"
+                  className="w-full flex-1 bg-transparent text-base sm:text-lg text-slate-900 placeholder:text-slate-500 focus:outline-none resize-none leading-relaxed min-h-[35vh]"
                 />
               ) : (
                 <div className="space-y-3 flex-1">
-                  <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
                     Interactive Checklist ({editingNote.checklistItems.filter((i) => i.completed).length}/{editingNote.checklistItems.length} completed)
                   </div>
                   {editingNote.checklistItems.map((ci) => (
                     <div
                       key={ci.id}
-                      className="flex items-center gap-3 p-2 bg-white/50 backdrop-blur-xs rounded-xl border border-black/5 group"
+                      className="flex items-center gap-3 p-2 bg-white/60 backdrop-blur-xs rounded-xl border border-black/5 group"
                     >
                       <button
                         type="button"
@@ -1097,7 +1109,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                           );
                           setEditingNote({ ...editingNote, checklistItems: items });
                         }}
-                        className="text-slate-400 hover:text-blue-600 cursor-pointer shrink-0"
+                        className="text-slate-600 hover:text-blue-600 cursor-pointer shrink-0"
                       >
                         {ci.completed ? (
                           <CheckSquare className="w-5 h-5 text-blue-600" />
@@ -1115,7 +1127,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                           setEditingNote({ ...editingNote, checklistItems: items });
                         }}
                         className={`text-sm sm:text-base flex-1 bg-transparent focus:outline-none ${
-                          ci.completed ? 'line-through text-slate-400' : 'text-slate-900 font-medium'
+                          ci.completed ? 'line-through text-slate-500' : 'text-slate-900 font-semibold'
                         }`}
                       />
                       <button
@@ -1126,7 +1138,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                             checklistItems: editingNote.checklistItems.filter((i) => i.id !== ci.id),
                           });
                         }}
-                        className="text-slate-400 hover:text-rose-600 p-1 opacity-60 group-hover:opacity-100 transition-opacity cursor-pointer"
+                        className="text-slate-500 hover:text-rose-600 p-1 opacity-60 group-hover:opacity-100 transition-opacity cursor-pointer"
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -1144,7 +1156,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                         ],
                       });
                     }}
-                    className="flex items-center gap-2 px-3.5 py-2 bg-white/80 hover:bg-white text-blue-600 font-bold text-xs rounded-xl border border-blue-200 shadow-2xs mt-3 cursor-pointer"
+                    className="flex items-center gap-2 px-3.5 py-2.5 bg-white/90 hover:bg-white text-blue-700 font-bold text-xs rounded-xl border border-blue-200 shadow-2xs mt-3 cursor-pointer"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Add Checklist Item</span>
@@ -1156,14 +1168,14 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
             {/* Labels & Tags Manager */}
             <div className="pt-4 border-t border-black/10 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
-                  <Tag className="w-3.5 h-3.5 text-slate-500" />
+                <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
+                  <Tag className="w-3.5 h-3.5 text-slate-600" />
                   <span>Labels &amp; Tags</span>
                 </span>
                 <button
                   type="button"
                   onClick={() => setShowFullPageTagInput(!showFullPageTagInput)}
-                  className="text-xs font-bold text-blue-600 hover:text-blue-700 cursor-pointer"
+                  className="text-xs font-bold text-blue-700 hover:text-blue-800 cursor-pointer"
                 >
                   {showFullPageTagInput ? 'Close' : '+ Add Label'}
                 </button>
@@ -1185,7 +1197,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                       }
                     }}
                     placeholder="Enter new label (e.g. Finance, Warehouse)..."
-                    className="text-xs bg-white/90 border border-slate-300 rounded-xl px-3 py-1.5 flex-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="text-xs bg-white border border-slate-300 rounded-xl px-3 py-2 flex-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                   <button
                     type="button"
@@ -1195,7 +1207,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                         setFullPageNewTag('');
                       }
                     }}
-                    className="px-3 py-1.5 bg-blue-600 text-white font-bold text-xs rounded-xl cursor-pointer"
+                    className="px-3.5 py-2 bg-blue-600 text-white font-bold text-xs rounded-xl cursor-pointer"
                   >
                     Add
                   </button>
@@ -1204,12 +1216,12 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
 
               <div className="flex flex-wrap gap-1.5">
                 {editingNote.labels.length === 0 ? (
-                  <span className="text-xs text-slate-400 italic">No labels assigned yet.</span>
+                  <span className="text-xs text-slate-600 italic">No labels assigned yet.</span>
                 ) : (
                   editingNote.labels.map((lbl) => (
                     <span
                       key={lbl}
-                      className="inline-flex items-center gap-1.5 bg-black/5 text-slate-800 text-xs font-bold px-2.5 py-1 rounded-lg"
+                      className="inline-flex items-center gap-1.5 bg-black/10 text-slate-900 text-xs font-bold px-2.5 py-1 rounded-lg"
                     >
                       #{lbl}
                       <button
@@ -1220,7 +1232,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                             labels: editingNote.labels.filter((l) => l !== lbl),
                           })
                         }
-                        className="text-slate-400 hover:text-rose-600 cursor-pointer"
+                        className="text-slate-600 hover:text-rose-600 cursor-pointer"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -1233,23 +1245,23 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
             {/* Reminder Section */}
             <div className="pt-4 border-t border-black/10 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
-                  <Bell className="w-3.5 h-3.5 text-slate-500" />
+                <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
+                  <Bell className="w-3.5 h-3.5 text-slate-600" />
                   <span>Scheduled Reminder</span>
                 </span>
                 <button
                   type="button"
                   onClick={() => setShowFullPageReminder(!showFullPageReminder)}
-                  className="text-xs font-bold text-blue-600 hover:text-blue-700 cursor-pointer"
+                  className="text-xs font-bold text-blue-700 hover:text-blue-800 cursor-pointer"
                 >
                   {showFullPageReminder ? 'Hide' : editingNote.reminderAt ? 'Change Time' : '+ Set Reminder'}
                 </button>
               </div>
 
               {editingNote.reminderAt && (
-                <div className="flex items-center justify-between p-3 bg-amber-100/80 text-amber-900 rounded-xl text-xs font-bold">
+                <div className="flex items-center justify-between p-3 bg-amber-100/90 text-amber-950 rounded-xl text-xs font-bold border border-amber-300">
                   <span className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-amber-600" />
+                    <Clock className="w-4 h-4 text-amber-700" />
                     <span>{new Date(editingNote.reminderAt).toLocaleString()}</span>
                     {editingNote.isEmergency && (
                       <span className="bg-rose-600 text-white px-2 py-0.5 rounded text-[10px] uppercase font-black">
@@ -1260,7 +1272,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                   <button
                     type="button"
                     onClick={() => setEditingNote({ ...editingNote, reminderAt: null, isEmergency: false })}
-                    className="text-amber-800 hover:text-rose-600 font-bold cursor-pointer"
+                    className="text-amber-900 hover:text-rose-600 font-bold cursor-pointer"
                   >
                     Remove
                   </button>
@@ -1268,7 +1280,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
               )}
 
               {showFullPageReminder && (
-                <div className="p-3.5 bg-white/90 backdrop-blur-md border border-slate-200 rounded-2xl space-y-3">
+                <div className="p-3.5 bg-white border border-slate-200 rounded-2xl space-y-3">
                   <div className="flex flex-col sm:flex-row gap-3">
                     <input
                       type="datetime-local"
@@ -1296,7 +1308,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
             </div>
 
             {/* Bottom Meta & Save */}
-            <div className="pt-6 border-t border-black/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs text-slate-500">
+            <div className="pt-6 pb-8 border-t border-black/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs text-slate-700">
               <div>
                 <span>Last updated: {new Date(editingNote.updatedAt).toLocaleString()}</span>
               </div>
@@ -1304,7 +1316,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 <button
                   type="button"
                   onClick={() => setEditingNote(null)}
-                  className="px-4 py-2 font-bold text-slate-600 hover:bg-black/5 rounded-xl cursor-pointer"
+                  className="px-4 py-2 font-bold text-slate-700 hover:bg-black/5 rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -1323,7 +1335,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
 
       {/* EXPLICIT CONFIRMATION DIALOG (DELETION SAFEGUARD) */}
       {confirmDeleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
           <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 border border-rose-100">
@@ -1405,44 +1417,54 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
     return (
       <div
         key={note.id}
-        onClick={() => {
-          if (isSelectMode || selectedNoteIds.length > 0) {
-            handleToggleSelectNote(note.id);
+        onTouchStart={(e) => handleStartLongPress(note.id, e.touches[0]?.clientX, e.touches[0]?.clientY)}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleCancelLongPress}
+        onMouseDown={(e) => handleStartLongPress(note.id, e.clientX, e.clientY)}
+        onMouseUp={handleCancelLongPress}
+        onMouseLeave={handleCancelLongPress}
+        onClick={(e) => {
+          if (isLongPressFiredRef.current) {
+            isLongPressFiredRef.current = false;
+            return;
+          }
+          if (selectedNoteIds.length > 0) {
+            handleToggleSelectNote(note.id, e);
           } else {
             setEditingNote(note);
           }
         }}
         style={{
           backgroundColor: colorTheme.hex,
-          borderColor: isSelected ? '#3b82f6' : colorTheme.borderHex,
+          borderColor: isSelected ? '#2563eb' : colorTheme.borderHex,
         }}
-        className={`group relative rounded-3xl p-5 border-2 transition-all duration-200 hover:shadow-xl hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between ${
-          isSelected ? 'ring-2 ring-blue-500 shadow-md' : ''
+        className={`group relative rounded-3xl p-4 sm:p-5 border-2 transition-all duration-200 hover:shadow-xl hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between select-none ${
+          isSelected ? 'ring-3 ring-blue-500 shadow-lg scale-[1.01]' : ''
         }`}
       >
         <div>
-          {/* Header with Batch Checkbox, Title, Sync Indicator & High Visibility Pin */}
+          {/* Header with Batch Checkbox (if active), Title, Sync Indicator & High Visibility Pin */}
           <div className="flex items-start justify-between gap-2 mb-2.5">
             <div className="flex items-start gap-2 min-w-0 flex-1">
-              {/* Batch Selection Checkbox */}
-              {(isSelectMode || selectedNoteIds.length > 0) && (
+              {/* Batch Selection Checkbox shown when in selection mode */}
+              {selectedNoteIds.length > 0 && (
                 <button
                   type="button"
                   onClick={(e) => handleToggleSelectNote(note.id, e)}
                   className={`mt-0.5 p-0.5 rounded-lg transition-transform hover:scale-110 cursor-pointer shrink-0 ${
-                    isSelected ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'
+                    isSelected ? 'text-blue-600' : 'text-slate-500 hover:text-slate-700'
                   }`}
                   title={isSelected ? 'Deselect note' : 'Select note'}
                 >
                   {isSelected ? (
                     <CheckCircle2 className="w-5 h-5 fill-blue-600 text-white" />
                   ) : (
-                    <Square className="w-5 h-5 bg-white/80 rounded-md" />
+                    <Square className="w-5 h-5 bg-white/90 rounded-md" />
                   )}
                 </button>
               )}
 
-              <h4 className="font-black text-slate-900 text-sm tracking-tight leading-snug line-clamp-2">
+              <h4 className="font-black text-slate-950 text-sm sm:text-base tracking-tight leading-snug line-clamp-2">
                 {note.title || 'Untitled Note'}
               </h4>
             </div>
@@ -1455,37 +1477,37 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                   title="Synced to cloud database"
                 >
                   <Check className="w-3 h-3 text-emerald-600 stroke-[3]" />
-                  <span>Synced</span>
+                  <span className="hidden sm:inline">Synced</span>
                 </span>
               ) : (
                 <span
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-300 shadow-2xs select-none"
-                  title={currentUser?.id ? "Local copy (sync pending)" : "Local storage only (sign in to sync)"}
+                  title={currentUser?.id ? "Local copy (sync pending)" : "Local storage only"}
                 >
                   <X className="w-3 h-3 text-rose-600 stroke-[3]" />
-                  <span>Unsynced</span>
+                  <span className="hidden sm:inline">Unsynced</span>
                 </span>
               )}
 
-              {/* High Visibility Pin Icon */}
+              {/* High Visibility Pin Button: Bold amber when pinned, solid white/dark border when unpinned */}
               <button
                 type="button"
                 onClick={(e) => handleTogglePin(note.id, e)}
-                className={`p-1.5 rounded-xl transition-all shrink-0 cursor-pointer shadow-xs flex items-center justify-center ${
+                className={`p-1.5 sm:p-2 rounded-xl transition-all shrink-0 cursor-pointer shadow-xs flex items-center justify-center ${
                   note.isPinned
                     ? 'bg-amber-500 text-white ring-2 ring-amber-300 hover:bg-amber-600 scale-105'
-                    : 'bg-white/90 text-slate-700 border border-slate-300 hover:border-amber-400 hover:text-amber-700 hover:bg-amber-50'
+                    : 'bg-white text-slate-900 border-2 border-slate-300 hover:border-amber-500 hover:text-amber-700 hover:bg-amber-50'
                 }`}
                 title={note.isPinned ? 'Unpin note' : 'Pin note to top'}
               >
-                <Pin className={`w-3.5 h-3.5 ${note.isPinned ? 'rotate-45 fill-white' : ''}`} />
+                <Pin className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${note.isPinned ? 'rotate-45 fill-white' : ''}`} />
               </button>
             </div>
           </div>
 
           {/* Body Content */}
           {!note.isChecklist ? (
-            <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap line-clamp-6 mb-3">
+            <p className="text-xs sm:text-sm text-slate-900 leading-relaxed whitespace-pre-wrap line-clamp-6 mb-3 font-medium">
               {note.content}
             </p>
           ) : (
@@ -1496,16 +1518,16 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                   onClick={(e) => handleToggleChecklistItem(note.id, ci.id, e)}
                   className="flex items-center gap-2 cursor-pointer select-none"
                 >
-                  <button type="button" className="text-slate-400 hover:text-blue-600 shrink-0">
+                  <button type="button" className="text-slate-600 hover:text-blue-700 shrink-0">
                     {ci.completed ? (
-                      <CheckSquare className="w-3.5 h-3.5 text-blue-600" />
+                      <CheckSquare className="w-3.5 h-3.5 text-blue-700" />
                     ) : (
                       <Square className="w-3.5 h-3.5" />
                     )}
                   </button>
                   <span
-                    className={`text-xs truncate ${
-                      ci.completed ? 'line-through text-slate-400' : 'text-slate-800 font-medium'
+                    className={`text-xs sm:text-sm truncate ${
+                      ci.completed ? 'line-through text-slate-500' : 'text-slate-950 font-semibold'
                     }`}
                   >
                     {ci.text}
@@ -1513,7 +1535,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                 </div>
               ))}
               {note.checklistItems.length > 5 && (
-                <div className="text-[10px] font-bold text-slate-500 pl-5">
+                <div className="text-[10px] font-bold text-slate-600 pl-5">
                   +{note.checklistItems.length - 5} more items...
                 </div>
               )}
@@ -1526,7 +1548,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
               {note.labels.map((lbl) => (
                 <span
                   key={lbl}
-                  className="text-[10px] font-bold bg-black/5 text-slate-700 px-2 py-0.5 rounded-md"
+                  className="text-[10px] font-extrabold bg-black/10 text-slate-900 px-2 py-0.5 rounded-md"
                 >
                   #{lbl}
                 </span>
@@ -1541,10 +1563,10 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
             <div
               className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-lg ${
                 note.isEmergency
-                  ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                  ? 'bg-rose-100 text-rose-900 border border-rose-300'
                   : isOverdue
-                  ? 'bg-amber-100 text-amber-800'
-                  : 'bg-blue-50 text-blue-800'
+                  ? 'bg-amber-100 text-amber-900'
+                  : 'bg-blue-100 text-blue-900'
               }`}
             >
               <Bell className="w-3 h-3" />
@@ -1555,8 +1577,8 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
             </div>
           )}
 
-          <div className="flex items-center justify-between text-slate-500">
-            <span className="text-[10px] font-medium">
+          <div className="flex items-center justify-between text-slate-600 text-[10px] font-semibold">
+            <span>
               {new Date(note.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
             </span>
 
@@ -1572,7 +1594,7 @@ export default function NotesView({ currentUser, triggerVibration }: NotesViewPr
                     type="button"
                     onClick={(e) => handleUpdateNoteColor(note.id, c.id, e)}
                     style={{ backgroundColor: c.hex }}
-                    className={`w-4 h-4 rounded-full border border-slate-400 hover:scale-125 transition-transform cursor-pointer ${
+                    className={`w-4 h-4 rounded-full border border-slate-500 hover:scale-125 transition-transform cursor-pointer ${
                       note.color === c.id ? 'ring-1 ring-slate-900' : ''
                     }`}
                     title={c.name}

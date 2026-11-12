@@ -14,17 +14,11 @@ import {
   ListTodo,
   ChevronDown,
   ChevronRight,
-  MoreVertical,
-  Edit2,
   Check,
   X,
   FolderPlus,
-  AlertCircle,
   AlertTriangle,
-  Volume2,
-  Sparkles,
   RotateCw,
-  Layers,
   Square,
 } from 'lucide-react';
 import { TaskItem, TaskList } from '@/lib/types/notes-tasks';
@@ -48,7 +42,7 @@ interface TasksViewProps {
 
 const ALERTS_STORAGE_KEY = 'retailcalc_tasks_alerts_enabled';
 
-export default function TasksView({ currentUser, triggerVibration }: TasksViewProps) {
+export default function TasksView({ currentUser }: TasksViewProps) {
   const [taskLists, setTaskLists] = useState<TaskList[]>([]);
   const [activeListId, setActiveListId] = useState<string>('default-my-tasks');
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -60,9 +54,8 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
   const [onlyStarred, setOnlyStarred] = useState(false);
   const [showCompleted, setShowCompleted] = useState(true);
 
-  // Batch Selection State
+  // Batch Selection State (Activated by Long-Press)
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
-  const [isSelectMode, setIsSelectMode] = useState(false);
 
   // Deletion Safeguard Modal State
   const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<
@@ -72,7 +65,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
 
   // Reliable Notification Toggle State
   const [alertsEnabled, setAlertsEnabled] = useState<boolean>(true);
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
 
   // Quick Task Input
   const [newTaskTitle, setNewTaskTitle] = useState('');
@@ -81,7 +73,7 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
   const [newTaskIsStarred, setNewTaskIsStarred] = useState(false);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
 
-  // New List Modal / Inline
+  // New List Modal
   const [showNewListModal, setShowNewListModal] = useState(false);
   const [newListName, setNewListName] = useState('');
 
@@ -92,15 +84,17 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
   // Active Reminder In-App Banner
   const [activeAlert, setActiveAlert] = useState<{ id: string; title: string; due: string } | null>(null);
 
-  // Initialize notification toggle preference and permission
+  // Long-press refs
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isLongPressFiredRef = useRef<boolean>(false);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Initialize notification toggle preference
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem(ALERTS_STORAGE_KEY);
       if (stored !== null) {
         setAlertsEnabled(stored === 'true');
-      }
-      if ('Notification' in window) {
-        setNotificationPermission(Notification.permission);
       }
     }
   }, []);
@@ -128,10 +122,10 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     };
   }, [currentUser]);
 
-  // Interval check for due tasks and reminder notifications (respects alertsEnabled toggle)
+  // Interval check for due tasks and reminder notifications
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!alertsEnabled) return; // Alerts disabled by user
+      if (!alertsEnabled) return;
 
       const now = new Date();
       tasks.forEach((task) => {
@@ -139,7 +133,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
           const targetTime = new Date(task.reminderAt || task.dueDate!);
           const diff = now.getTime() - targetTime.getTime();
 
-          // If within 60 seconds of trigger time
           if (diff >= 0 && diff <= 60000 && !(task as any)._alerted) {
             (task as any)._alerted = true;
             playReminderChime(false);
@@ -159,10 +152,40 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     return () => clearInterval(interval);
   }, [tasks, alertsEnabled]);
 
+  // Long-press helpers for Tasks
+  const handleStartLongPress = (id: string, clientX?: number, clientY?: number) => {
+    if (selectedTaskIds.length > 0) return;
+    isLongPressFiredRef.current = false;
+    if (clientX !== undefined && clientY !== undefined) {
+      touchStartPosRef.current = { x: clientX, y: clientY };
+    }
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      isLongPressFiredRef.current = true;
+      setSelectedTaskIds([id]);
+    }, 500);
+  };
+
+  const handleCancelLongPress = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (touchStartPosRef.current && e.touches[0]) {
+      const dx = Math.abs(e.touches[0].clientX - touchStartPosRef.current.x);
+      const dy = Math.abs(e.touches[0].clientY - touchStartPosRef.current.y);
+      if (dx > 10 || dy > 10) {
+        handleCancelLongPress();
+      }
+    }
+  };
+
   // Manual Real-Time Tasks Refresh (No page reload)
   const handleManualRefreshTasks = async () => {
     setIsRefreshing(true);
-    triggerVibration?.('click');
     try {
       const [freshLists, freshTasks] = await Promise.all([
         fetchTaskLists(currentUser?.id),
@@ -172,7 +195,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
       setTasks(freshTasks);
       setRefreshNotice('Tasks synchronized in real-time');
       setTimeout(() => setRefreshNotice(null), 3000);
-      triggerVibration?.('success');
     } catch (err) {
       console.warn('Manual tasks refresh notice:', err);
     } finally {
@@ -187,7 +209,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     if (!alertsEnabled) {
       if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted') {
         const res = await requestNotificationPermission();
-        setNotificationPermission(res);
         if (res === 'granted') {
           playReminderChime(false);
           sendDeviceNotification('Task Alerts Activated!', {
@@ -199,11 +220,9 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
       }
       setAlertsEnabled(true);
       localStorage.setItem(ALERTS_STORAGE_KEY, 'true');
-      triggerVibration?.('success');
     } else {
       setAlertsEnabled(false);
       localStorage.setItem(ALERTS_STORAGE_KEY, 'false');
-      triggerVibration?.('click');
     }
   };
 
@@ -238,7 +257,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     setNewTaskDueDate('');
     setNewTaskIsStarred(false);
     setIsInputExpanded(false);
-    triggerVibration?.('success');
 
     if (currentUser?.id) {
       const res = await upsertTaskToSupabase(newTask, currentUser.id);
@@ -261,7 +279,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
 
     setTasks(updated);
     saveLocalTasks(updated, currentUser?.id);
-    triggerVibration?.('click');
 
     const target = updated.find((t) => t.id === taskId);
     if (target && currentUser?.id) {
@@ -278,7 +295,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     );
     setTasks(updated);
     saveLocalTasks(updated, currentUser?.id);
-    triggerVibration?.('click');
 
     const target = updated.find((t) => t.id === taskId);
     if (target && currentUser?.id) {
@@ -290,13 +306,11 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
   // Safe Deletion Handlers (Requires explicit confirmation modal)
   const promptDeleteSingle = (task: TaskItem, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    triggerVibration?.('click');
     setConfirmDeleteTarget({ type: 'single', task });
   };
 
   const promptDeleteBatch = () => {
     if (selectedTaskIds.length === 0) return;
-    triggerVibration?.('click');
     setConfirmDeleteTarget({ type: 'batch', ids: selectedTaskIds });
   };
 
@@ -310,19 +324,16 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
       setTasks(updated);
       saveLocalTasks(updated, currentUser?.id);
       setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
-      triggerVibration?.('success');
 
       if (currentUser?.id) {
         await deleteTaskFromSupabase(taskId, currentUser.id);
       }
     } else {
       const idsToDelete = confirmDeleteTarget.ids;
-      const updated = tasks.filter((t) => !idsToDelete.includes(t.id));
+      const updated = tasks.filter((n) => !idsToDelete.includes(n.id));
       setTasks(updated);
       saveLocalTasks(updated, currentUser?.id);
       setSelectedTaskIds([]);
-      setIsSelectMode(false);
-      triggerVibration?.('success');
 
       if (currentUser?.id) {
         await deleteTasksBatchFromSupabase(idsToDelete, currentUser.id);
@@ -336,7 +347,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
   // Batch Selection Handlers
   const handleToggleSelectTask = (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    triggerVibration?.('click');
     setSelectedTaskIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
@@ -349,13 +359,10 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     } else {
       setSelectedTaskIds(allFilteredIds);
     }
-    triggerVibration?.('click');
   };
 
   const handleCancelSelection = () => {
     setSelectedTaskIds([]);
-    setIsSelectMode(false);
-    triggerVibration?.('click');
   };
 
   // Add Subtask with real-time Supabase sync
@@ -390,7 +397,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     saveLocalTasks(updated, currentUser?.id);
     setSubtaskTitle('');
     setAddingSubtaskForId(null);
-    triggerVibration?.('click');
 
     const parentTask = updated.find((t) => t.id === parentId);
     if (parentTask && currentUser?.id) {
@@ -411,7 +417,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
 
     setTasks(updated);
     saveLocalTasks(updated, currentUser?.id);
-    triggerVibration?.('click');
 
     const parentTask = updated.find((t) => t.id === parentId);
     if (parentTask && currentUser?.id) {
@@ -462,7 +467,6 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     setActiveListId(newList.id);
     setNewListName('');
     setShowNewListModal(false);
-    triggerVibration?.('success');
 
     if (currentUser?.id) {
       await upsertTaskListToSupabase(newList, currentUser.id);
@@ -505,7 +509,7 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
   }, [taskLists, activeListId, onlyStarred]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       {/* Active In-App Reminder Alert Banner */}
       {activeAlert && (
         <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-4 rounded-3xl shadow-xl flex items-center justify-between gap-4 animate-in slide-in-from-top-4 duration-300">
@@ -543,23 +547,23 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
       )}
 
       {/* Header Container with Notification Toggle and Corresponding Refresh Button Positioned to its Right */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/80 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 sm:p-6 rounded-3xl border border-slate-200/80 shadow-xs">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2.5">
-            <span className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
+            <span className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
               <ListTodo className="w-4 h-4" />
             </span>
             <span>Tasks Manager</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Google Tasks-style nested sub-tasks, batch management, real-time sync &amp; deletion safeguards.
+            Google Tasks-style nested sub-tasks, priority stars &amp; long-press batch selection.
           </p>
         </div>
 
         {/* Right Action Group: Notification Toggle + Refresh Button Positioned to its Right */}
         <div className="flex items-center gap-2.5 flex-wrap">
           {refreshNotice && (
-            <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
+            <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
               <Check className="w-3 h-3 text-emerald-600" />
               <span>{refreshNotice}</span>
             </span>
@@ -613,7 +617,50 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
         </div>
       </div>
 
-      {/* Custom Lists Tabs, Starred Filter & Batch Select Trigger */}
+      {/* Floating or Top Batch Action Bar for Tasks (Activated by Long-Press) */}
+      {selectedTaskIds.length > 0 && (
+        <div className="sticky top-3 z-30 bg-slate-900 text-white p-3 sm:p-4 rounded-3xl shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-200 border border-slate-700">
+          <div className="flex items-center gap-2.5">
+            <span className="w-7 h-7 rounded-xl bg-blue-600 text-white flex items-center justify-center text-xs font-black">
+              {selectedTaskIds.length}
+            </span>
+            <span className="text-xs font-bold">
+              {selectedTaskIds.length} {selectedTaskIds.length === 1 ? 'task' : 'tasks'} selected
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSelectAll}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+            >
+              {selectedTaskIds.length === listTasks.length ? 'Deselect All' : 'Select All'}
+            </button>
+
+            <button
+              type="button"
+              onClick={promptDeleteBatch}
+              disabled={selectedTaskIds.length === 0}
+              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete ({selectedTaskIds.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCancelSelection}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              title="Cancel selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Lists Tabs & Starred Filter */}
       <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 scrollbar-none">
         <div className="flex items-center gap-1.5 min-w-0">
           {/* Starred High-Priority Tab */}
@@ -673,73 +720,10 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
             </button>
           )}
         </div>
-
-        {/* Batch Selection Mode Button for Tasks */}
-        <div className="shrink-0">
-          <button
-            type="button"
-            onClick={() => {
-              setIsSelectMode(!isSelectMode);
-              if (isSelectMode) setSelectedTaskIds([]);
-              triggerVibration?.('click');
-            }}
-            className={`px-3.5 py-2 rounded-2xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
-              isSelectMode || selectedTaskIds.length > 0
-                ? 'bg-blue-600 text-white shadow-xs'
-                : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>{isSelectMode || selectedTaskIds.length > 0 ? 'Batch Active' : 'Batch Select'}</span>
-          </button>
-        </div>
       </div>
 
-      {/* Floating or Top Batch Action Bar for Tasks */}
-      {(isSelectMode || selectedTaskIds.length > 0) && (
-        <div className="bg-slate-900 text-white p-3 sm:p-4 rounded-3xl shadow-xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-200">
-          <div className="flex items-center gap-2.5">
-            <span className="w-7 h-7 rounded-xl bg-blue-600 text-white flex items-center justify-center text-xs font-black">
-              {selectedTaskIds.length}
-            </span>
-            <span className="text-xs font-bold">
-              {selectedTaskIds.length} {selectedTaskIds.length === 1 ? 'task' : 'tasks'} selected
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleSelectAll}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-colors cursor-pointer"
-            >
-              {selectedTaskIds.length === listTasks.length ? 'Deselect All' : 'Select All'}
-            </button>
-
-            <button
-              type="button"
-              onClick={promptDeleteBatch}
-              disabled={selectedTaskIds.length === 0}
-              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete Selected ({selectedTaskIds.length})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleCancelSelection}
-              className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
-              title="Cancel batch selection"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Main Task Creator & List Card */}
-      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-6">
+      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-4 sm:p-6 space-y-5 sm:space-y-6">
         {/* Active List Heading */}
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
@@ -874,7 +858,7 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
 
       {/* New List Modal */}
       {showNewListModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
           <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
             <h3 className="text-lg font-black text-slate-900">Create new list</h3>
             <div>
@@ -917,7 +901,7 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
 
       {/* EXPLICIT CONFIRMATION DIALOG (DELETION SAFEGUARD FOR TASKS) */}
       {confirmDeleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
           <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 border border-rose-100">
@@ -1000,9 +984,24 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
     return (
       <div
         key={task.id}
-        className={`group border-2 rounded-2xl p-3 sm:p-3.5 transition-all ${
+        onTouchStart={(e) => handleStartLongPress(task.id, e.touches[0]?.clientX, e.touches[0]?.clientY)}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleCancelLongPress}
+        onMouseDown={(e) => handleStartLongPress(task.id, e.clientX, e.clientY)}
+        onMouseUp={handleCancelLongPress}
+        onMouseLeave={handleCancelLongPress}
+        onClick={(e) => {
+          if (isLongPressFiredRef.current) {
+            isLongPressFiredRef.current = false;
+            return;
+          }
+          if (selectedTaskIds.length > 0) {
+            handleToggleSelectTask(task.id, e);
+          }
+        }}
+        className={`group border-2 rounded-2xl p-3 sm:p-3.5 transition-all select-none ${
           isSelected
-            ? 'border-blue-500 bg-blue-50/40 ring-1 ring-blue-400'
+            ? 'border-blue-500 bg-blue-50/50 ring-2 ring-blue-400 shadow-sm'
             : task.completed
             ? 'border-slate-200/80 bg-slate-50/60'
             : 'border-slate-200/80 bg-white hover:border-slate-300 hover:shadow-xs'
@@ -1011,8 +1010,8 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
         <div className="flex items-start justify-between gap-3">
           {/* Batch Selection Checkbox, Checkbox and Title */}
           <div className="flex items-start gap-3 flex-1 min-w-0">
-            {/* Batch Selection Checkbox */}
-            {(isSelectMode || selectedTaskIds.length > 0) && (
+            {/* Batch Selection Checkbox shown when in selection mode */}
+            {selectedTaskIds.length > 0 && (
               <button
                 type="button"
                 onClick={(e) => handleToggleSelectTask(task.id, e)}
@@ -1031,7 +1030,10 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
 
             <button
               type="button"
-              onClick={() => handleToggleComplete(task.id)}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleToggleComplete(task.id);
+              }}
               className="mt-0.5 text-slate-400 hover:text-blue-600 transition-colors shrink-0 cursor-pointer"
             >
               {task.completed ? (
@@ -1060,7 +1062,7 @@ export default function TasksView({ currentUser, triggerVibration }: TasksViewPr
               {(task.dueDate || task.reminderAt) && (
                 <div className="flex items-center gap-2 mt-1.5">
                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
-                    <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                    <Calendar className="w-3 h-3 text-blue-600" />
                     <span>
                       {new Date(task.dueDate || task.reminderAt!).toLocaleString([], {
                         month: 'short',

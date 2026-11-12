@@ -677,28 +677,8 @@ export default function RetailCalc() {
     };
   }, [sidebarOpen, isAuthModalOpen]);
 
-  const triggerVibration = (type: VibrationType = 'click') => {
-    if (typeof window !== 'undefined' && 'vibrate' in navigator) {
-      try {
-        switch (type) {
-          case 'success':
-            navigator.vibrate([40, 60, 80]);
-            break;
-          case 'error':
-            navigator.vibrate([100, 50, 100, 50, 100]);
-            break;
-          case 'reset':
-            navigator.vibrate([30, 40, 30]);
-            break;
-          case 'click':
-          default:
-            navigator.vibrate(20);
-            break;
-        }
-      } catch (e) {
-        // Ignore restricted vibration calls
-      }
-    }
+  const triggerVibration = (_type: VibrationType = 'click') => {
+    // UI vibration completely removed as requested
   };
 
   const handleTabChange = (newTab: ActiveTab) => {
