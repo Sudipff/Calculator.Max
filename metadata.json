@@ -1,0 +1,6 @@
+{
+  "name": "Retail Calculator",
+  "description": "Smart retail assistant with EMI Calculator, Wishlist Savings Goal Planner, Discount & Weight tools",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
