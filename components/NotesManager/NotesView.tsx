@@ -377,6 +377,23 @@ export default function NotesView({ currentUser, onFullScreenChange }: NotesView
     }
   };
 
+  const handleBatchUpdateColor = async (newColor: string) => {
+    if (selectedNoteIds.length === 0) return;
+    const nowIso = new Date().toISOString();
+    const updated = notes.map((n) =>
+      selectedNoteIds.includes(n.id) ? { ...n, color: newColor, updatedAt: nowIso } : n
+    );
+    setNotes(updated);
+    saveLocalNotes(updated, currentUser?.id);
+
+    for (const id of selectedNoteIds) {
+      const target = updated.find((n) => n.id === id);
+      if (target && currentUser?.id) {
+        upsertNoteToSupabase(target, currentUser.id);
+      }
+    }
+  };
+
   const handleToggleChecklistItem = async (noteId: string, itemId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const updated = notes.map((n) => {
@@ -552,6 +569,21 @@ export default function NotesView({ currentUser, onFullScreenChange }: NotesView
             >
               {selectedNoteIds.length === filteredNotes.length ? 'Deselect All' : 'Select All'}
             </button>
+
+            {/* Quick Batch Color Selection Circles */}
+            <div className="hidden sm:flex items-center gap-1 bg-slate-800/90 px-2.5 py-1 rounded-xl border border-slate-700 shadow-inner">
+              <span className="text-[10px] font-bold text-slate-300 mr-0.5">Color:</span>
+              {NOTE_COLORS.slice(0, 6).map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => handleBatchUpdateColor(c.id)}
+                  style={{ backgroundColor: c.hex }}
+                  className="w-4 h-4 rounded-full border border-slate-500 hover:scale-125 transition-transform cursor-pointer"
+                  title={`Color selected notes ${c.name}`}
+                />
+              ))}
+            </div>
 
             <button
               type="button"
@@ -1604,31 +1636,46 @@ export default function NotesView({ currentUser, onFullScreenChange }: NotesView
               {new Date(note.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
             </span>
 
-            {/* Quick Card Color Palette on Hover */}
-            <div className="flex items-center gap-1">
+            {/* Color Selection Circles and Delete Icon: Fully visible and high-contrast */}
+            <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+              {/* Color Selection Circles */}
               <div
-                className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1"
-                onClick={(e) => e.stopPropagation()}
+                className={`transition-all flex items-center gap-1 bg-white/95 backdrop-blur-md px-2 py-1 rounded-full border ${
+                  isSelected
+                    ? 'opacity-100 border-blue-500 ring-2 ring-blue-300/80 shadow-md scale-105'
+                    : 'opacity-90 group-hover:opacity-100 border-black/15 shadow-2xs'
+                }`}
+                title="Change card background color"
               >
-                {NOTE_COLORS.slice(0, 5).map((c) => (
+                {NOTE_COLORS.slice(0, 6).map((c) => (
                   <button
                     key={c.id}
                     type="button"
                     onClick={(e) => handleUpdateNoteColor(note.id, c.id, e)}
                     style={{ backgroundColor: c.hex }}
-                    className={`w-4 h-4 rounded-full border border-slate-500 hover:scale-125 transition-transform cursor-pointer ${
-                      note.color === c.id ? 'ring-1 ring-slate-900' : ''
+                    className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-125 cursor-pointer flex items-center justify-center shrink-0 shadow-2xs ${
+                      note.color === c.id
+                        ? 'border-slate-950 scale-110 ring-2 ring-slate-400'
+                        : 'border-white/80 hover:border-slate-800'
                     }`}
                     title={c.name}
-                  />
+                  >
+                    {note.color === c.id && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-950" />
+                    )}
+                  </button>
                 ))}
               </div>
 
-              {/* Single Delete Button with Confirmation Safeguard */}
+              {/* Delete Icon with Confirmation Safeguard */}
               <button
                 type="button"
                 onClick={(e) => promptDeleteSingle(note, e)}
-                className="p-1 hover:text-rose-600 rounded-lg hover:bg-black/5 transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
+                className={`p-1.5 rounded-full border transition-all cursor-pointer active:scale-95 flex items-center justify-center shrink-0 ${
+                  isSelected
+                    ? 'opacity-100 bg-rose-600 border-rose-600 text-white hover:bg-rose-700 ring-2 ring-rose-300 shadow-md scale-105'
+                    : 'opacity-90 group-hover:opacity-100 bg-white/95 border-slate-200 text-rose-600 hover:bg-rose-600 hover:text-white hover:border-rose-600 shadow-2xs'
+                }`}
                 title="Delete note permanently"
               >
                 <Trash2 className="w-3.5 h-3.5" />

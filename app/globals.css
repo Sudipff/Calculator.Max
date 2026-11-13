@@ -8,21 +8,64 @@
   --background-end-rgb: 255, 255, 255;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 html {
+  margin: 0;
+  padding: 0;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   width: 100%;
+  height: 100%;
+  min-height: 100dvh;
   max-width: 100vw;
   overflow-x: hidden;
 }
 
 body {
+  margin: 0;
+  padding: 0;
   color: rgb(var(--foreground-rgb));
   background: white;
   width: 100%;
+  min-height: 100%;
+  min-height: 100dvh;
   max-width: 100vw;
   overflow-x: hidden;
   touch-action: manipulation;
+}
+
+/* Edge-to-edge mobile container utilities */
+@media (max-width: 639px) {
+  .mobile-edge-shell {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  .mobile-edge-header {
+    width: 100% !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  .mobile-edge-calc {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
 }
 
 /* Ensure form inputs always have high contrast dark text against their backgrounds */

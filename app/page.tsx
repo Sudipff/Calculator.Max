@@ -37,6 +37,7 @@ import {
   StickyNote,
   ListTodo,
   Settings,
+  Eye,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import EmiCalculator from '../components/EmiCalculator';
@@ -47,6 +48,7 @@ import AuthHeader from '../components/AuthHeader';
 import CurrencyExchange from '../components/CurrencyExchange';
 import NotesView from '../components/NotesManager/NotesView';
 import TasksView from '../components/NotesManager/TasksView';
+import HistoryPreviewModal from '../components/HistoryPreviewModal';
 import { createClient } from '@/utils/supabase/client';
 import {
   getCalculationHistory,
@@ -330,7 +332,17 @@ export default function RetailCalc() {
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<
     { type: 'single'; item: HistoryItem } | { type: 'all' } | null
   >(null);
+  const [previewHistoryItem, setPreviewHistoryItem] = useState<HistoryItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    if (!previewHistoryItem) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [previewHistoryItem]);
 
   // Quick Tools States
   const [originalPrice, setOriginalPrice] = useState('');
@@ -379,6 +391,7 @@ export default function RetailCalc() {
           type: c.type,
           details: c.details,
           result: c.result,
+          createdAt: c.created_at || undefined,
           timestamp: c.created_at
             ? new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -414,6 +427,7 @@ export default function RetailCalc() {
               type: c.type,
               details: c.details,
               result: c.result,
+              createdAt: c.createdAt || undefined,
               timestamp: c.createdAt
                 ? new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                 : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -743,6 +757,7 @@ export default function RetailCalc() {
       type,
       details,
       result,
+      createdAt: new Date().toISOString(),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       syncStatus: initialStatus,
       dbId: null,
@@ -1685,11 +1700,11 @@ export default function RetailCalc() {
   );
 
   return (
-    <div className="min-h-[100dvh] bg-slate-100/80 text-slate-800 flex justify-center font-sans antialiased sm:p-4 md:p-6">
-      <div className="w-full max-w-md sm:max-w-2xl md:max-w-4xl lg:max-w-6xl relative pb-8 shadow-2xl bg-white min-h-screen md:min-h-[calc(100vh-3rem)] md:rounded-3xl border border-slate-100/80">
+    <div className="min-h-[100dvh] w-full bg-white sm:bg-slate-100/80 text-slate-800 flex flex-col sm:items-center font-sans antialiased m-0 p-0 sm:p-4 md:p-6">
+      <div className="mobile-edge-shell w-full sm:max-w-2xl md:max-w-4xl lg:max-w-6xl relative flex-1 flex flex-col bg-white min-h-[100dvh] sm:min-h-[calc(100dvh-2rem)] md:min-h-[calc(100dvh-3rem)] shadow-none sm:shadow-2xl rounded-none sm:rounded-3xl border-0 sm:border sm:border-slate-100/80 m-0 p-0 sm:pb-6">
         {/* Header - Solid Blue & Sticky (Auto-hides on scroll down, shows on scroll up) */}
         <header
-          className={`bg-blue-600 text-white py-2 px-3 sm:py-2.5 sm:px-4 sticky top-0 z-40 flex justify-between items-center rounded-b-xl md:rounded-t-2xl gap-2 transition-all duration-300 ease-in-out ${
+          className={`mobile-edge-header w-full shrink-0 bg-blue-600 text-white py-2 px-3 sm:py-2.5 sm:px-4 sticky top-0 z-40 flex justify-between items-center rounded-none sm:rounded-b-xl md:rounded-t-2xl gap-2 transition-all duration-300 ease-in-out ${
             isNoteFullScreen
               ? 'hidden pointer-events-none'
               : isHeaderVisible
@@ -2360,7 +2375,13 @@ export default function RetailCalc() {
 
 
         {/* Main Content Area */}
-        <main className="p-4 sm:p-6 md:p-8 pb-8 space-y-6 md:space-y-8 relative overflow-hidden">
+        <main
+          className={`flex-1 flex flex-col relative overflow-x-hidden ${
+            activeTab === 'calculator'
+              ? 'p-0 sm:p-6 md:p-8 space-y-0 sm:space-y-6 md:space-y-8'
+              : 'p-2.5 sm:p-6 md:p-8 pb-4 sm:pb-8 space-y-4 sm:space-y-6 md:space-y-8'
+          }`}
+        >
           <AnimatePresence mode="wait" custom={direction}>
             <motion.div
               key={activeTab}
@@ -2383,7 +2404,11 @@ export default function RetailCalc() {
               animate="center"
               exit="exit"
               transition={{ duration: 0.22, ease: [0.25, 0.1, 0.25, 1] }}
-              className="w-full space-y-6 md:space-y-8"
+              className={`w-full flex-1 flex flex-col ${
+                activeTab === 'calculator'
+                  ? 'space-y-0 sm:space-y-6 md:space-y-8'
+                  : 'space-y-4 sm:space-y-6 md:space-y-8'
+              }`}
             >
               {/* TAB: AGE CALCULATOR */}
               {activeTab === 'age' && (
@@ -2397,7 +2422,7 @@ export default function RetailCalc() {
 
               {/* TAB: SCIENTIFIC CALCULATOR */}
               {activeTab === 'calculator' && (
-                <section>
+                <section className="w-full flex-1 flex flex-col m-0 p-0">
                   <ScientificCalculator
                     triggerVibration={triggerVibration}
                     onSaveHistory={(type, details, result) => saveHistoryItem(type, details, result)}
@@ -2619,11 +2644,25 @@ export default function RetailCalc() {
                               initial={{ opacity: 0, y: 10 }}
                               animate={{ opacity: 1, y: 0 }}
                               exit={{ opacity: 0, scale: 0.95 }}
-                              className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between gap-3 hover:border-blue-100 transition-colors"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => {
+                                triggerVibration('click');
+                                setPreviewHistoryItem(item);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  triggerVibration('click');
+                                  setPreviewHistoryItem(item);
+                                }
+                              }}
+                              className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between gap-3 hover:border-indigo-200 hover:shadow-md transition-all cursor-pointer group text-left"
+                              title="Click to inspect full calculation details & parameters"
                             >
                               <div className="flex items-start gap-3.5">
                                 <div
-                                  className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                                  className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-105 ${
                                     item.type === 'Age'
                                       ? 'bg-rose-50 text-rose-600'
                                       : item.type === 'Calculator'
@@ -2636,6 +2675,8 @@ export default function RetailCalc() {
                                       ? 'bg-sky-50 text-sky-600'
                                       : item.type === 'Weight'
                                       ? 'bg-orange-50 text-orange-600'
+                                      : item.type === 'Currency'
+                                      ? 'bg-amber-50 text-amber-600'
                                       : 'bg-purple-50 text-purple-600'
                                   }`}
                                 >
@@ -2646,9 +2687,19 @@ export default function RetailCalc() {
                                   {item.type === 'Discount' && <Percent className="w-5 h-5" />}
                                   {item.type === 'Weight' && <Scale className="w-5 h-5" />}
                                   {item.type === 'Unit' && <ArrowRightLeft className="w-5 h-5" />}
+                                  {item.type === 'Currency' && <Coins className="w-5 h-5" />}
                                 </div>
 
                                 <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between gap-1.5 mb-1">
+                                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 bg-slate-100/80 px-1.5 py-0.5 rounded">
+                                      {item.type}
+                                    </span>
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 opacity-75 group-hover:opacity-100 transition-opacity ml-auto">
+                                      <Eye className="w-3 h-3" />
+                                      <span>Details</span>
+                                    </span>
+                                  </div>
                                   <div className="flex justify-between items-start mb-1 gap-1">
                                     <span className="font-bold text-slate-800 text-sm truncate leading-snug">
                                       {item.result}
@@ -2659,7 +2710,10 @@ export default function RetailCalc() {
                                       </span>
                                       <button
                                         type="button"
-                                        onClick={() => handleDownloadSinglePDF(item)}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDownloadSinglePDF(item);
+                                        }}
                                         className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-colors cursor-pointer"
                                         title="Download PDF receipt for this calculation"
                                         aria-label="Download PDF receipt"
@@ -2714,7 +2768,10 @@ export default function RetailCalc() {
                                     <span>Not Saved (DB Error)</span>
                                     <button
                                       type="button"
-                                      onClick={() => retrySyncItem(item)}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        retrySyncItem(item);
+                                      }}
                                       className="ml-1 px-1.5 py-0.2 rounded text-[9px] bg-rose-200 hover:bg-rose-300 text-rose-900 font-black cursor-pointer transition-colors"
                                       title="Retry saving to database"
                                     >
@@ -2731,7 +2788,10 @@ export default function RetailCalc() {
                                     {currentUser ? (
                                       <button
                                         type="button"
-                                        onClick={() => retrySyncItem(item)}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          retrySyncItem(item);
+                                        }}
                                         className="ml-1 px-1.5 py-0.2 rounded text-[9px] bg-amber-200 hover:bg-amber-300 text-amber-900 font-black cursor-pointer transition-colors"
                                         title="Save this record to cloud database"
                                       >
@@ -2901,6 +2961,22 @@ export default function RetailCalc() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Comprehensive Calculation History Session Preview Modal */}
+      <HistoryPreviewModal
+        item={
+          previewHistoryItem
+            ? history.find((h) => h.id === previewHistoryItem.id) || previewHistoryItem
+            : null
+        }
+        currency={currency}
+        currentUser={currentUser}
+        onClose={() => setPreviewHistoryItem(null)}
+        onDownloadPDF={handleDownloadSinglePDF}
+        onRequestDelete={(item) => handleRequestDeleteItem(item)}
+        onRetrySync={retrySyncItem}
+        onOpenTool={(tab) => handleTabChange(tab)}
+      />
     </div>
   );
 }

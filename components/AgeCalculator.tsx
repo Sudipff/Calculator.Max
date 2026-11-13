@@ -235,7 +235,7 @@ export default function AgeCalculator({ triggerVibration, onSaveHistory }: AgeCa
 
   const handleSave = () => {
     if (!calculation) return;
-    const details = `DOB: ${birthDate} | Target Date: ${targetDate}`;
+    const details = `DOB: ${birthDate} (${calculation.bornWeekday}) | Target Date: ${targetDate} | Total Days: ${calculation.totalDays.toLocaleString()} | Total Months: ${calculation.totalMonths.toLocaleString()} | Next Birthday: ${calculation.nextBdayString} | Zodiac: ${calculation.westernZodiac}`;
     const result = calculation.ageString;
     onSaveHistory('Age', details, result);
     setSaved(true);

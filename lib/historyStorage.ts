@@ -1,9 +1,10 @@
 export interface CalculationDetails {
   id?: string;
-  type: 'Discount' | 'Weight' | 'Unit' | 'EMI' | 'Wishlist' | 'Currency' | string;
+  type: 'Discount' | 'Weight' | 'Unit' | 'EMI' | 'Wishlist' | 'Currency' | 'Age' | 'Calculator' | string;
   details: string;
   result: string;
   timestamp?: string;
+  createdAt?: string;
   dbId?: string | number | null;
   syncStatus?: 'synced' | 'syncing' | 'local' | 'error';
   savedAmount?: number;
@@ -11,10 +12,11 @@ export interface CalculationDetails {
 
 export interface HistoryItem {
   id: string;
-  type: 'Discount' | 'Weight' | 'Unit' | 'EMI' | 'Wishlist' | 'Currency' | string;
+  type: 'Discount' | 'Weight' | 'Unit' | 'EMI' | 'Wishlist' | 'Currency' | 'Age' | 'Calculator' | string;
   details: string;
   result: string;
   timestamp: string;
+  createdAt?: string;
   dbId?: string | number | null;
   syncStatus?: 'synced' | 'syncing' | 'local' | 'error';
   savedAmount?: number;
@@ -75,6 +77,7 @@ export function saveCalculationHistory(
     type: calculationDetails.type,
     details: calculationDetails.details,
     result: calculationDetails.result,
+    createdAt: calculationDetails.createdAt || new Date().toISOString(),
     timestamp: calculationDetails.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     dbId: calculationDetails.dbId,
     syncStatus: calculationDetails.syncStatus || 'local',

@@ -208,11 +208,11 @@ export default function CurrencyExchange({
 
     // Save to calculation history
     if (onSaveHistory) {
-      const details = `${parsedAmount} ${convertedResult.fromCode} ➔ ${convertedResult.toCode} @ 1 ${convertedResult.fromCode} = ${convertedResult.exchangeRate.toFixed(4)} ${convertedResult.toCode}`;
+      const details = `Source Amount: ${parsedAmount.toLocaleString()} ${convertedResult.fromCode} | Currency Pair: ${convertedResult.fromCode} → ${convertedResult.toCode} | Exchange Rate: 1 ${convertedResult.fromCode} = ${convertedResult.exchangeRate.toFixed(4)} ${convertedResult.toCode}`;
       const formattedRes = `${convertedResult.toSymbol}${convertedResult.convertedAmount.toLocaleString('en-US', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
-      })}`;
+      })} (${convertedResult.toCode})`;
       onSaveHistory('Currency', details, formattedRes);
     }
   };

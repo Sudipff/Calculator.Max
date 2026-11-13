@@ -346,9 +346,6 @@ export default function EmiCalculator({ currency, triggerVibration, onSaveHistor
           <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80">
             <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 flex items-center justify-between">
               <span>Interest Calculation Method</span>
-              <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
-                {interestMethod === 'reducing' ? 'Reducing Balance' : 'Flat Rate'}
-              </span>
             </label>
 
             <div className="grid grid-cols-2 gap-2">
