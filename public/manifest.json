@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Retail Calculator",
-  "short_name": "RetailCalc",
-  "description": "Smart retail assistant with Scientific Calculator, EMI Calculator, Wishlist Savings Goal Planner, Discount & Weight tools",
+  "name": "Calculator Max",
+  "short_name": "CalcMax",
+  "description": "Calculator Max with Scientific Calculator, EMI Calculator, Wishlist Savings Goal Planner, Notes, and Tasks Manager",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

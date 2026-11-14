@@ -3,13 +3,13 @@ import type { Metadata, Viewport } from 'next';
 import PwaRuntime from '../components/PwaRuntime';
 
 export const metadata: Metadata = {
-  title: 'Retail Calculator',
-  description: 'Smart retail assistant with EMI Calculator, Wishlist Savings Goal Planner, Discount & Weight tools',
+  title: 'Calculator Max • All Calculators, Notes & Tasks',
+  description: 'Calculator Max with Scientific Calculator, EMI, Wishlist Savings Goal Planner, Notes, Tasks Manager, and Offline Cloud Sync',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'RetailCalc',
+    title: 'Calculator Max',
   },
   icons: {
     icon: [
