@@ -37,7 +37,9 @@ interface NotesViewProps {
   currentUser: any;
   triggerVibration?: (type: 'success' | 'error' | 'click' | 'reset') => void;
   onFullScreenChange?: (isFullscreen: boolean) => void;
+  onSubOverlayChange?: (hasOverlay: boolean) => void;
   closeEditorSignal?: number;
+  refreshSignal?: number;
 }
 
 function getCompactNoteSurface(colorId: string): { bg: string; border: string } {
@@ -97,11 +99,16 @@ function getTagColorClass(label: string): string {
   return TAG_COLOR_PALETTES[hash % TAG_COLOR_PALETTES.length];
 }
 
-export default function NotesView({ currentUser, onFullScreenChange, closeEditorSignal = 0 }: NotesViewProps) {
+export default function NotesView({
+  currentUser,
+  onFullScreenChange,
+  onSubOverlayChange,
+  closeEditorSignal = 0,
+  refreshSignal = 0,
+}: NotesViewProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
@@ -175,6 +182,14 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
     }
   }, [editingNote, onFullScreenChange]);
 
+  const hasOpenSubOverlay = Boolean(editingNote || confirmDeleteTarget || selectedNoteIds.length > 0);
+  useEffect(() => {
+    onSubOverlayChange?.(hasOpenSubOverlay);
+    return () => {
+      onSubOverlayChange?.(false);
+    };
+  }, [hasOpenSubOverlay, onSubOverlayChange]);
+
   const handleCloseEditorRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (closeEditorSignal > 0) {
@@ -184,6 +199,8 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
         setShowThreeDotMenu(false);
       } else if (editingNote) {
         handleCloseEditorRef.current?.();
+      } else if (selectedNoteIds.length > 0) {
+        setSelectedNoteIds([]);
       }
     }
   }, [closeEditorSignal]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -257,22 +274,25 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
     }
   };
 
-  // Manual Real-Time Data Refresh (No page reload)
+  // Pull-to-refresh / external signal scoped purely to Notes Manager
   const handleManualRefresh = async () => {
-    setIsRefreshing(true);
     try {
       const freshNotes = await fetchNotes(currentUser?.id);
       setNotes(freshNotes);
-      setRefreshNotice('Notes synchronized in real-time');
-      setTimeout(() => setRefreshNotice(null), 3000);
+      setRefreshNotice('Notes updated');
+      setTimeout(() => setRefreshNotice(null), 2200);
     } catch (err) {
-      console.warn('Manual refresh notice:', err);
-    } finally {
-      setTimeout(() => {
-        setIsRefreshing(false);
-      }, 500);
+      console.warn('Notes refresh notice:', err);
     }
   };
+
+  const lastRefreshSignalRef = useRef(0);
+  useEffect(() => {
+    if (refreshSignal > lastRefreshSignalRef.current) {
+      lastRefreshSignalRef.current = refreshSignal;
+      void handleManualRefresh();
+    }
+  }, [refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openNewNoteEditor = () => {
     const nowIso = new Date().toISOString();
@@ -602,22 +622,11 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
 
           <div className="flex items-center gap-2 shrink-0">
             {refreshNotice && (
-              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
                 <Check className="w-3 h-3 text-emerald-600" />
                 <span>{refreshNotice}</span>
               </span>
             )}
-            <button
-              type="button"
-              id="notes-realtime-refresh-btn"
-              onClick={handleManualRefresh}
-              disabled={isRefreshing}
-              className="w-9 h-9 rounded-full bg-white/90 hover:bg-amber-50 border border-slate-200/80 hover:border-amber-300 text-slate-600 hover:text-amber-700 flex items-center justify-center shadow-2xs transition-all cursor-pointer active:scale-90 disabled:opacity-50"
-              title="Refresh notes data in real-time"
-              aria-label="Refresh notes"
-            >
-              <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-amber-600' : ''}`} />
-            </button>
           </div>
         </div>
 

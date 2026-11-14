@@ -23,7 +23,7 @@ import {
   Globe,
   CheckCircle2,
   Check,
-  RotateCw,
+  RefreshCw,
   HardDrive,
   Loader2,
   Coins,
@@ -35,6 +35,8 @@ import {
   Home,
   User,
   ArrowLeft,
+  LogOut,
+  ArrowDown,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import EmiCalculator from '../components/EmiCalculator';
@@ -327,10 +329,17 @@ export default function RetailCalc() {
   const [noteEditorCloseSignal, setNoteEditorCloseSignal] = useState(0);
   const [exitPromptVisible, setExitPromptVisible] = useState(false);
   const [isNoteFullScreen, setIsNoteFullScreen] = useState(false);
+  const [isManagerSubOverlayOpen, setIsManagerSubOverlayOpen] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [profileOpenSignal, setProfileOpenSignal] = useState(0);
   const [requestedAuthTab, setRequestedAuthTab] = useState<'signin' | 'update_password'>('signin');
   const [signOutSignal, setSignOutSignal] = useState(0);
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
+  const [notesRefreshSignal, setNotesRefreshSignal] = useState(0);
+  const [tasksRefreshSignal, setTasksRefreshSignal] = useState(0);
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const [pullRefreshNotice, setPullRefreshNotice] = useState<string | null>(null);
   const [dashboardNotes, setDashboardNotes] = useState<NoteItem[]>([]);
   const [dashboardTasksCount, setDashboardTasksCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -339,7 +348,6 @@ export default function RetailCalc() {
   const exitPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [isRefreshingHistory, setIsRefreshingHistory] = useState(false);
   const [historyRefreshNotice, setHistoryRefreshNotice] = useState<string | null>(null);
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<
     { type: 'single'; item: HistoryItem } | { type: 'all' } | null
@@ -482,9 +490,8 @@ export default function RetailCalc() {
     }
   }, [currentUser, loadUserHistory]);
 
-  // Manual Real-Time Data Refresh for Calculation History (matching Notes and Tasks)
-  const handleManualRefreshHistory = async () => {
-    setIsRefreshingHistory(true);
+  // Real-Time Data Refresh for Calculation History (invoked by Pull-to-Refresh while on History tab)
+  const handleManualRefreshHistory = useCallback(async () => {
     try {
       if (currentUser?.id) {
         await loadUserHistory(currentUser);
@@ -492,16 +499,12 @@ export default function RetailCalc() {
         const local = getCalculationHistory();
         setHistory(local);
       }
-      setHistoryRefreshNotice('History synchronized in real-time');
-      setTimeout(() => setHistoryRefreshNotice(null), 3000);
+      setHistoryRefreshNotice('History updated');
+      setTimeout(() => setHistoryRefreshNotice(null), 2200);
     } catch (err) {
-      console.warn('Manual calculation history refresh notice:', err);
-    } finally {
-      setTimeout(() => {
-        setIsRefreshingHistory(false);
-      }, 500);
+      console.warn('Calculation history refresh notice:', err);
     }
-  };
+  }, [currentUser, loadUserHistory]);
 
   // Intercept Supabase password recovery links and route to /reset-password
   useEffect(() => {
@@ -701,7 +704,7 @@ export default function RetailCalc() {
         typeof window.history.state === 'object' && window.history.state !== null
           ? window.history.state
           : {};
-      if (currentState.__calcMaxGuard) return;
+      if (currentState.__calcMaxGuard && currentState.__calcMaxTag === tag) return;
       window.history.pushState(
         { ...currentState, __calcMaxGuard: true, __calcMaxSentinel: false, __calcMaxTag: tag },
         '',
@@ -724,6 +727,11 @@ export default function RetailCalc() {
       setDirection(newIdx > currentIdx ? 1 : -1);
       triggerVibration('click');
 
+      if (newTab !== 'notes' && newTab !== 'tasks') {
+        setIsNoteFullScreen(false);
+        setIsManagerSubOverlayOpen(false);
+      }
+
       if (newTab === 'home') {
         navStackRef.current = ['home'];
       } else {
@@ -743,6 +751,10 @@ export default function RetailCalc() {
   );
 
   const handleStepBackHierarchy = useCallback((): boolean => {
+    if (showSignOutConfirm) {
+      setShowSignOutConfirm(false);
+      return true;
+    }
     if (deleteConfirmTarget) {
       setDeleteConfirmTarget(null);
       return true;
@@ -755,7 +767,7 @@ export default function RetailCalc() {
       setProfileCloseSignal((n) => n + 1);
       return true;
     }
-    if (isNoteFullScreen) {
+    if (isNoteFullScreen || isManagerSubOverlayOpen) {
       setNoteEditorCloseSignal((n) => n + 1);
       return true;
     }
@@ -785,8 +797,10 @@ export default function RetailCalc() {
     dashboardSearch,
     deleteConfirmTarget,
     isAuthModalOpen,
+    isManagerSubOverlayOpen,
     isNoteFullScreen,
     previewHistoryItem,
+    showSignOutConfirm,
   ]);
 
   const backHandlerRef = useRef(handleStepBackHierarchy);
@@ -794,22 +808,28 @@ export default function RetailCalc() {
     backHandlerRef.current = handleStepBackHierarchy;
   }, [handleStepBackHierarchy]);
 
-  // Push a browser history guard when interactive overlays open so Android Back closes them cleanly
+  // Push distinct browser history entries when overlays/edit views open so hardware Back unwinds step-by-step
   useEffect(() => {
-    if (
-      previewHistoryItem ||
-      deleteConfirmTarget ||
-      isAuthModalOpen ||
-      isNoteFullScreen
-    ) {
-      pushHistoryGuard('overlay');
+    if (showSignOutConfirm) {
+      pushHistoryGuard('overlay:signout');
+    } else if (deleteConfirmTarget) {
+      pushHistoryGuard('overlay:delete');
+    } else if (previewHistoryItem) {
+      pushHistoryGuard('overlay:preview');
+    } else if (isAuthModalOpen) {
+      pushHistoryGuard('overlay:auth');
+    } else if (isNoteFullScreen || isManagerSubOverlayOpen) {
+      pushHistoryGuard(`overlay:${activeTab}`);
     }
   }, [
+    activeTab,
     deleteConfirmTarget,
     isAuthModalOpen,
+    isManagerSubOverlayOpen,
     isNoteFullScreen,
     previewHistoryItem,
     pushHistoryGuard,
+    showSignOutConfirm,
   ]);
 
   // Intercept hardware Back button (Android browser / PWA popstate + WebView/Capacitor backbutton)
@@ -838,7 +858,17 @@ export default function RetailCalc() {
     }
 
     const ensureArmedOnGesture = () => {
-      pushHistoryGuard('gesture-arm');
+      try {
+        const st =
+          typeof window.history.state === 'object' && window.history.state !== null
+            ? window.history.state
+            : {};
+        if (!st.__calcMaxGuard) {
+          pushHistoryGuard('home-root');
+        }
+      } catch {
+        // Ignore
+      }
     };
 
     const handleBackAttempt = (fromPopState: boolean) => {
@@ -846,8 +876,8 @@ export default function RetailCalc() {
       if (handled) {
         lastBackPressAtRef.current = 0;
         setExitPromptVisible(false);
-        if (fromPopState) {
-          pushHistoryGuard('step-back');
+        if (fromPopState && !window.history.state?.__calcMaxGuard) {
+          pushHistoryGuard('home-root');
         }
         return;
       }
@@ -898,6 +928,173 @@ export default function RetailCalc() {
       }
     };
   }, [pushHistoryGuard]);
+
+  // View-scoped Pull-to-Refresh (Refreshes ONLY current active view; never redirects to Home Dashboard)
+  const activeTabRef = useRef<ActiveTab>(activeTab);
+  const isOverlayBlockedRef = useRef<boolean>(false);
+  const isPullRefreshingRef = useRef<boolean>(false);
+  const pullDistanceRef = useRef<number>(0);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    isOverlayBlockedRef.current = Boolean(
+      isNoteFullScreen ||
+        isManagerSubOverlayOpen ||
+        isAuthModalOpen ||
+        deleteConfirmTarget ||
+        previewHistoryItem ||
+        showSignOutConfirm
+    );
+  }, [
+    deleteConfirmTarget,
+    isAuthModalOpen,
+    isManagerSubOverlayOpen,
+    isNoteFullScreen,
+    previewHistoryItem,
+    showSignOutConfirm,
+  ]);
+
+  const handleRefreshActiveView = useCallback(async () => {
+    if (isPullRefreshingRef.current) return;
+    isPullRefreshingRef.current = true;
+    setIsPullRefreshing(true);
+
+    const targetTab = activeTabRef.current;
+    try {
+      if (targetTab === 'notes') {
+        setNotesRefreshSignal((n) => n + 1);
+        setPullRefreshNotice('Notes refreshed');
+      } else if (targetTab === 'tasks') {
+        setTasksRefreshSignal((n) => n + 1);
+        setPullRefreshNotice('Tasks refreshed');
+      } else if (targetTab === 'history') {
+        await handleManualRefreshHistory();
+        setPullRefreshNotice('History refreshed');
+      } else if (targetTab === 'home') {
+        const notesList = getLocalNotes(currentUser?.id);
+        const tasksList = getLocalTasks(currentUser?.id);
+        setDashboardNotes(notesList);
+        setDashboardTasksCount(tasksList.length);
+        if (currentUser?.id) {
+          await loadUserHistory(currentUser);
+        }
+        setPullRefreshNotice('Dashboard refreshed');
+      } else {
+        if (currentUser?.id) {
+          await loadUserHistory(currentUser);
+        }
+        setPullRefreshNotice('View refreshed');
+      }
+    } catch {
+      // Ignore transient refresh notice errors
+    } finally {
+      setTimeout(() => {
+        isPullRefreshingRef.current = false;
+        setIsPullRefreshing(false);
+        setPullDistance(0);
+        pullDistanceRef.current = 0;
+      }, 450);
+      setTimeout(() => {
+        setPullRefreshNotice(null);
+      }, 2000);
+    }
+  }, [currentUser, handleManualRefreshHistory, loadUserHistory]);
+
+  const handleRefreshActiveViewRef = useRef(handleRefreshActiveView);
+  useEffect(() => {
+    handleRefreshActiveViewRef.current = handleRefreshActiveView;
+  }, [handleRefreshActiveView]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let startY = 0;
+    let startX = 0;
+    let tracking = false;
+    let activelyPulling = false;
+
+    const hasScrolledInnerContainer = (target: EventTarget | null): boolean => {
+      let el = target instanceof HTMLElement ? target : null;
+      while (el && el !== document.body && el !== document.documentElement) {
+        const style = window.getComputedStyle(el);
+        const overflowY = style.overflowY;
+        if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollTop > 2) {
+          return true;
+        }
+        el = el.parentElement;
+      }
+      return false;
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1 || isOverlayBlockedRef.current || isPullRefreshingRef.current) {
+        tracking = false;
+        return;
+      }
+      if (window.scrollY > 2 || hasScrolledInnerContainer(e.target)) {
+        tracking = false;
+        return;
+      }
+      tracking = true;
+      activelyPulling = false;
+      startY = e.touches[0].clientY;
+      startX = e.touches[0].clientX;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!tracking || e.touches.length !== 1 || isOverlayBlockedRef.current) return;
+      const dy = e.touches[0].clientY - startY;
+      const dx = e.touches[0].clientX - startX;
+
+      if (!activelyPulling) {
+        if (dy <= 0 || Math.abs(dx) > dy * 0.9 || window.scrollY > 2) {
+          tracking = false;
+          return;
+        }
+        if (dy > 10) {
+          activelyPulling = true;
+        } else {
+          return;
+        }
+      }
+
+      if (dy > 10 && window.scrollY <= 2) {
+        e.preventDefault();
+        const damped = Math.min(84, Math.round((dy - 10) * 0.45));
+        pullDistanceRef.current = damped;
+        setPullDistance(damped);
+      }
+    };
+
+    const finishPull = () => {
+      if (!tracking) return;
+      tracking = false;
+      const pulled = pullDistanceRef.current;
+      activelyPulling = false;
+      if (pulled >= 54) {
+        pullDistanceRef.current = 52;
+        setPullDistance(52);
+        void handleRefreshActiveViewRef.current();
+      } else {
+        pullDistanceRef.current = 0;
+        setPullDistance(0);
+      }
+    };
+
+    window.addEventListener('touchstart', onTouchStart, { passive: true });
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', finishPull, { passive: true });
+    window.addEventListener('touchcancel', finishPull, { passive: true });
+
+    return () => {
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', finishPull);
+      window.removeEventListener('touchcancel', finishPull);
+    };
+  }, []);
 
   const handleFocusDashboardSearch = () => {
     if (activeTab !== 'home') {
@@ -1965,6 +2162,7 @@ export default function RetailCalc() {
           closeSignal={profileCloseSignal}
           requestedAuthTab={requestedAuthTab}
           signOutSignal={signOutSignal}
+          onRequestSignOut={() => setShowSignOutConfirm(true)}
           currencySlot={currencyPreferencesCard}
           onSyncHistory={handleSyncFromCloudSql}
           onUserChanged={handleUserChanged}
@@ -2093,6 +2291,40 @@ export default function RetailCalc() {
               : 'p-3 sm:p-6 md:p-8 pb-24 space-y-4 sm:space-y-6 md:space-y-8'
           }`}
         >
+          {/* Pull-to-Refresh Visual Pill Indicator (Scoped strictly to the active view) */}
+          {(pullDistance > 8 || isPullRefreshing || pullRefreshNotice) && !isNoteFullScreen && (
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                transform: `translate(-50%, ${isPullRefreshing ? 12 : Math.max(4, Math.min(28, pullDistance * 0.35))}px)`,
+              }}
+              className="fixed top-14 left-1/2 z-50 pointer-events-none transition-transform duration-150"
+            >
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/95 border border-slate-200 shadow-lg text-xs font-bold text-slate-800 whitespace-nowrap">
+                {isPullRefreshing ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 text-blue-600 animate-spin" />
+                    <span>Refreshing view...</span>
+                  </>
+                ) : pullRefreshNotice ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>{pullRefreshNotice}</span>
+                  </>
+                ) : (
+                  <>
+                    <ArrowDown
+                      className={`w-3.5 h-3.5 transition-transform duration-150 ${
+                        pullDistance >= 54 ? 'rotate-180 text-blue-600' : 'text-slate-500'
+                      }`}
+                    />
+                    <span>{pullDistance >= 54 ? 'Release to refresh' : 'Pull to refresh'}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
           <AnimatePresence mode="wait" initial={false} custom={direction}>
             <motion.div
               key={activeTab}
@@ -2231,7 +2463,9 @@ export default function RetailCalc() {
                     currentUser={currentUser}
                     triggerVibration={triggerVibration}
                     onFullScreenChange={(isFullscreen) => setIsNoteFullScreen(isFullscreen)}
+                    onSubOverlayChange={(hasOverlay) => setIsManagerSubOverlayOpen(hasOverlay)}
                     closeEditorSignal={noteEditorCloseSignal}
+                    refreshSignal={notesRefreshSignal}
                   />
                 </section>
               )}
@@ -2243,7 +2477,9 @@ export default function RetailCalc() {
                     currentUser={currentUser}
                     triggerVibration={triggerVibration}
                     onFullScreenChange={(isFullscreen) => setIsNoteFullScreen(isFullscreen)}
+                    onSubOverlayChange={(hasOverlay) => setIsManagerSubOverlayOpen(hasOverlay)}
                     closeEditorSignal={noteEditorCloseSignal}
+                    refreshSignal={tasksRefreshSignal}
                   />
                 </section>
               )}
@@ -2258,7 +2494,7 @@ export default function RetailCalc() {
 
                     <div className="flex flex-wrap items-center gap-2">
                       {historyRefreshNotice && (
-                        <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
                           <Check className="w-3 h-3 text-emerald-600" />
                           <span>{historyRefreshNotice}</span>
                         </span>
@@ -2297,18 +2533,6 @@ export default function RetailCalc() {
                           </button>
                         </>
                       )}
-
-                      {/* Distinct Round Refresh Button Positioned at Far Right Next to Export CSV Controls */}
-                      <button
-                        type="button"
-                        id="history-realtime-refresh-btn"
-                        onClick={handleManualRefreshHistory}
-                        disabled={isRefreshingHistory}
-                        className="w-10 h-10 rounded-full bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 flex items-center justify-center shadow-xs transition-all cursor-pointer active:scale-90 disabled:opacity-50"
-                        title="Refresh calculation history in real-time (no page reload)"
-                      >
-                        <RotateCw className={`w-4 h-4 ${isRefreshingHistory ? 'animate-spin text-indigo-600' : ''}`} />
-                      </button>
                     </div>
                   </div>
 
@@ -2576,7 +2800,7 @@ export default function RetailCalc() {
                       setProfileOpenSignal((n) => n + 1);
                     }}
                     onSignOut={() => {
-                      setSignOutSignal((n) => n + 1);
+                      setShowSignOutConfirm(true);
                     }}
                     onSyncHistory={handleSyncFromCloudSql}
                     onExportCalculations={exportHistoryCSV}
@@ -2856,6 +3080,61 @@ export default function RetailCalc() {
           >
             Press back again to exit
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Sign Out Confirmation Modal Dialog */}
+      <AnimatePresence>
+        {showSignOutConfirm && (
+          <div
+            id="signout-confirmation-backdrop"
+            className="fixed inset-0 z-[100001] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs"
+            onClick={() => setShowSignOutConfirm(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-sm w-full p-6 space-y-4"
+            >
+              <div className="flex items-start gap-3.5">
+                <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 border border-rose-100">
+                  <LogOut className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-extrabold text-slate-900 leading-tight">
+                    Sign Out of Calculator Max?
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    Your locally saved notes, tasks, and calculation history will remain on this device. Cloud sync will pause until you sign back in.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowSignOutConfirm(false)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 font-bold text-xs transition-colors cursor-pointer min-h-[40px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSignOutConfirm(false);
+                    setSignOutSignal((n) => n + 1);
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[40px]"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 

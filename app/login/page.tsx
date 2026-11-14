@@ -38,6 +38,7 @@ export default function LoginPage() {
   const [resetSent, setResetSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
 
   const supabase = React.useMemo(() => createClient(), []);
 
@@ -107,6 +108,7 @@ export default function LoginPage() {
 
   const handleSignOut = async () => {
     try {
+      setShowSignOutConfirm(false);
       setLoading(true);
       if (typeof window !== 'undefined') {
         localStorage.removeItem('retail_calc_auth_user');
@@ -676,7 +678,7 @@ export default function LoginPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={handleSignOut}
+                  onClick={() => setShowSignOutConfirm(true)}
                   disabled={loading}
                   className="px-5 py-2.5 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 font-bold text-xs rounded-xl border border-slate-200 hover:border-rose-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
@@ -684,6 +686,38 @@ export default function LoginPage() {
                   <span>Sign Out</span>
                 </button>
               </div>
+              {showSignOutConfirm && (
+                <div className="max-w-sm mx-auto mt-4 bg-white border border-slate-200 rounded-2xl p-4 shadow-lg text-left space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+                      <LogOut className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-900">Sign Out of Calculator Max?</p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Your local data stays on this device, and cloud sync will pause until you sign back in.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowSignOutConfirm(false)}
+                      className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSignOut}
+                      disabled={loading}
+                      className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-xs font-bold text-white cursor-pointer disabled:opacity-50"
+                    >
+                      Confirm Sign Out
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <>

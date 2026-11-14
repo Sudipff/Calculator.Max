@@ -43,7 +43,9 @@ interface TasksViewProps {
   currentUser: any;
   triggerVibration?: (type: 'success' | 'error' | 'click' | 'reset') => void;
   onFullScreenChange?: (isFullscreen: boolean) => void;
+  onSubOverlayChange?: (hasOverlay: boolean) => void;
   closeEditorSignal?: number;
+  refreshSignal?: number;
 }
 
 type TaskFilterTab = 'all' | 'active' | 'completed' | 'priority';
@@ -95,14 +97,15 @@ export default function TasksView({
   currentUser,
   triggerVibration,
   onFullScreenChange,
+  onSubOverlayChange,
   closeEditorSignal = 0,
+  refreshSignal = 0,
 }: TasksViewProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [taskLists, setTaskLists] = useState<TaskList[]>([]);
   const [activeListId, setActiveListId] = useState<string>('default-my-tasks');
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
 
   // Search & Filter states
@@ -187,18 +190,31 @@ export default function TasksView({
     }
   }, [detailTask, onFullScreenChange]);
 
-  // Close overlays cleanly when hardware back button fires
+  const hasOpenSubOverlay = Boolean(
+    detailTaskId || isCreateModalOpen || showNewListModal || confirmDeleteTarget || selectedTaskIds.length > 0
+  );
+  useEffect(() => {
+    onSubOverlayChange?.(hasOpenSubOverlay);
+    return () => {
+      onSubOverlayChange?.(false);
+    };
+  }, [hasOpenSubOverlay, onSubOverlayChange]);
+
+  const handleCloseDetailFromBackRef = useRef<(() => void) | null>(null);
+
+  // Close overlays cleanly when back navigation fires so user returns to Tasks Manager
   useEffect(() => {
     if (closeEditorSignal > 0) {
       if (confirmDeleteTarget) {
         setConfirmDeleteTarget(null);
-      } else if (detailTaskId) {
-        setDetailTaskId(null);
-        setIsEditingDetail(false);
-      } else if (isCreateModalOpen) {
-        setIsCreateModalOpen(false);
       } else if (showNewListModal) {
         setShowNewListModal(false);
+      } else if (isCreateModalOpen) {
+        setIsCreateModalOpen(false);
+      } else if (detailTaskId) {
+        handleCloseDetailFromBackRef.current?.();
+      } else if (selectedTaskIds.length > 0) {
+        setSelectedTaskIds([]);
       }
     }
   }, [closeEditorSignal]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -303,9 +319,8 @@ export default function TasksView({
     }
   };
 
-  // Manual Real-Time Tasks Refresh (No page reload)
+  // Scoped Real-Time Tasks Refresh (triggered via pull-to-refresh on Tasks view)
   const handleManualRefreshTasks = async () => {
-    setIsRefreshing(true);
     try {
       const [freshLists, freshTasks] = await Promise.all([
         fetchTaskLists(currentUser?.id),
@@ -313,16 +328,20 @@ export default function TasksView({
       ]);
       setTaskLists(freshLists);
       setTasks(freshTasks);
-      setRefreshNotice('Tasks synchronized');
-      setTimeout(() => setRefreshNotice(null), 2500);
+      setRefreshNotice('Tasks updated');
+      setTimeout(() => setRefreshNotice(null), 2200);
     } catch (err) {
-      console.warn('Manual tasks refresh notice:', err);
-    } finally {
-      setTimeout(() => {
-        setIsRefreshing(false);
-      }, 450);
+      console.warn('Tasks refresh notice:', err);
     }
   };
+
+  const lastRefreshSignalRef = useRef(0);
+  useEffect(() => {
+    if (refreshSignal > lastRefreshSignalRef.current) {
+      lastRefreshSignalRef.current = refreshSignal;
+      void handleManualRefreshTasks();
+    }
+  }, [refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reliable Notification Toggle Switch Handler
   const handleToggleAlerts = async () => {
@@ -417,6 +436,14 @@ export default function TasksView({
       const res = await upsertTaskToSupabase(updatedTask, currentUser.id);
       setTasks((prev) => prev.map((t) => (t.id === detailTask.id ? { ...t, syncStatus: res.syncStatus } : t)));
     }
+  };
+
+  handleCloseDetailFromBackRef.current = () => {
+    if (isEditingDetail) {
+      void handleSaveDetailChanges();
+    }
+    setDetailTaskId(null);
+    setIsEditingDetail(false);
   };
 
   // Append quick note in Detail View
@@ -767,7 +794,7 @@ export default function TasksView({
 
           <div className="flex items-center gap-2 shrink-0">
             {refreshNotice && (
-              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
                 <Check className="w-3 h-3 text-emerald-600" />
                 <span>{refreshNotice}</span>
               </span>
@@ -790,18 +817,6 @@ export default function TasksView({
                 <BellOff className="w-3.5 h-3.5 text-slate-400" />
               )}
               <span>{alertsEnabled ? 'Alerts On' : 'Alerts Off'}</span>
-            </button>
-
-            <button
-              type="button"
-              id="tasks-realtime-refresh-btn"
-              onClick={handleManualRefreshTasks}
-              disabled={isRefreshing}
-              className="w-9 h-9 rounded-full bg-white/90 hover:bg-blue-50 border border-slate-200/80 hover:border-blue-300 text-slate-600 hover:text-blue-700 flex items-center justify-center shadow-2xs transition-all cursor-pointer active:scale-90 disabled:opacity-50"
-              title="Refresh tasks in real-time"
-              aria-label="Refresh tasks"
-            >
-              <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
             </button>
           </div>
         </div>

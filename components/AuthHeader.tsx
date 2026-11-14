@@ -33,6 +33,7 @@ interface AuthHeaderProps {
   onSyncHistory?: () => void;
   onModalOpenChange?: (open: boolean) => void;
   onProfileTrigger?: () => void;
+  onRequestSignOut?: () => void;
   requestedAuthTab?: 'signin' | 'update_password';
   signOutSignal?: number;
   compactProfile?: boolean;
@@ -49,6 +50,7 @@ export default function AuthHeader({
   onSyncHistory,
   onModalOpenChange,
   onProfileTrigger,
+  onRequestSignOut,
   requestedAuthTab = 'signin',
   signOutSignal = 0,
   compactProfile = false,
@@ -78,6 +80,7 @@ export default function AuthHeader({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmEraseData, setConfirmEraseData] = useState(false);
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
   const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
 
   const supabase = createClient();
@@ -767,6 +770,7 @@ export default function AuthHeader({
 
   const handleSignOut = async () => {
     try {
+      setShowSignOutConfirm(false);
       if (typeof window !== 'undefined') {
         localStorage.removeItem('retail_calc_auth_user');
       }
@@ -784,6 +788,14 @@ export default function AuthHeader({
   };
 
   signOutFnRef.current = handleSignOut;
+
+  const triggerSignOutFlow = () => {
+    if (onRequestSignOut) {
+      onRequestSignOut();
+    } else {
+      setShowSignOutConfirm(true);
+    }
+  };
 
   const handleExportMyData = async () => {
     try {
@@ -922,7 +934,7 @@ export default function AuthHeader({
               </button>
               <button
                 type="button"
-                onClick={handleSignOut}
+                onClick={triggerSignOutFlow}
                 className="p-1 hover:bg-white/20 rounded-lg text-white/80 hover:text-white transition-colors ml-1 cursor-pointer"
                 title="Sign Out"
               >
@@ -1074,7 +1086,7 @@ export default function AuthHeader({
                     </button>
                     <button
                       type="button"
-                      onClick={handleSignOut}
+                      onClick={triggerSignOutFlow}
                       className="px-5 py-2.5 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 font-bold rounded-xl border border-slate-200 hover:border-rose-200 transition-all flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <LogOut className="w-4 h-4" />
@@ -1590,6 +1602,48 @@ export default function AuthHeader({
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Standalone Fallback Sign-Out Confirmation Popup */}
+      {mounted && showSignOutConfirm && !onRequestSignOut && createPortal(
+        <div
+          className="fixed inset-0 z-[100001] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs"
+          onClick={() => setShowSignOutConfirm(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 border border-rose-100">
+                <LogOut className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900">Sign Out of Calculator Max?</h3>
+                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                  Your local data remains on this device. Cloud synchronization will pause until you sign in again.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowSignOutConfirm(false)}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSignOut()}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-xs font-bold text-white shadow-xs cursor-pointer"
+              >
+                Sign Out
+              </button>
             </div>
           </div>
         </div>,
