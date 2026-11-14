@@ -2182,8 +2182,8 @@ export default function RetailCalc() {
           }}
         />
 
-        {/* Conditional Header: Full Main Header on Home Dashboard, Minimal Back-Button-Only Header on Secondary Screens */}
-        {activeTab === 'home' ? (
+        {/* Main Header: Rendered only on Home Dashboard; secondary screens have no top back button or excess header bar */}
+        {activeTab === 'home' && (
           <header className="mobile-edge-header w-full shrink-0 bg-white/90 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_14px_rgba(15,23,42,0.04)] sticky top-0 z-40 transition-colors">
             <div className="h-14 px-4 sm:px-6 flex justify-between items-center gap-3">
               {/* Left: App Icon + Calculator Max Title */}
@@ -2270,36 +2270,18 @@ export default function RetailCalc() {
               </div>
             </div>
           </header>
-        ) : (
-          <header
-            className={`mobile-edge-header w-full shrink-0 h-12 px-3 sm:px-6 bg-white/85 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-40 flex items-center ${
-              isNoteFullScreen ? 'hidden pointer-events-none' : 'flex pointer-events-auto'
-            }`}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                if (!handleStepBackHierarchy()) {
-                  handleTabChange('home');
-                }
-              }}
-              className="min-w-[44px] min-h-[44px] -ml-1.5 rounded-xl hover:bg-slate-100/90 active:scale-95 text-slate-800 flex items-center justify-center transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              aria-label="Go back"
-              title="Back"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-          </header>
         )}
 
         {/* Main Content Area */}
         <main
-          className={`flex-1 flex flex-col relative overflow-x-clip pb-20 ${
+          className={`flex-1 flex flex-col relative pb-20 ${
             activeTab === 'calculator'
-              ? 'p-0 sm:p-6 md:p-8 sm:pb-24 space-y-0 sm:space-y-6 md:space-y-8'
+              ? 'p-0 sm:px-6 sm:pt-3 sm:pb-24 md:px-8 space-y-0 sm:space-y-4'
               : activeTab === 'home'
               ? 'p-0 pb-20'
-              : 'p-3 sm:p-6 md:p-8 pb-24 space-y-4 sm:space-y-6 md:space-y-8'
+              : activeTab === 'history' || activeTab === 'notes' || activeTab === 'tasks'
+              ? 'px-3 sm:px-6 md:px-8 pt-0 pb-24'
+              : 'px-3 sm:px-6 md:px-8 pt-2.5 sm:pt-4 pb-24 space-y-3 sm:space-y-5'
           }`}
         >
           {/* Pull-to-Refresh Visual Pill Indicator (Scoped strictly to the active view) */}
@@ -2341,27 +2323,28 @@ export default function RetailCalc() {
               key={activeTab}
               custom={direction}
               variants={{
-                enter: (dir: number) => ({
-                  x: dir > 0 ? 40 : -40,
+                enter: {
                   opacity: 0,
-                }),
+                },
                 center: {
-                  x: 0,
                   opacity: 1,
                 },
-                exit: (dir: number) => ({
-                  x: dir > 0 ? -40 : 40,
+                exit: {
                   opacity: 0,
-                }),
+                },
               }}
               initial="enter"
               animate="center"
               exit="exit"
-              transition={{ duration: 0.18, ease: [0.25, 0.1, 0.25, 1] }}
+              transition={{ duration: 0.14, ease: [0.25, 0.1, 0.25, 1] }}
               className={`w-full flex-1 flex flex-col ${
-                activeTab === 'calculator' || activeTab === 'home'
-                  ? 'space-y-0 sm:space-y-6 md:space-y-8'
-                  : 'space-y-4 sm:space-y-6 md:space-y-8'
+                activeTab === 'calculator' ||
+                activeTab === 'home' ||
+                activeTab === 'history' ||
+                activeTab === 'notes' ||
+                activeTab === 'tasks'
+                  ? 'space-y-0'
+                  : 'space-y-3 sm:space-y-5'
               }`}
             >
               {/* TAB: CALCULATOR MAX HOME DASHBOARD */}
@@ -2469,7 +2452,7 @@ export default function RetailCalc() {
 
               {/* TAB: NOTES (Google Keep-style) */}
               {activeTab === 'notes' && (
-                <section className="py-2">
+                <section className="pt-0 pb-2">
                   <NotesView
                     currentUser={currentUser}
                     triggerVibration={triggerVibration}
@@ -2483,7 +2466,7 @@ export default function RetailCalc() {
 
               {/* TAB: TASKS (Google Tasks-style) */}
               {activeTab === 'tasks' && (
-                <section className="py-2">
+                <section className="pt-0 pb-2">
                   <TasksView
                     currentUser={currentUser}
                     triggerVibration={triggerVibration}
@@ -2497,7 +2480,7 @@ export default function RetailCalc() {
 
               {/* TAB 4: REDESIGNED DATE-GROUPED CALCULATOR HISTORY */}
               {activeTab === 'history' && (
-                <section className="py-1">
+                <section className="pt-0 pb-2">
                   <HistoryView
                     history={history}
                     currency={currency}
@@ -2613,7 +2596,7 @@ export default function RetailCalc() {
           </AnimatePresence>
         </main>
 
-        {/* Bottom Navigation Bar: Home, History, Search, Notes, Profile */}
+        {/* Bottom Navigation Bar: Home, History, Search, Notes, Tasks */}
         {!isNoteFullScreen && (
           <nav
             aria-label="Primary bottom navigation"
@@ -2655,7 +2638,7 @@ export default function RetailCalc() {
                 type="button"
                 onClick={() => handleTabChange('notes')}
                 className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
-                  activeTab === 'notes' || activeTab === 'tasks' ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
+                  activeTab === 'notes' ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
                 }`}
               >
                 <FileText className="w-5 h-5" />
@@ -2664,13 +2647,13 @@ export default function RetailCalc() {
 
               <button
                 type="button"
-                onClick={() => handleTabChange('profile')}
+                onClick={() => handleTabChange('tasks')}
                 className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
-                  activeTab === 'profile' ? 'text-slate-900 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
+                  activeTab === 'tasks' ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
                 }`}
               >
-                <User className={`w-5 h-5 ${activeTab === 'profile' ? 'fill-slate-900 text-slate-900' : ''}`} />
-                <span className="text-[10px] tracking-tight">Profile</span>
+                <ListTodo className="w-5 h-5" />
+                <span className="text-[10px] tracking-tight">Tasks</span>
               </button>
             </div>
           </nav>

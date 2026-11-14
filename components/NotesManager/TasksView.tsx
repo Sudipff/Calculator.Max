@@ -787,10 +787,10 @@ export default function TasksView({
   }, [tasks, activeListId, activeFilter, searchQuery]);
 
   return (
-    <div className="w-full max-w-full min-w-0 overflow-x-clip space-y-4 sm:space-y-5 pb-16">
+    <div className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-4 pb-16">
       {/* Active In-App Reminder Alert Banner */}
       {activeAlert && (
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-3.5 rounded-2xl shadow-lg flex items-center justify-between gap-3">
+        <div className="mt-2 bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-3.5 rounded-2xl shadow-lg flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
               <Bell className="w-4 h-4 text-white" />
@@ -825,8 +825,11 @@ export default function TasksView({
         </div>
       )}
 
-      {/* Compact Title, Search & Filter Header matching Calculator Max Tasks Manager */}
-      <div className="space-y-3">
+      {/* Sticky Header: Title, Search Bar + Three-Dot Menu (with Alert Toggle), Filter Chips, and List Tabs */}
+      <div
+        data-sticky-secondary-header="tasks"
+        className="sticky top-0 z-30 -mx-3 sm:-mx-6 md:-mx-8 px-3 sm:px-6 md:px-8 pt-2.5 pb-2.5 bg-[#f2f8fc]/95 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_10px_rgba(15,23,42,0.03)] space-y-2.5"
+      >
         <div className="flex items-center justify-between gap-2 min-w-0">
           <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase truncate">
             Tasks Manager
@@ -849,29 +852,10 @@ export default function TasksView({
                 <span>{refreshNotice}</span>
               </span>
             )}
-
-            <button
-              type="button"
-              id="tasks-notification-toggle-btn"
-              onClick={handleToggleAlerts}
-              className={`px-2.5 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1.5 cursor-pointer select-none min-h-[36px] ${
-                alertsEnabled
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'
-                  : 'bg-white/90 border-slate-200 text-slate-600 hover:bg-slate-100'
-              }`}
-              title={`Click to ${alertsEnabled ? 'disable' : 'enable'} task push alerts`}
-            >
-              {alertsEnabled ? (
-                <Bell className="w-3.5 h-3.5 text-emerald-600" />
-              ) : (
-                <BellOff className="w-3.5 h-3.5 text-slate-400" />
-              )}
-              <span>{alertsEnabled ? 'Alerts On' : 'Alerts Off'}</span>
-            </button>
           </div>
         </div>
 
-        {/* Shortened Search Bar + Three-Dot Overflow Menu */}
+        {/* Shortened Search Bar + Three-Dot Overflow Menu (contains Alert Toggle) */}
         <div className="flex items-center gap-2">
           <div className="relative flex-1 min-w-0">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -909,7 +893,39 @@ export default function TasksView({
             </button>
 
             {showManagerMenu && (
-              <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-2xl border border-slate-200 shadow-xl py-1.5 z-40">
+              <div className="absolute right-0 top-full mt-2 w-52 bg-white rounded-2xl border border-slate-200 shadow-xl py-1.5 z-40">
+                {/* Relocated Alert Toggle inside Three-Dot Menu */}
+                <button
+                  type="button"
+                  id="tasks-notification-toggle-btn"
+                  onClick={() => {
+                    void handleToggleAlerts();
+                    setShowManagerMenu(false);
+                  }}
+                  className="w-full px-3.5 py-2.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center justify-between gap-2 cursor-pointer"
+                  title={`Click to ${alertsEnabled ? 'disable' : 'enable'} task push alerts`}
+                >
+                  <span className="flex items-center gap-2">
+                    {alertsEnabled ? (
+                      <Bell className="w-3.5 h-3.5 text-emerald-600" />
+                    ) : (
+                      <BellOff className="w-3.5 h-3.5 text-slate-400" />
+                    )}
+                    <span>{alertsEnabled ? 'Alerts On' : 'Alerts Off'}</span>
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      alertsEnabled
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : 'bg-slate-100 text-slate-500 border border-slate-200'
+                    }`}
+                  >
+                    {alertsEnabled ? 'ON' : 'OFF'}
+                  </span>
+                </button>
+
+                <div className="my-1 border-t border-slate-100" />
+
                 <button
                   type="button"
                   onClick={() => {
@@ -953,7 +969,7 @@ export default function TasksView({
         </div>
 
         {/* Interactive Status & Priority Filter Bar: All, Active, Completed, Priority */}
-        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 scrollbar-none">
           {(
             [
               { id: 'all', label: 'All' },
@@ -1024,7 +1040,7 @@ export default function TasksView({
 
       {/* Floating Batch Action Bar when items are selected via Long-Press */}
       {selectedTaskIds.length > 0 && (
-        <div className="sticky top-14 z-30 bg-slate-900 text-white p-3 sm:p-4 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 border border-slate-700">
+        <div className="sticky top-[168px] z-20 bg-slate-900 text-white p-3 sm:p-4 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 border border-slate-700">
           <div className="flex items-center gap-2.5">
             <span className="w-7 h-7 rounded-xl bg-blue-600 text-white flex items-center justify-center text-xs font-black">
               {selectedTaskIds.length}

@@ -633,9 +633,12 @@ export default function NotesView({
     : NOTE_COLORS[0];
 
   return (
-    <div className="w-full max-w-full min-w-0 overflow-x-clip space-y-4 sm:space-y-5 pb-16">
-      {/* Compact Header, Search & Filter Controls matching Calculator Max Notes Manager */}
-      <div className="space-y-3">
+    <div className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-4 pb-16">
+      {/* Sticky Header: Title, Search Bar + Three-Dot Menu, and Filter Chips */}
+      <div
+        data-sticky-secondary-header="notes"
+        className="sticky top-0 z-30 -mx-3 sm:-mx-6 md:-mx-8 px-3 sm:px-6 md:px-8 pt-2.5 pb-2.5 bg-[#f2f8fc]/95 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_10px_rgba(15,23,42,0.03)] space-y-2.5"
+      >
         <div className="flex items-center justify-between gap-2 min-w-0">
           <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase truncate">
             Notes Manager
@@ -745,7 +748,7 @@ export default function NotesView({
         </div>
 
         {/* Interactive Filter Pills: All Notes, Pinned, + Labels */}
-        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 scrollbar-none">
           <button
             type="button"
             onClick={() => {
@@ -793,7 +796,7 @@ export default function NotesView({
 
       {/* Floating or Sticky Batch Action Bar when items are selected via Long-Press */}
       {selectedNoteIds.length > 0 && (
-        <div className="sticky top-14 z-30 bg-slate-900 text-white p-3 sm:p-4 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 border border-slate-700">
+        <div className="sticky top-[132px] z-20 bg-slate-900 text-white p-3 sm:p-4 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 border border-slate-700">
           <div className="flex items-center gap-2.5">
             <span className="w-7 h-7 rounded-xl bg-amber-500 text-white flex items-center justify-center text-xs font-black">
               {selectedNoteIds.length}
