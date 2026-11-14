@@ -29,6 +29,12 @@ import {
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 import type { HistoryItem } from '../lib/historyStorage';
+import {
+  playReminderChime,
+  requestNotificationPermission,
+  sendServiceWorkerPushNotification,
+} from '../lib/reminderService';
+import { flushOfflineSyncQueue, getPendingSyncCount } from '../lib/notesTasksStorage';
 
 export interface CurrencyOption {
   symbol: string;
@@ -97,6 +103,9 @@ export default function ProfileSettingsView({
   // Sync & backup status
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedText, setLastSyncedText] = useState('Ready to sync');
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default');
+  const [pushFeedback, setPushFeedback] = useState<string | null>(null);
   const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
   const [privacyLoading, setPrivacyLoading] = useState(false);
   const [confirmEraseData, setConfirmEraseData] = useState(false);
@@ -109,7 +118,15 @@ export default function ProfileSettingsView({
       currentUser?.email?.split('@')[0] ||
       '';
     setEditName(initialName);
-    setLastSyncedText(currentUser ? 'Synced just now' : 'Local device only');
+    const pending = getPendingSyncCount(currentUser?.id);
+    setPendingSyncCount(pending);
+    setLastSyncedText(
+      currentUser
+        ? pending > 0
+          ? `${pending} pending offline`
+          : 'Synced just now'
+        : 'Local device only'
+    );
   }, [currentUser]);
 
   useEffect(() => {
@@ -131,7 +148,26 @@ export default function ProfileSettingsView({
     if (savedGoalAlerts !== null) {
       setNotifyGoals(savedGoalAlerts === 'true');
     }
-  }, []);
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    } else {
+      setNotificationPermission('unsupported');
+    }
+
+    const handleSyncUpdated = () => {
+      const pending = getPendingSyncCount(currentUser?.id);
+      setPendingSyncCount(pending);
+      if (currentUser && pending === 0) {
+        setLastSyncedText(
+          `Synced: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+        );
+      } else if (currentUser && pending > 0) {
+        setLastSyncedText(`${pending} pending offline`);
+      }
+    };
+    window.addEventListener('calcmax:sync-updated', handleSyncUpdated);
+    return () => window.removeEventListener('calcmax:sync-updated', handleSyncUpdated);
+  }, [currentUser]);
 
   const toggleTheme = () => {
     const next = themeMode === 'light' ? 'dark' : 'light';
@@ -159,15 +195,48 @@ export default function ProfileSettingsView({
     }
   };
 
-  const toggleNotifyGoals = () => {
+  const toggleNotifyGoals = async () => {
     const next = !notifyGoals;
     setNotifyGoals(next);
     if (typeof window !== 'undefined') {
       localStorage.setItem('calculator-max-notify-goals', String(next));
-      if (next && 'Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
+      if (next && 'Notification' in window) {
+        const perm = await requestNotificationPermission(currentUser?.id);
+        setNotificationPermission(perm);
       }
     }
+  };
+
+  const handleEnablePushNotifications = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      setPushFeedback('Browser does not support push notifications.');
+      return;
+    }
+    const perm = await requestNotificationPermission(currentUser?.id);
+    setNotificationPermission(perm);
+    if (perm === 'granted') {
+      playReminderChime(false);
+      await sendServiceWorkerPushNotification('Calculator Max Push Active', {
+        body: 'Scheduled Note & Task reminders will alert you even when offline.',
+      });
+      setPushFeedback('Push notifications enabled for offline & background alerts.');
+    } else if (perm === 'denied') {
+      setPushFeedback('Blocked in browser settings. Enable Notifications for this site to receive alerts.');
+    }
+    setTimeout(() => setPushFeedback(null), 4000);
+  };
+
+  const handleSendTestPush = async () => {
+    if (notificationPermission !== 'granted') {
+      await handleEnablePushNotifications();
+      return;
+    }
+    playReminderChime(false);
+    const sent = await sendServiceWorkerPushNotification('Test Push Reminder', {
+      body: 'Offline-capable Service Worker push alert is working cleanly.',
+    });
+    setPushFeedback(sent ? 'Test notification dispatched!' : 'Enable site notifications first.');
+    setTimeout(() => setPushFeedback(null), 3200);
   };
 
   const handleSaveProfileInfo = async (e: React.FormEvent) => {
@@ -216,9 +285,13 @@ export default function ProfileSettingsView({
     }
     setIsSyncing(true);
     try {
+      const queueRes = await flushOfflineSyncQueue(currentUser.id);
       await onSyncHistory();
+      setPendingSyncCount(queueRes.pendingCount);
       setLastSyncedText(
-        `Last synced: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+        queueRes.pendingCount > 0
+          ? `${queueRes.pendingCount} still queued`
+          : `Last synced: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
       );
     } finally {
       setIsSyncing(false);
@@ -789,6 +862,63 @@ export default function ProfileSettingsView({
               />
             </button>
           </div>
+
+          {/* Push Notifications Permission & Offline Reminder Delivery */}
+          <div className="px-4 py-3.5 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <span
+                  className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                    notificationPermission === 'granted'
+                      ? 'bg-emerald-100 text-emerald-600'
+                      : 'bg-indigo-100 text-indigo-600'
+                  }`}
+                >
+                  <Bell className="w-4 h-4" />
+                </span>
+                <div className="min-w-0">
+                  <span className="block text-sm font-semibold text-slate-800 truncate">
+                    Offline Push Reminders
+                  </span>
+                  <span className="block text-[11px] text-slate-500 truncate">
+                    {notificationPermission === 'granted'
+                      ? 'Enabled — delivers alerts offline'
+                      : notificationPermission === 'denied'
+                      ? 'Blocked in browser site settings'
+                      : notificationPermission === 'unsupported'
+                      ? 'Not supported on this browser'
+                      : 'Permission needed for scheduled alerts'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                {notificationPermission === 'granted' ? (
+                  <button
+                    type="button"
+                    onClick={handleSendTestPush}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Test Alert
+                  </button>
+                ) : notificationPermission !== 'unsupported' ? (
+                  <button
+                    type="button"
+                    onClick={handleEnablePushNotifications}
+                    className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Allow Push
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {pushFeedback && (
+              <p className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200/80 rounded-xl px-3 py-1.5">
+                {pushFeedback}
+              </p>
+            )}
+          </div>
         </div>
       </section>
 
@@ -821,7 +951,9 @@ export default function ProfileSettingsView({
                   Sync with Cloud
                 </span>
                 <span className="block text-[11px] text-slate-500 truncate">
-                  PostgreSQL &amp; Supabase Cloud
+                  {pendingSyncCount > 0
+                    ? `${pendingSyncCount} offline change${pendingSyncCount === 1 ? '' : 's'} waiting to sync`
+                    : 'PostgreSQL & Supabase Cloud'}
                 </span>
               </div>
             </div>

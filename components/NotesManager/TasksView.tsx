@@ -25,20 +25,28 @@ import {
   FileText,
   Flag,
   MoreVertical,
+  CloudOff,
 } from 'lucide-react';
 import { TaskItem, TaskList, TaskPriority } from '@/lib/types/notes-tasks';
 import {
   fetchTasks,
+  getLocalTasks,
   saveLocalTasks,
   upsertTaskToSupabase,
   deleteTaskFromSupabase,
   deleteTasksBatchFromSupabase,
   fetchTaskLists,
+  getLocalTaskLists,
   saveLocalTaskLists,
   upsertTaskListToSupabase,
   deleteTaskListFromSupabase,
 } from '@/lib/notesTasksStorage';
-import { playReminderChime, sendDeviceNotification, requestNotificationPermission } from '@/lib/reminderService';
+import {
+  checkAndFireDueReminders,
+  playReminderChime,
+  sendDeviceNotification,
+  requestNotificationPermission,
+} from '@/lib/reminderService';
 
 interface TasksViewProps {
   currentUser: any;
@@ -233,7 +241,7 @@ export default function TasksView({
     }
   }, [closeEditorSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch lists & tasks
+  // Fetch lists & tasks & subscribe to automatic offline-to-cloud sync updates
   useEffect(() => {
     let isSubscribed = true;
     setLoading(true);
@@ -251,39 +259,43 @@ export default function TasksView({
       }
     );
 
+    const handleSyncUpdated = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail;
+      setTaskLists(getLocalTaskLists(currentUser?.id));
+      setTasks(getLocalTasks(currentUser?.id));
+      if (detail?.syncedCount > 0) {
+        setRefreshNotice(`Synced ${detail.syncedCount} offline item${detail.syncedCount === 1 ? '' : 's'}`);
+        setTimeout(() => setRefreshNotice(null), 2600);
+      }
+    };
+
+    window.addEventListener('calcmax:sync-updated', handleSyncUpdated);
     return () => {
       isSubscribed = false;
+      window.removeEventListener('calcmax:sync-updated', handleSyncUpdated);
     };
   }, [currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Interval check for due tasks and reminder notifications
+  // Trigger unified Service Worker due task alerts & inline banner
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (!alertsEnabled) return;
+    if (!alertsEnabled) return;
 
-      const now = new Date();
-      tasks.forEach((task) => {
-        if (!task.completed && (task.reminderAt || task.dueDate)) {
-          const targetTime = new Date(task.reminderAt || task.dueDate!);
-          const diff = now.getTime() - targetTime.getTime();
+    const checkTasksNow = async () => {
+      const fired = await checkAndFireDueReminders();
+      const firstDueTask = fired.find((r) => r.sourceType === 'task');
+      if (firstDueTask) {
+        const dueDateObj = new Date(firstDueTask.remindAt);
+        setActiveAlert({
+          id: firstDueTask.sourceId,
+          title: firstDueTask.title.replace(/^Task Due:\s*/i, ''),
+          due: Number.isNaN(dueDateObj.getTime())
+            ? 'Now'
+            : dueDateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        });
+      }
+    };
 
-          if (diff >= 0 && diff <= 60000 && !(task as any)._alerted) {
-            (task as any)._alerted = true;
-            playReminderChime(false);
-            sendDeviceNotification(`Task Due: ${task.title}`, {
-              body: task.description || 'Your scheduled task reminder has arrived.',
-            });
-            setActiveAlert({
-              id: task.id,
-              title: task.title,
-              due: targetTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            });
-          }
-        }
-      });
-    }, 20000);
-
-    return () => clearInterval(interval);
+    void checkTasksNow();
   }, [tasks, alertsEnabled]);
 
   // Open Detail View for a task card
@@ -361,11 +373,11 @@ export default function TasksView({
   const handleToggleAlerts = async () => {
     if (!alertsEnabled) {
       if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted') {
-        const res = await requestNotificationPermission();
+        const res = await requestNotificationPermission(currentUser?.id);
         if (res === 'granted') {
           playReminderChime(false);
           sendDeviceNotification('Task Alerts Activated!', {
-            body: 'You will receive device alerts when your scheduled tasks are due.',
+            body: 'Scheduled task reminders will fire via push alerts even offline.',
           });
         }
       } else {
@@ -388,10 +400,14 @@ export default function TasksView({
     setIsCreateModalOpen(false);
   };
 
-  // Create Task with immediate Supabase real-time sync
+  // Create Task immediately to localStorage, sync/queue with Supabase
   const handleCreateTask = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!newTaskTitle.trim()) return;
+
+    if (newTaskDueDate && alertsEnabled && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      void requestNotificationPermission(currentUser?.id);
+    }
 
     const newTask: TaskItem = {
       id: 'task-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
@@ -405,7 +421,7 @@ export default function TasksView({
       priority: newTaskPriority,
       dueDate: newTaskDueDate ? new Date(newTaskDueDate).toISOString() : null,
       reminderAt: newTaskDueDate ? new Date(newTaskDueDate).toISOString() : null,
-      syncStatus: currentUser?.id ? 'synced' : 'unsynced',
+      syncStatus: 'unsynced',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       subtasks: [],
@@ -419,9 +435,7 @@ export default function TasksView({
 
     if (currentUser?.id) {
       const res = await upsertTaskToSupabase(newTask, currentUser.id);
-      if (res.syncStatus !== newTask.syncStatus) {
-        setTasks((prev) => prev.map((t) => (t.id === newTask.id ? { ...t, syncStatus: res.syncStatus } : t)));
-      }
+      setTasks((prev) => prev.map((t) => (t.id === newTask.id ? { ...t, syncStatus: res.syncStatus } : t)));
     }
   };
 
@@ -429,6 +443,9 @@ export default function TasksView({
   const handleSaveDetailChanges = async () => {
     if (!detailTask || !editTitle.trim()) return;
     const dueIso = editDueDate ? new Date(editDueDate).toISOString() : null;
+    if (dueIso && alertsEnabled && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      void requestNotificationPermission(currentUser?.id);
+    }
     const updatedTask: TaskItem = {
       ...detailTask,
       title: editTitle.trim(),
@@ -437,6 +454,7 @@ export default function TasksView({
       isStarred: editPriority === 'high',
       dueDate: dueIso,
       reminderAt: dueIso,
+      syncStatus: 'unsynced',
       updatedAt: new Date().toISOString(),
     };
 
@@ -470,6 +488,7 @@ export default function TasksView({
     const updatedTask: TaskItem = {
       ...detailTask,
       description: combinedDesc,
+      syncStatus: 'unsynced',
       updatedAt: new Date().toISOString(),
     };
 
@@ -496,6 +515,7 @@ export default function TasksView({
       ...detailTask,
       priority: nextPriority,
       isStarred: nextPriority === 'high',
+      syncStatus: 'unsynced',
       updatedAt: new Date().toISOString(),
     };
     const updated = tasks.map((t) => (t.id === detailTask.id ? updatedTask : t));
@@ -508,14 +528,20 @@ export default function TasksView({
     }
   };
 
-  // Toggle Complete (Main Task) with real-time Supabase sync
+  // Toggle Complete (Main Task) with offline-first sync
   const handleToggleComplete = async (taskId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const updated = tasks.map((t) => {
       if (t.id === taskId) {
         const nextCompleted = !t.completed;
         const updatedSubs = (t.subtasks || []).map((st) => ({ ...st, completed: nextCompleted }));
-        return { ...t, completed: nextCompleted, subtasks: updatedSubs, updatedAt: new Date().toISOString() };
+        return {
+          ...t,
+          completed: nextCompleted,
+          subtasks: updatedSubs,
+          syncStatus: 'unsynced' as const,
+          updatedAt: new Date().toISOString(),
+        };
       }
       return t;
     });
@@ -807,6 +833,16 @@ export default function TasksView({
           </h2>
 
           <div className="flex items-center gap-2 shrink-0">
+            {currentUser?.id && tasks.some((t) => t.syncStatus === 'unsynced') && !refreshNotice && (
+              <span
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-1 rounded-full border border-amber-200"
+                title="Saved locally — will sync automatically when online"
+              >
+                <CloudOff className="w-3 h-3 text-amber-600" />
+                <span className="hidden sm:inline">Pending Sync</span>
+              </span>
+            )}
+
             {refreshNotice && (
               <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
                 <Check className="w-3 h-3 text-emerald-600" />
@@ -823,7 +859,7 @@ export default function TasksView({
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'
                   : 'bg-white/90 border-slate-200 text-slate-600 hover:bg-slate-100'
               }`}
-              title={`Click to ${alertsEnabled ? 'disable' : 'enable'} task device alerts`}
+              title={`Click to ${alertsEnabled ? 'disable' : 'enable'} task push alerts`}
             >
               {alertsEnabled ? (
                 <Bell className="w-3.5 h-3.5 text-emerald-600" />
@@ -1725,6 +1761,14 @@ export default function TasksView({
           </span>
 
           <div className="flex items-center gap-1 text-[10px] font-bold shrink-0">
+            {currentUser?.id && task.syncStatus === 'unsynced' && (
+              <span
+                title="Saved offline — pending cloud sync"
+                className="text-amber-700 flex items-center justify-center"
+              >
+                <CloudOff className="w-3 h-3" />
+              </span>
+            )}
             {task.completed ? (
               <span className="inline-flex items-center gap-0.5 text-emerald-700">
                 <CheckCircle2 className="w-3 h-3" />

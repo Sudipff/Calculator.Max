@@ -22,16 +22,21 @@ import {
   ArrowLeft,
   CheckCircle2,
   MoreVertical,
+  CloudOff,
 } from 'lucide-react';
 import { NoteItem, NOTE_COLORS } from '@/lib/types/notes-tasks';
 import {
   fetchNotes,
+  getLocalNotes,
   saveLocalNotes,
   upsertNoteToSupabase,
   deleteNoteFromSupabase,
   deleteNotesBatchFromSupabase,
 } from '@/lib/notesTasksStorage';
-import { playReminderChime, sendDeviceNotification, requestNotificationPermission } from '@/lib/reminderService';
+import {
+  checkAndFireDueReminders,
+  requestNotificationPermission,
+} from '@/lib/reminderService';
 
 interface NotesViewProps {
   currentUser: any;
@@ -134,6 +139,7 @@ export default function NotesView({
   const [showFullPageTagInput, setShowFullPageTagInput] = useState(false);
   const [showFullPageReminder, setShowFullPageReminder] = useState(false);
   const [showManagerMenu, setShowManagerMenu] = useState(false);
+  const [notificationPerm, setNotificationPerm] = useState<NotificationPermission | 'unsupported'>('default');
 
   const managerMenuRef = useRef<HTMLDivElement>(null);
   const threeDotMenuRef = useRef<HTMLDivElement>(null);
@@ -141,9 +147,19 @@ export default function NotesView({
   const isLongPressFiredRef = useRef<boolean>(false);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Hydration mount tracker
+  // Hydration mount & notification permission tracker
   useEffect(() => {
     setIsMounted(true);
+    const updatePerm = () => {
+      if (typeof window !== 'undefined' && 'Notification' in window) {
+        setNotificationPerm(Notification.permission);
+      } else {
+        setNotificationPerm('unsupported');
+      }
+    };
+    updatePerm();
+    window.addEventListener('focus', updatePerm);
+    return () => window.removeEventListener('focus', updatePerm);
   }, []);
 
   // Close manager or editor three-dot popover when clicking outside
@@ -210,7 +226,7 @@ export default function NotesView({
     }
   }, [closeEditorSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load notes on mount or user change
+  // Load notes on mount or user change & subscribe to background offline sync completion
   useEffect(() => {
     let isSubscribed = true;
     setLoading(true);
@@ -221,31 +237,28 @@ export default function NotesView({
       }
     });
 
+    const handleSyncUpdated = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail;
+      const freshLocal = getLocalNotes(currentUser?.id);
+      setNotes(freshLocal);
+      if (detail?.syncedCount > 0) {
+        setRefreshNotice(`Synced ${detail.syncedCount} offline change${detail.syncedCount === 1 ? '' : 's'}`);
+        setTimeout(() => setRefreshNotice(null), 2600);
+      }
+    };
+
+    window.addEventListener('calcmax:sync-updated', handleSyncUpdated);
     return () => {
       isSubscribed = false;
+      window.removeEventListener('calcmax:sync-updated', handleSyncUpdated);
     };
   }, [currentUser]);
 
-  // Active reminder listener
+  // Trigger unified Service Worker reminder check when notes update
   useEffect(() => {
-    const interval = setInterval(() => {
-      const now = new Date();
-      notes.forEach((note) => {
-        if (note.reminderAt) {
-          const reminderTime = new Date(note.reminderAt);
-          const diff = Math.abs(now.getTime() - reminderTime.getTime());
-          if (diff <= 35000 && !(note as any)._notified) {
-            (note as any)._notified = true;
-            playReminderChime(note.isEmergency);
-            sendDeviceNotification(`Reminder: ${note.title || 'Note Alert'}`, {
-              body: note.content || `${note.checklistItems.length} checklist items due`,
-            });
-          }
-        }
-      });
-    }, 30000);
-
-    return () => clearInterval(interval);
+    if (notes.some((n) => Boolean(n.reminderAt))) {
+      void checkAndFireDueReminders();
+    }
   }, [notes]);
 
   // Long-press detection helpers for touch and desktop
@@ -425,7 +438,7 @@ export default function NotesView({
   const handleTogglePin = async (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const updated = notes.map((n) =>
-      n.id === id ? { ...n, isPinned: !n.isPinned, updatedAt: new Date().toISOString() } : n
+      n.id === id ? { ...n, isPinned: !n.isPinned, syncStatus: 'unsynced' as const, updatedAt: new Date().toISOString() } : n
     );
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
@@ -441,7 +454,7 @@ export default function NotesView({
     if (selectedNoteIds.length === 0) return;
     const nowIso = new Date().toISOString();
     const updated = notes.map((n) =>
-      selectedNoteIds.includes(n.id) ? { ...n, color: newColor, updatedAt: nowIso } : n
+      selectedNoteIds.includes(n.id) ? { ...n, color: newColor, syncStatus: 'unsynced' as const, updatedAt: nowIso } : n
     );
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
@@ -449,7 +462,8 @@ export default function NotesView({
     for (const id of selectedNoteIds) {
       const target = updated.find((n) => n.id === id);
       if (target && currentUser?.id) {
-        upsertNoteToSupabase(target, currentUser.id);
+        const res = await upsertNoteToSupabase(target, currentUser.id);
+        setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, syncStatus: res.syncStatus } : n)));
       }
     }
   };
@@ -502,6 +516,7 @@ export default function NotesView({
     const noteToSave: NoteItem = {
       ...editingNote,
       title: editingNote.title.trim() || (!closeAfter && isBlankDraft ? 'Untitled Note' : editingNote.title.trim()),
+      syncStatus: 'unsynced',
       updatedAt: new Date().toISOString(),
     };
 
@@ -537,6 +552,7 @@ export default function NotesView({
     const updatedNote: NoteItem = {
       ...editingNote,
       color: colorId,
+      syncStatus: 'unsynced',
       updatedAt: new Date().toISOString(),
     };
 
@@ -626,6 +642,15 @@ export default function NotesView({
           </h2>
 
           <div className="flex items-center gap-2 shrink-0">
+            {currentUser?.id && notes.some((n) => n.syncStatus === 'unsynced') && !refreshNotice && (
+              <span
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200"
+                title="Saved offline — will sync automatically when connected"
+              >
+                <CloudOff className="w-3 h-3 text-amber-600" />
+                <span>Pending Sync</span>
+              </span>
+            )}
             {refreshNotice && (
               <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
                 <Check className="w-3 h-3 text-emerald-600" />
@@ -1247,8 +1272,9 @@ export default function NotesView({
                   </span>
                   <button
                     type="button"
-                    onClick={() => {
-                      requestNotificationPermission();
+                    onClick={async () => {
+                      const perm = await requestNotificationPermission(currentUser?.id);
+                      setNotificationPerm(perm);
                       setShowFullPageReminder((prev) => !prev);
                     }}
                     className="min-h-[32px] px-2.5 rounded-lg text-xs font-bold text-blue-700 hover:bg-blue-50 cursor-pointer whitespace-nowrap shrink-0 transition-colors"
@@ -1260,6 +1286,28 @@ export default function NotesView({
                       : '+ Set Reminder'}
                   </button>
                 </div>
+
+                {notificationPerm !== 'granted' && notificationPerm !== 'unsupported' && (
+                  <div className="flex items-center justify-between gap-2 p-2.5 bg-indigo-50/90 text-indigo-950 rounded-xl border border-indigo-200/80 text-[11px]">
+                    <span className="font-medium leading-snug">
+                      {notificationPerm === 'denied'
+                        ? 'Notifications are blocked in browser settings.'
+                        : 'Allow push notifications so reminders alert you offline.'}
+                    </span>
+                    {notificationPerm !== 'denied' && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const perm = await requestNotificationPermission(currentUser?.id);
+                          setNotificationPerm(perm);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-slate-900 text-white font-bold text-[11px] shrink-0 cursor-pointer"
+                      >
+                        Allow
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {editingNote.reminderAt ? (
                   <div className="flex items-center justify-between gap-2 p-2.5 bg-amber-50 text-amber-950 rounded-xl border border-amber-200/90 text-xs font-semibold">
@@ -1294,8 +1342,9 @@ export default function NotesView({
                     <input
                       type="datetime-local"
                       value={editingNote.reminderAt ? editingNote.reminderAt.substring(0, 16) : ''}
-                      onChange={(e) => {
-                        requestNotificationPermission();
+                      onChange={async (e) => {
+                        const perm = await requestNotificationPermission(currentUser?.id);
+                        setNotificationPerm(perm);
                         updateEditingNote((prev) => ({
                           ...prev,
                           reminderAt: e.target.value ? new Date(e.target.value).toISOString() : null,
@@ -1528,25 +1577,35 @@ export default function NotesView({
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={(e) => handleTogglePin(note.id, e)}
-            aria-label={note.isPinned ? 'Unpin note' : 'Pin note'}
-            title={note.isPinned ? 'Unpin note' : 'Pin note'}
-            className={`w-7 h-7 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer active:scale-90 ${
-              note.isPinned
-                ? 'text-slate-900 hover:bg-black/5'
-                : 'text-slate-400 hover:text-slate-700 hover:bg-black/5'
-            }`}
-          >
-            <Pin
-              className={`w-3.5 h-3.5 rotate-45 transition-transform ${
+          <div className="flex items-center gap-1 shrink-0">
+            {currentUser?.id && note.syncStatus === 'unsynced' && (
+              <span
+                title="Saved offline — pending cloud sync"
+                className="text-amber-700 flex items-center justify-center"
+              >
+                <CloudOff className="w-3 h-3" />
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={(e) => handleTogglePin(note.id, e)}
+              aria-label={note.isPinned ? 'Unpin note' : 'Pin note'}
+              title={note.isPinned ? 'Unpin note' : 'Pin note'}
+              className={`w-7 h-7 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer active:scale-90 ${
                 note.isPinned
-                  ? 'fill-slate-900 text-slate-900'
-                  : 'fill-slate-300/75 text-slate-400'
+                  ? 'text-slate-900 hover:bg-black/5'
+                  : 'text-slate-400 hover:text-slate-700 hover:bg-black/5'
               }`}
-            />
-          </button>
+            >
+              <Pin
+                className={`w-3.5 h-3.5 rotate-45 transition-transform ${
+                  note.isPinned
+                    ? 'fill-slate-900 text-slate-900'
+                    : 'fill-slate-300/75 text-slate-400'
+                }`}
+              />
+            </button>
+          </div>
         </div>
       </article>
     );
