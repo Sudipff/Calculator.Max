@@ -49,6 +49,7 @@ import CurrencyExchange from '../components/CurrencyExchange';
 import NotesView from '../components/NotesManager/NotesView';
 import TasksView from '../components/NotesManager/TasksView';
 import HistoryPreviewModal from '../components/HistoryPreviewModal';
+import ProfileSettingsView from '../components/ProfileSettingsView';
 import { createClient } from '@/utils/supabase/client';
 import {
   getCalculationHistory,
@@ -64,7 +65,7 @@ import type { NoteItem } from '../lib/types/notes-tasks';
 import { exportAllHistoryPDF, exportSingleItemPDF } from '../lib/pdfExport';
 import { sanitizeCsvCell } from '../lib/validation';
 
-type ActiveTab = 'home' | 'age' | 'calculator' | 'emi' | 'wishlist' | 'discount' | 'weight' | 'unit' | 'currency' | 'quick' | 'notes' | 'tasks' | 'history';
+type ActiveTab = 'home' | 'age' | 'calculator' | 'emi' | 'wishlist' | 'discount' | 'weight' | 'unit' | 'currency' | 'quick' | 'notes' | 'tasks' | 'history' | 'profile';
 export type VibrationType = 'success' | 'error' | 'click' | 'reset';
 
 const TAB_ORDER: Record<ActiveTab, number> = {
@@ -81,6 +82,7 @@ const TAB_ORDER: Record<ActiveTab, number> = {
   notes: 9,
   tasks: 10,
   history: 11,
+  profile: 12,
 };
 
 const CURRENCIES = [
@@ -298,6 +300,20 @@ const CALCULATOR_TOOLS_INFO: ToolInfoItem[] = [
     features: ['PDF report & CSV spreadsheet export', 'Cloud database synchronization', 'Total Saved gamification tracker'],
     example: 'e.g. Export your monthly shopping savings to PDF',
   },
+  {
+    id: 'profile',
+    title: 'Profile Settings',
+    subtitle: 'Account, preferences & backup',
+    icon: User,
+    colorBg: 'bg-slate-800',
+    colorText: 'text-slate-800',
+    colorActiveBg: 'bg-slate-100 border-slate-300',
+    colorActiveText: 'text-slate-900',
+    colorActiveDot: 'bg-slate-900',
+    summary: 'Manage your Calculator Max account profile, security, preferences, cloud backup, and developer info.',
+    features: ['Account & security controls', 'Theme, currency & unit preferences', 'Cloud sync & privacy export'],
+    example: 'e.g. Switch currency, sync cloud history, or export backup',
+  },
 ];
 
 export default function RetailCalc() {
@@ -314,6 +330,8 @@ export default function RetailCalc() {
   const [isNoteFullScreen, setIsNoteFullScreen] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [profileOpenSignal, setProfileOpenSignal] = useState(0);
+  const [requestedAuthTab, setRequestedAuthTab] = useState<'signin' | 'update_password'>('signin');
+  const [signOutSignal, setSignOutSignal] = useState(0);
   const [dashboardNotes, setDashboardNotes] = useState<NoteItem[]>([]);
   const [dashboardTasksCount, setDashboardTasksCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -671,8 +689,9 @@ export default function RetailCalc() {
         typeof window.history.state === 'object' && window.history.state !== null
           ? window.history.state
           : {};
+      if (currentState.__calcMaxGuard) return;
       window.history.pushState(
-        { ...currentState, __calcMaxGuard: true, __calcMaxTag: tag },
+        { ...currentState, __calcMaxGuard: true, __calcMaxSentinel: false, __calcMaxTag: tag },
         '',
         window.location.href
       );
@@ -797,14 +816,14 @@ export default function RetailCalc() {
         typeof window.history.state === 'object' && window.history.state !== null
           ? window.history.state
           : {};
-      if (!baseState.__calcMaxGuard) {
+      if (!baseState.__calcMaxGuard && !baseState.__calcMaxSentinel) {
         window.history.replaceState(
-          { ...baseState, __calcMaxGuard: true, __calcMaxBase: true },
+          { ...baseState, __calcMaxGuard: false, __calcMaxSentinel: true },
           '',
           window.location.href
         );
         window.history.pushState(
-          { ...baseState, __calcMaxGuard: true, __calcMaxTag: 'home-root' },
+          { ...baseState, __calcMaxGuard: true, __calcMaxSentinel: false, __calcMaxTag: 'home-root' },
           '',
           window.location.href
         );
@@ -812,6 +831,10 @@ export default function RetailCalc() {
     } catch {
       // Ignore if History API is restricted
     }
+
+    const ensureArmedOnGesture = () => {
+      pushHistoryGuard('gesture-arm');
+    };
 
     const handleBackAttempt = (fromPopState: boolean) => {
       const handled = backHandlerRef.current();
@@ -855,10 +878,14 @@ export default function RetailCalc() {
       handleBackAttempt(false);
     };
 
+    window.addEventListener('pointerdown', ensureArmedOnGesture, { passive: true });
+    window.addEventListener('keydown', ensureArmedOnGesture, { passive: true });
     window.addEventListener('popstate', onPopState);
     document.addEventListener('backbutton', onAndroidBackButton);
 
     return () => {
+      window.removeEventListener('pointerdown', ensureArmedOnGesture);
+      window.removeEventListener('keydown', ensureArmedOnGesture);
       window.removeEventListener('popstate', onPopState);
       document.removeEventListener('backbutton', onAndroidBackButton);
       if (exitPromptTimerRef.current) {
@@ -1878,31 +1905,26 @@ export default function RetailCalc() {
   return (
     <div className="min-h-[100dvh] w-full bg-gradient-to-br from-[#eef7ff] via-[#f6faf7] to-[#fdf6ef] text-slate-800 flex flex-col sm:items-center font-sans antialiased m-0 p-0">
       <div className="mobile-edge-shell w-full max-w-5xl relative flex-1 flex flex-col min-h-[100dvh] m-0 p-0">
-        {/* Sticky Top Header: App Icon + Calculator Max + Profile Icon + Sticky Search Bar */}
-        <header
-          className={`mobile-edge-header w-full shrink-0 bg-white/90 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_14px_rgba(15,23,42,0.04)] sticky top-0 z-40 transition-colors ${
-            isNoteFullScreen ? 'hidden pointer-events-none' : 'block pointer-events-auto'
-          }`}
-        >
-          <div className="h-14 px-4 sm:px-6 flex justify-between items-center gap-3">
-            {/* Left: Back arrow (when inside a tool) + App Icon + CALCULATOR MAX */}
-            <div className="flex items-center gap-2.5 min-w-0">
-              {activeTab !== 'home' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!handleStepBackHierarchy()) {
-                      handleTabChange('home');
-                    }
-                  }}
-                  className="min-w-[40px] min-h-[40px] -ml-1.5 rounded-xl hover:bg-slate-100 text-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
-                  aria-label="Back to previous view"
-                  title="Back"
-                >
-                  <ArrowLeft className="w-5 h-5" />
-                </button>
-              )}
+        {/* Global Auth & Session Modal Manager (stays mounted across Home and all secondary screens) */}
+        <AuthHeader
+          headless
+          openSignal={profileOpenSignal}
+          closeSignal={profileCloseSignal}
+          requestedAuthTab={requestedAuthTab}
+          signOutSignal={signOutSignal}
+          currencySlot={currencyPreferencesCard}
+          onSyncHistory={handleSyncFromCloudSql}
+          onUserChanged={handleUserChanged}
+          onModalOpenChange={(isOpen) => {
+            setIsAuthModalOpen(isOpen);
+          }}
+        />
 
+        {/* Conditional Header: Full Main Header on Home Dashboard, Minimal Back-Button-Only Header on Secondary Screens */}
+        {activeTab === 'home' ? (
+          <header className="mobile-edge-header w-full shrink-0 bg-white/90 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_14px_rgba(15,23,42,0.04)] sticky top-0 z-40 transition-colors">
+            <div className="h-14 px-4 sm:px-6 flex justify-between items-center gap-3">
+              {/* Left: App Icon + Calculator Max Title */}
               <h1 className="m-0 flex items-center min-w-0">
                 <button
                   type="button"
@@ -1917,42 +1939,50 @@ export default function RetailCalc() {
                     className="w-8 h-8 rounded-xl shadow-xs shrink-0"
                     referrerPolicy="no-referrer"
                   />
-                  <span className="flex items-center gap-2 min-w-0">
-                    <span className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 whitespace-nowrap leading-none">
-                      Calculator Max
-                    </span>
-                    {activeTab !== 'home' && (() => {
-                      const activeTool = CALCULATOR_TOOLS_INFO.find((t) => t.id === activeTab);
-                      return activeTool ? (
-                        <span className="hidden sm:inline text-xs font-semibold text-slate-500 truncate">
-                          · {activeTool.title}
-                        </span>
-                      ) : null;
-                    })()}
+                  <span className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 whitespace-nowrap leading-none">
+                    Calculator Max
                   </span>
                 </button>
               </h1>
+
+              {/* Right: Install App (when available) + Profile Avatar */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <PWAInstallButton compact />
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('profile')}
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-slate-100/80 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  aria-label="Open Profile & Account Settings"
+                  title={
+                    currentUser
+                      ? `Profile: ${currentUser.user_metadata?.full_name || currentUser.email}`
+                      : 'Profile & Account Settings'
+                  }
+                >
+                  {currentUser?.user_metadata?.avatar_url ? (
+                    <img
+                      src={currentUser.user_metadata.avatar_url}
+                      alt={currentUser.user_metadata?.full_name || 'Profile'}
+                      className="w-9 h-9 rounded-full border border-slate-200 object-cover shadow-xs"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : currentUser ? (
+                    <span className="w-9 h-9 rounded-full bg-slate-900 text-white font-bold text-sm flex items-center justify-center shadow-xs">
+                      {(
+                        (currentUser.user_metadata?.full_name || currentUser.email || 'U')[0] ||
+                        'U'
+                      ).toUpperCase()}
+                    </span>
+                  ) : (
+                    <span className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-xs">
+                      <User className="w-4.5 h-4.5" />
+                    </span>
+                  )}
+                </button>
+              </div>
             </div>
 
-            {/* Right: Install App (when available) + Profile Icon */}
-            <div className="flex items-center gap-1.5 shrink-0">
-              <PWAInstallButton compact />
-              <AuthHeader
-                compactProfile
-                openSignal={profileOpenSignal}
-                closeSignal={profileCloseSignal}
-                currencySlot={currencyPreferencesCard}
-                onSyncHistory={handleSyncFromCloudSql}
-                onUserChanged={handleUserChanged}
-                onModalOpenChange={(isOpen) => {
-                  setIsAuthModalOpen(isOpen);
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Sticky Full-Width Search Bar pinned inside the Top Header on Home Dashboard */}
-          {activeTab === 'home' && (
+            {/* Sticky Full-Width Search Bar pinned inside the Main Header on Home Dashboard */}
             <div className="px-4 sm:px-6 pb-3 pt-0.5">
               <div className="relative w-full">
                 <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -1977,8 +2007,28 @@ export default function RetailCalc() {
                 )}
               </div>
             </div>
-          )}
-        </header>
+          </header>
+        ) : (
+          <header
+            className={`mobile-edge-header w-full shrink-0 h-12 px-3 sm:px-6 bg-white/85 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-40 flex items-center ${
+              isNoteFullScreen ? 'hidden pointer-events-none' : 'flex pointer-events-auto'
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                if (!handleStepBackHierarchy()) {
+                  handleTabChange('home');
+                }
+              }}
+              className="min-w-[44px] min-h-[44px] -ml-1.5 rounded-xl hover:bg-slate-100/90 active:scale-95 text-slate-800 flex items-center justify-center transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label="Go back"
+              title="Back"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          </header>
+        )}
 
         {/* Main Content Area */}
         <main
@@ -2448,6 +2498,32 @@ export default function RetailCalc() {
                   )}
                 </section>
               )}
+
+              {/* TAB 5: COMPREHENSIVE PROFILE & ACCOUNT SETTINGS */}
+              {activeTab === 'profile' && (
+                <section aria-label="Profile and Account Settings" className="py-1">
+                  <ProfileSettingsView
+                    currentUser={currentUser}
+                    currency={currency}
+                    currencies={CURRENCIES}
+                    onCurrencyChange={(sym) => {
+                      setCurrency(sym);
+                      triggerVibration('click');
+                    }}
+                    onOpenAuthModal={(mode = 'signin') => {
+                      setRequestedAuthTab(mode);
+                      setProfileOpenSignal((n) => n + 1);
+                    }}
+                    onSignOut={() => {
+                      setSignOutSignal((n) => n + 1);
+                    }}
+                    onSyncHistory={handleSyncFromCloudSql}
+                    onExportCalculations={exportHistoryCSV}
+                    onUserUpdated={(updatedUser) => setCurrentUser(updatedUser)}
+                    calculationsCount={history.length}
+                  />
+                </section>
+              )}
             </motion.div>
           </AnimatePresence>
         </main>
@@ -2503,10 +2579,12 @@ export default function RetailCalc() {
 
               <button
                 type="button"
-                onClick={() => setProfileOpenSignal((n) => n + 1)}
-                className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-slate-400 hover:text-slate-700 font-medium transition-colors cursor-pointer rounded-xl"
+                onClick={() => handleTabChange('profile')}
+                className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
+                  activeTab === 'profile' ? 'text-slate-900 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
+                }`}
               >
-                <User className="w-5 h-5" />
+                <User className={`w-5 h-5 ${activeTab === 'profile' ? 'fill-slate-900 text-slate-900' : ''}`} />
                 <span className="text-[10px] tracking-tight">Profile</span>
               </button>
             </div>

@@ -32,7 +32,11 @@ interface AuthHeaderProps {
   onUserChanged?: (user: SupabaseUser | null) => void;
   onSyncHistory?: () => void;
   onModalOpenChange?: (open: boolean) => void;
+  onProfileTrigger?: () => void;
+  requestedAuthTab?: 'signin' | 'update_password';
+  signOutSignal?: number;
   compactProfile?: boolean;
+  headless?: boolean;
   openSignal?: number;
   closeSignal?: number;
   currencySlot?: React.ReactNode;
@@ -44,7 +48,11 @@ export default function AuthHeader({
   onUserChanged,
   onSyncHistory,
   onModalOpenChange,
+  onProfileTrigger,
+  requestedAuthTab = 'signin',
+  signOutSignal = 0,
   compactProfile = false,
+  headless = false,
   openSignal = 0,
   closeSignal = 0,
   currencySlot,
@@ -88,10 +96,17 @@ export default function AuthHeader({
 
   useEffect(() => {
     if (openSignal > 0) {
+      if (requestedAuthTab === 'update_password') {
+        setActiveTab('update_password');
+      } else if (!user) {
+        setActiveTab('google');
+      }
+      setError(null);
+      setSuccessMsg(null);
       setShowModal(true);
       setIsFullPage(true);
     }
-  }, [openSignal]);
+  }, [openSignal, requestedAuthTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (closeSignal > 0) {
@@ -100,6 +115,13 @@ export default function AuthHeader({
       setError(null);
     }
   }, [closeSignal]);
+
+  const signOutFnRef = useRef<(() => Promise<void>) | null>(null);
+  useEffect(() => {
+    if (signOutSignal > 0) {
+      signOutFnRef.current?.();
+    }
+  }, [signOutSignal]);
 
   useEffect(() => {
     onModalOpenChange?.(showModal);
@@ -761,6 +783,8 @@ export default function AuthHeader({
     }
   };
 
+  signOutFnRef.current = handleSignOut;
+
   const handleExportMyData = async () => {
     try {
       setActionLoading(true);
@@ -823,7 +847,7 @@ export default function AuthHeader({
     }
   };
 
-  if (loading && !compactProfile) {
+  if (loading && !compactProfile && !headless) {
     return (
       <div className="flex items-center gap-2 bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-white/30 text-white/80 text-xs">
         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -834,12 +858,16 @@ export default function AuthHeader({
 
   return (
     <>
-      {compactProfile ? (
+      {headless ? null : compactProfile ? (
         <button
           type="button"
           onClick={() => {
-            setShowModal(true);
-            setIsFullPage(true);
+            if (onProfileTrigger) {
+              onProfileTrigger();
+            } else {
+              setShowModal(true);
+              setIsFullPage(true);
+            }
           }}
           className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-slate-100/80 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           aria-label="Open Profile & Account Settings"
