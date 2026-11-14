@@ -30,11 +30,21 @@ interface AuthHeaderProps {
   onUserChanged?: (user: SupabaseUser | null) => void;
   onSyncHistory?: () => void;
   onModalOpenChange?: (open: boolean) => void;
+  compactProfile?: boolean;
+  openSignal?: number;
+  currencySlot?: React.ReactNode;
 }
 
 type AuthTab = 'google' | 'email_login' | 'email_signup' | 'demo' | 'forgot_password' | 'update_password';
 
-export default function AuthHeader({ onUserChanged, onSyncHistory, onModalOpenChange }: AuthHeaderProps) {
+export default function AuthHeader({
+  onUserChanged,
+  onSyncHistory,
+  onModalOpenChange,
+  compactProfile = false,
+  openSignal = 0,
+  currencySlot,
+}: AuthHeaderProps) {
   const [mounted, setMounted] = useState(false);
   const [user, setUser] = useState<SupabaseUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -69,6 +79,13 @@ export default function AuthHeader({ onUserChanged, onSyncHistory, onModalOpenCh
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (openSignal > 0) {
+      setShowModal(true);
+      setIsFullPage(true);
+    }
+  }, [openSignal]);
 
   useEffect(() => {
     onModalOpenChange?.(showModal);
@@ -172,7 +189,8 @@ export default function AuthHeader({ onUserChanged, onSyncHistory, onModalOpenCh
         supabase.auth.getSession().then(({ data: { session } }) => {
           if (session?.user) {
             setUser(session.user);
-            setIsOpen(false);
+            setShowModal(false);
+            setIsFullPage(false);
             if (syncedUserIdRef.current !== session.user.id) {
               syncedUserIdRef.current = session.user.id;
               syncUserToCloudSql(session.user);
@@ -723,7 +741,7 @@ export default function AuthHeader({ onUserChanged, onSyncHistory, onModalOpenCh
     }
   };
 
-  if (loading) {
+  if (loading && !compactProfile) {
     return (
       <div className="flex items-center gap-2 bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-white/30 text-white/80 text-xs">
         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -734,59 +752,90 @@ export default function AuthHeader({ onUserChanged, onSyncHistory, onModalOpenCh
 
   return (
     <>
-      <div className="flex items-center gap-2">
-        {user ? (
-          <div className="flex items-center gap-2 bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-white/30 hover:bg-white/30 transition-all">
-            <button
-              type="button"
-              onClick={() => setShowModal(true)}
-              className="flex items-center gap-2 text-left focus:outline-none cursor-pointer"
-            >
-              {user.user_metadata?.avatar_url ? (
-                <img
-                  src={user.user_metadata.avatar_url}
-                  alt={user.user_metadata?.full_name || 'User'}
-                  className="w-6 h-6 rounded-full border border-white/50 object-cover"
-                />
-              ) : (
-                <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold text-xs flex items-center justify-center">
-                  {((user.user_metadata?.full_name || user.email || (user.is_anonymous ? 'Guest' : 'User'))[0] || 'U').toUpperCase()}
+      {compactProfile ? (
+        <button
+          type="button"
+          onClick={() => {
+            setShowModal(true);
+            setIsFullPage(true);
+          }}
+          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-slate-100/80 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          aria-label="Open Profile & Account Settings"
+          title={user ? `Profile: ${user.user_metadata?.full_name || user.email}` : 'Profile & Sign In'}
+        >
+          {user ? (
+            user.user_metadata?.avatar_url ? (
+              <img
+                src={user.user_metadata.avatar_url}
+                alt={user.user_metadata?.full_name || 'Profile'}
+                className="w-9 h-9 rounded-full border border-slate-200 object-cover shadow-xs"
+              />
+            ) : (
+              <span className="w-9 h-9 rounded-full bg-slate-900 text-white font-bold text-sm flex items-center justify-center shadow-xs">
+                {((user.user_metadata?.full_name || user.email || 'U')[0] || 'U').toUpperCase()}
+              </span>
+            )
+          ) : (
+            <span className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-xs">
+              <User className="w-4.5 h-4.5" />
+            </span>
+          )}
+        </button>
+      ) : (
+        <div className="flex items-center gap-2">
+          {user ? (
+            <div className="flex items-center gap-2 bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-white/30 hover:bg-white/30 transition-all">
+              <button
+                type="button"
+                onClick={() => setShowModal(true)}
+                className="flex items-center gap-2 text-left focus:outline-none cursor-pointer"
+              >
+                {user.user_metadata?.avatar_url ? (
+                  <img
+                    src={user.user_metadata.avatar_url}
+                    alt={user.user_metadata?.full_name || 'User'}
+                    className="w-6 h-6 rounded-full border border-white/50 object-cover"
+                  />
+                ) : (
+                  <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold text-xs flex items-center justify-center">
+                    {((user.user_metadata?.full_name || user.email || (user.is_anonymous ? 'Guest' : 'User'))[0] || 'U').toUpperCase()}
+                  </div>
+                )}
+                <div className="hidden md:flex flex-col min-w-0">
+                  <span className="text-xs font-extrabold text-white truncate max-w-[100px]">
+                    {user.user_metadata?.full_name || (user.is_anonymous ? 'Guest User' : user.email?.split('@')[0])}
+                  </span>
+                  <span className="text-[9px] text-emerald-200 flex items-center gap-0.5">
+                    <Database className="w-2.5 h-2.5" /> Cloud Synced
+                  </span>
                 </div>
-              )}
-              <div className="hidden md:flex flex-col min-w-0">
-                <span className="text-xs font-extrabold text-white truncate max-w-[100px]">
-                  {user.user_metadata?.full_name || (user.is_anonymous ? 'Guest User' : user.email?.split('@')[0])}
-                </span>
-                <span className="text-[9px] text-emerald-200 flex items-center gap-0.5">
-                  <Database className="w-2.5 h-2.5" /> Cloud Synced
-                </span>
-              </div>
-            </button>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="p-1 hover:bg-white/20 rounded-lg text-white/80 hover:text-white transition-colors ml-1 cursor-pointer"
-              title="Sign Out"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                setShowModal(true);
-                setIsFullPage(true);
-              }}
-              className="flex items-center gap-1.5 bg-white text-blue-600 hover:bg-blue-50 px-3 py-1.5 sm:px-4 sm:py-2 rounded-2xl font-bold text-xs sm:text-sm shadow-sm transition-all hover:scale-105 active:scale-95 cursor-pointer"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>Sign In</span>
-            </button>
-          </div>
-        )}
-      </div>
+              </button>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="p-1 hover:bg-white/20 rounded-lg text-white/80 hover:text-white transition-colors ml-1 cursor-pointer"
+                title="Sign Out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowModal(true);
+                  setIsFullPage(true);
+                }}
+                className="flex items-center gap-1.5 bg-white text-blue-600 hover:bg-blue-50 px-3 py-1.5 sm:px-4 sm:py-2 rounded-2xl font-bold text-xs sm:text-sm shadow-sm transition-all hover:scale-105 active:scale-95 cursor-pointer"
+              >
+                <LogIn className="w-4 h-4" />
+                <span>Sign In</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Full-Page Login Overlay - Portalled directly to document.body */}
       {mounted && showModal && createPortal(
@@ -805,7 +854,7 @@ export default function AuthHeader({ onUserChanged, onSyncHistory, onModalOpenCh
                   <Calculator className="w-4 h-4" />
                 </div>
                 <span className="font-extrabold text-base text-slate-800">
-                  Retail<span className="text-blue-600">Calc</span>
+                  Calculator <span className="text-blue-600">Max</span>
                 </span>
               </div>
               <button
@@ -843,7 +892,7 @@ export default function AuthHeader({ onUserChanged, onSyncHistory, onModalOpenCh
                   </div>
                   <div>
                     <h2 className="text-2xl font-extrabold tracking-tight text-white leading-tight">
-                      Retail<span className="text-blue-300">Calc</span>
+                      Calculator <span className="text-blue-300">Max</span>
                     </h2>
                     <p className="text-blue-200/80 text-xs font-semibold uppercase tracking-widest">
                       Pro Workspace
@@ -922,6 +971,11 @@ export default function AuthHeader({ onUserChanged, onSyncHistory, onModalOpenCh
                       <span>Sign Out</span>
                     </button>
                   </div>
+                  {currencySlot && (
+                    <div className="w-full max-w-md pt-4 text-left">
+                      {currencySlot}
+                    </div>
+                  )}
                   {syncing && (
                     <div className="flex items-center justify-center gap-2 text-xs font-semibold text-blue-600 bg-blue-50 px-4 py-2 rounded-full animate-pulse mt-4">
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1344,6 +1398,12 @@ export default function AuthHeader({ onUserChanged, onSyncHistory, onModalOpenCh
                         </button>
                       </div>
                     </form>
+                  )}
+
+                  {currencySlot && (
+                    <div className="mt-4">
+                      {currencySlot}
+                    </div>
                   )}
 
                   <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200/80 text-left text-[11px] text-slate-500 space-y-1 mt-4">

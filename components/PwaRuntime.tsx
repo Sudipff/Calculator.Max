@@ -37,6 +37,9 @@ export default function PwaRuntime() {
       if (!isMounted) return;
       navigator.serviceWorker
         .register('/sw.js', { scope: '/' })
+        .then((reg) => {
+          reg.update().catch(() => {});
+        })
         .catch(() => {
           // Graceful no-op if SW registration is blocked by preview restrictions
         });

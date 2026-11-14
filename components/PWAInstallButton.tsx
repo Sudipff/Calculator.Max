@@ -85,13 +85,13 @@ export default function PWAInstallButton({ compact = false }: { compact?: boolea
       <button
         type="button"
         onClick={install}
-        className={`inline-flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white border border-white/30 backdrop-blur-md transition-all active:scale-95 cursor-pointer font-bold shadow-xs ${
-          compact ? 'px-2.5 py-1.5 text-[11px]' : 'px-3 py-1.5 text-xs'
+        className={`inline-flex items-center gap-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/80 transition-all active:scale-95 cursor-pointer font-bold shadow-2xs ${
+          compact ? 'px-2.5 py-1.5 text-[11px] min-h-[38px]' : 'px-3 py-1.5 text-xs min-h-[40px]'
         }`}
-        title="Install Retail Calculator app"
+        title="Install Calculator Max app"
       >
         <Download className="w-3.5 h-3.5 shrink-0" />
-        <span className="hidden xs:inline sm:inline">Install App</span>
+        <span className="hidden sm:inline">Install App</span>
       </button>
     );
   }
@@ -102,8 +102,8 @@ export default function PWAInstallButton({ compact = false }: { compact?: boolea
         <button
           type="button"
           onClick={() => setShowIOSGuide(true)}
-          className={`inline-flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white border border-white/30 backdrop-blur-md transition-all active:scale-95 cursor-pointer font-bold shadow-xs ${
-            compact ? 'px-2.5 py-1.5 text-[11px]' : 'px-3 py-1.5 text-xs'
+          className={`inline-flex items-center gap-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/80 transition-all active:scale-95 cursor-pointer font-bold shadow-2xs ${
+            compact ? 'px-2.5 py-1.5 text-[11px] min-h-[38px]' : 'px-3 py-1.5 text-xs min-h-[40px]'
           }`}
           title="Add to Home Screen on iOS"
         >

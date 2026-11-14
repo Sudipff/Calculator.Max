@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import Image from 'next/image';
 import {
   Calculator,
   Clock,
@@ -20,24 +21,20 @@ import {
   FileSpreadsheet,
   FileText,
   Globe,
-  ChevronRight,
   CheckCircle2,
   Check,
   RotateCw,
   HardDrive,
   Loader2,
   Coins,
-  Info,
   CalendarDays,
   Cake,
-  Facebook,
-  Instagram,
-  ExternalLink,
-  Share2,
   StickyNote,
   ListTodo,
-  Settings,
   Eye,
+  Home,
+  User,
+  ArrowLeft,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import EmiCalculator from '../components/EmiCalculator';
@@ -47,6 +44,7 @@ import ScientificCalculator from '../components/ScientificCalculator';
 import CalculatorErrorBoundary from '../components/CalculatorErrorBoundary';
 import AuthHeader from '../components/AuthHeader';
 import PWAInstallButton from '../components/PWAInstallButton';
+import DashboardHome from '../components/DashboardHome';
 import CurrencyExchange from '../components/CurrencyExchange';
 import NotesView from '../components/NotesManager/NotesView';
 import TasksView from '../components/NotesManager/TasksView';
@@ -61,12 +59,15 @@ import {
   parseSavedAmountFromText,
   HistoryItem,
 } from '../lib/historyStorage';
+import { getLocalNotes, getLocalTasks } from '../lib/notesTasksStorage';
+import type { NoteItem } from '../lib/types/notes-tasks';
 import { exportAllHistoryPDF, exportSingleItemPDF } from '../lib/pdfExport';
 
-type ActiveTab = 'age' | 'calculator' | 'emi' | 'wishlist' | 'discount' | 'weight' | 'unit' | 'currency' | 'quick' | 'notes' | 'tasks' | 'history';
+type ActiveTab = 'home' | 'age' | 'calculator' | 'emi' | 'wishlist' | 'discount' | 'weight' | 'unit' | 'currency' | 'quick' | 'notes' | 'tasks' | 'history';
 export type VibrationType = 'success' | 'error' | 'click' | 'reset';
 
 const TAB_ORDER: Record<ActiveTab, number> = {
+  home: -1,
   age: 0,
   calculator: 1,
   emi: 2,
@@ -301,32 +302,16 @@ const CALCULATOR_TOOLS_INFO: ToolInfoItem[] = [
 export default function RetailCalc() {
   const [currency, setCurrency] = useState('₹');
   const [isClient, setIsClient] = useState(false);
-  const [activeTab, setActiveTab] = useState<ActiveTab>('emi');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [direction, setDirection] = useState<number>(1);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isHeaderVisible, setIsHeaderVisible] = useState(true);
   const [isNoteFullScreen, setIsNoteFullScreen] = useState(false);
-  const [selectedInfoTool, setSelectedInfoTool] = useState<ActiveTab | null>(null);
-  const [openCategories, setOpenCategories] = useState<{
-    allCalculators: boolean;
-    quickTools: boolean;
-    notesManager: boolean;
-    settings: boolean;
-  }>({
-    allCalculators: false,
-    quickTools: false,
-    notesManager: false,
-    settings: false,
-  });
-
-  const [openSettingsSub, setOpenSettingsSub] = useState<{
-    countryCurrency: boolean;
-    socialMedia: boolean;
-  }>({
-    countryCurrency: false,
-    socialMedia: false,
-  });
+  const [dashboardSearch, setDashboardSearch] = useState('');
+  const [profileOpenSignal, setProfileOpenSignal] = useState(0);
+  const [dashboardNotes, setDashboardNotes] = useState<NoteItem[]>([]);
+  const [dashboardTasksCount, setDashboardTasksCount] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isRefreshingHistory, setIsRefreshingHistory] = useState(false);
@@ -360,7 +345,6 @@ export default function RetailCalc() {
   const [unitType, setUnitType] = useState('g_to_kg');
   const [unitResult, setUnitResult] = useState<string | null>(null);
 
-  const [currentDate, setCurrentDate] = useState('');
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   const loadUserHistory = useCallback(async (user: any) => {
@@ -644,17 +628,6 @@ export default function RetailCalc() {
     } else {
       setHistory(getCalculationHistory());
     }
-
-    const timer = setTimeout(() => {
-      const date = new Date();
-      setCurrentDate(
-        date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-      );
-    }, 0);
-
-    return () => {
-      clearTimeout(timer);
-    };
   }, [loadUserHistory]);
 
   useEffect(() => {
@@ -664,9 +637,22 @@ export default function RetailCalc() {
   }, [currency, isClient]);
 
   useEffect(() => {
+    if (!isClient) return;
+    const notesList = getLocalNotes(currentUser?.id);
+    const tasksList = getLocalTasks(currentUser?.id);
+    setDashboardNotes(notesList);
+    setDashboardTasksCount(tasksList.length);
+  }, [isClient, activeTab, currentUser?.id]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (activeTab === 'home') {
+      document.title = 'Calculator Max • All Calculators & Tools';
+      return;
+    }
     const activeTool = CALCULATOR_TOOLS_INFO.find((t) => t.id === activeTab);
-    if (activeTool && typeof document !== 'undefined') {
-      document.title = `${activeTool.title} • Retail Calculator`;
+    if (activeTool) {
+      document.title = `${activeTool.title} • Calculator Max`;
     }
   }, [activeTab]);
 
@@ -686,8 +672,8 @@ export default function RetailCalc() {
         return;
       }
 
-      // Keep header visible if the sidebar menu or auth modal is open
-      if (sidebarOpen || isAuthModalOpen) {
+      // Keep header visible if the auth modal is open
+      if (isAuthModalOpen) {
         setIsHeaderVisible(true);
         prevScrollY = currentScrollY;
         return;
@@ -715,7 +701,7 @@ export default function RetailCalc() {
       window.removeEventListener('scroll', handleScroll);
       document.removeEventListener('scroll', handleScroll);
     };
-  }, [sidebarOpen, isAuthModalOpen]);
+  }, [isAuthModalOpen]);
 
   const triggerVibration = (_type: VibrationType = 'click') => {
     // UI vibration completely removed as requested
@@ -729,13 +715,16 @@ export default function RetailCalc() {
     triggerVibration('click');
     setActiveTab(newTab);
     setIsHeaderVisible(true);
-    setSelectedInfoTool(null);
+  };
 
-    if (['age', 'calculator', 'emi', 'discount'].includes(newTab)) {
-      setOpenCategories({ allCalculators: true, quickTools: false });
-    } else if (['wishlist', 'weight', 'unit', 'currency'].includes(newTab)) {
-      setOpenCategories({ allCalculators: false, quickTools: true });
+  const handleFocusDashboardSearch = () => {
+    if (activeTab !== 'home') {
+      handleTabChange('home');
     }
+    setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      searchInputRef.current?.focus();
+    }, 80);
   };
 
   const saveHistoryItem = async (
@@ -1701,56 +1690,105 @@ export default function RetailCalc() {
     </div>
   );
 
+  const currencyPreferencesCard = (
+    <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/80 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+          <Globe className="w-4 h-4 text-blue-600" />
+          <span>Default Country & Currency</span>
+        </div>
+        <span className="text-xs font-extrabold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-lg">
+          {currency}
+        </span>
+      </div>
+      <div className="relative">
+        <select
+          value={CURRENCIES.find((c) => c.symbol === currency)?.code || 'INR'}
+          onChange={(e) => {
+            const selected = CURRENCIES.find((c) => c.code === e.target.value);
+            if (selected) {
+              setCurrency(selected.symbol);
+              triggerVibration('click');
+            }
+          }}
+          className="w-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 font-semibold text-xs py-2.5 pl-3 pr-8 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-200 appearance-none cursor-pointer"
+        >
+          {CURRENCIES.map((c) => (
+            <option key={c.code} value={c.code}>
+              {c.flag} {c.country} ({c.code} {c.symbol})
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      </div>
+    </div>
+  );
+
   return (
-    <div className="min-h-[100dvh] w-full bg-white sm:bg-slate-100/80 text-slate-800 flex flex-col sm:items-center font-sans antialiased m-0 p-0 sm:p-4 md:p-6">
-      <div className="mobile-edge-shell w-full sm:max-w-2xl md:max-w-4xl lg:max-w-6xl relative flex-1 flex flex-col bg-white min-h-[100dvh] sm:min-h-[calc(100dvh-2rem)] md:min-h-[calc(100dvh-3rem)] shadow-none sm:shadow-2xl rounded-none sm:rounded-3xl border-0 sm:border sm:border-slate-100/80 m-0 p-0 sm:pb-6">
-        {/* Header - Solid Blue & Sticky (Auto-hides on scroll down, shows on scroll up) */}
+    <div className="min-h-[100dvh] w-full bg-gradient-to-br from-[#eef7ff] via-[#f6faf7] to-[#fdf6ef] text-slate-800 flex flex-col sm:items-center font-sans antialiased m-0 p-0">
+      <div className="mobile-edge-shell w-full max-w-5xl relative flex-1 flex flex-col min-h-[100dvh] m-0 p-0">
+        {/* Top Header: App Icon + Calculator Max on left, Profile Icon on right */}
         <header
-          className={`mobile-edge-header w-full shrink-0 bg-blue-600 text-white py-2 px-3 sm:py-2.5 sm:px-4 sticky top-0 z-40 flex justify-between items-center rounded-none sm:rounded-b-xl md:rounded-t-2xl gap-2 transition-all duration-300 ease-in-out ${
+          className={`mobile-edge-header w-full shrink-0 h-14 px-4 sm:px-6 bg-white/80 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-40 flex justify-between items-center gap-3 transition-all duration-300 ease-in-out ${
             isNoteFullScreen
               ? 'hidden pointer-events-none'
               : isHeaderVisible
-              ? 'translate-y-0 opacity-100 shadow-md pointer-events-auto'
-              : '-translate-y-full opacity-0 shadow-none pointer-events-none'
+              ? 'translate-y-0 opacity-100 pointer-events-auto'
+              : '-translate-y-full opacity-0 pointer-events-none'
           }`}
         >
-          {/* Left: Interactive Dropdown Trigger with Calculator Icon, Chevron Below Icon, and Dynamic Tool Title */}
-          {(() => {
-            const activeTool = CALCULATOR_TOOLS_INFO.find((t) => t.id === activeTab);
-            const ActiveHeaderIcon = activeTool?.icon || Calculator;
-            const activeTitle = activeTool?.title || 'Retail Calculator';
-            return (
+          {/* Left: Back arrow (when inside a tool) + App Icon + CALCULATOR MAX */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            {activeTab !== 'home' && (
               <button
                 type="button"
-                onClick={() => {
-                  setSidebarOpen((prev) => !prev);
-                  triggerVibration('click');
-                }}
-                className="flex items-center gap-2 sm:gap-2.5 group hover:bg-blue-700/60 active:scale-98 transition-all p-1 rounded-xl cursor-pointer text-left focus:outline-none"
-                aria-label="Open Calculator Navigation & Country Selection"
+                onClick={() => handleTabChange('home')}
+                className="min-w-[40px] min-h-[40px] -ml-1.5 rounded-xl hover:bg-slate-100 text-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                aria-label="Back to Calculator Max dashboard"
+                title="Back to Home Dashboard"
               >
-                <div className="flex flex-col items-center justify-center shrink-0">
-                  <div className="w-8 h-8 sm:w-9 sm:h-9 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur-md border border-white/30 shadow-inner group-hover:bg-white/30 transition-colors">
-                    <ActiveHeaderIcon className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-white" />
-                  </div>
-                  <div className={`mt-0.5 flex items-center justify-center transition-transform duration-200 ${sidebarOpen ? 'rotate-180' : ''}`}>
-                    <ChevronDown className="w-3 h-3 text-white/90 group-hover:text-white" />
-                  </div>
-                </div>
-                <div className="min-w-0">
-                  <h1 className="text-sm sm:text-base md:text-lg font-black tracking-tight text-white whitespace-nowrap leading-tight">
-                    {activeTitle}
-                  </h1>
-                  <p className="text-[10px] sm:text-[11px] font-semibold text-blue-100 whitespace-nowrap">{currentDate}</p>
-                </div>
+                <ArrowLeft className="w-5 h-5" />
               </button>
-            );
-          })()}
+            )}
 
-          {/* Top Right Install Prompt, Auth & Cloud SQL Login */}
-          <div className="flex items-center gap-2 shrink-0">
+            <h1 className="m-0 flex items-center min-w-0">
+              <button
+                type="button"
+                onClick={() => handleTabChange('home')}
+                className="flex items-center gap-2.5 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-xl min-w-0"
+              >
+                <Image
+                  src="/pwa-192x192.png"
+                  alt="Calculator Max"
+                  width={32}
+                  height={32}
+                  className="w-8 h-8 rounded-xl shadow-xs shrink-0"
+                  referrerPolicy="no-referrer"
+                />
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 whitespace-nowrap leading-none">
+                    Calculator Max
+                  </span>
+                  {activeTab !== 'home' && (() => {
+                    const activeTool = CALCULATOR_TOOLS_INFO.find((t) => t.id === activeTab);
+                    return activeTool ? (
+                      <span className="hidden sm:inline text-xs font-semibold text-slate-500 truncate">
+                        · {activeTool.title}
+                      </span>
+                    ) : null;
+                  })()}
+                </span>
+              </button>
+            </h1>
+          </div>
+
+          {/* Right: Install App (when available) + Profile Icon */}
+          <div className="flex items-center gap-1.5 shrink-0">
             <PWAInstallButton compact />
             <AuthHeader
+              compactProfile
+              openSignal={profileOpenSignal}
+              currencySlot={currencyPreferencesCard}
               onSyncHistory={handleSyncFromCloudSql}
               onUserChanged={handleUserChanged}
               onModalOpenChange={(isOpen) => {
@@ -1763,635 +1801,23 @@ export default function RetailCalc() {
           </div>
         </header>
 
-        {/* Sidebar Drawer */}
-        <AnimatePresence>
-          {sidebarOpen && (
-            <>
-              {/* Dark Overlay Backdrop */}
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                onClick={() => setSidebarOpen(false)}
-                className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 cursor-pointer"
-                aria-hidden="true"
-              />
-
-              {/* Sidebar Panel */}
-              <motion.aside
-                initial={{ x: '-100%' }}
-                animate={{ x: 0 }}
-                exit={{ x: '-100%' }}
-                transition={{ type: 'spring', damping: 26, stiffness: 280 }}
-                className="fixed top-0 left-0 bottom-0 w-80 max-w-[85vw] bg-white z-50 shadow-2xl flex flex-col overflow-hidden"
-              >
-                {/* Drawer Header */}
-                <div className="bg-blue-600 text-white p-5 flex items-center justify-between shadow-sm">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md border border-white/30 shrink-0">
-                      <Calculator className="w-5 h-5 text-white" />
-                    </div>
-                    <div className="min-w-0">
-                      <h2 className="font-extrabold text-base tracking-tight text-white whitespace-nowrap">Retail Calculator</h2>
-                      <p className="text-[11px] text-blue-100 font-medium">{currentDate}</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSidebarOpen(false)}
-                    className="w-9 h-9 rounded-xl bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition-all active:scale-95 cursor-pointer"
-                    aria-label="Close menu"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                {/* Drawer Scrollable Content */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                  {/* Navigation Tabs */}
-                  <div>
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2.5 px-2 flex items-center justify-between">
-                      <span>Calculator Tools</span>
-                      <span className="text-[10px] text-slate-400 font-normal">Tap (i) for details</span>
-                    </div>
-
-                    {(() => {
-                      const allCalculatorsIds: ActiveTab[] = ['age', 'calculator', 'emi', 'discount'];
-                      const quickToolsIds: ActiveTab[] = ['wishlist', 'weight', 'unit', 'currency'];
-                      const notesManagerIds: ActiveTab[] = ['notes', 'tasks'];
-                      const allCalculatorsTools = allCalculatorsIds
-                        .map((id) => CALCULATOR_TOOLS_INFO.find((t) => t.id === id))
-                        .filter((t): t is ToolInfoItem => Boolean(t));
-                      const quickToolsList = quickToolsIds
-                        .map((id) => CALCULATOR_TOOLS_INFO.find((t) => t.id === id))
-                        .filter((t): t is ToolInfoItem => Boolean(t));
-                      const notesManagerTools = notesManagerIds
-                        .map((id) => CALCULATOR_TOOLS_INFO.find((t) => t.id === id))
-                        .filter((t): t is ToolInfoItem => Boolean(t));
-                      const historyTool = CALCULATOR_TOOLS_INFO.find((t) => t.id === 'history');
-
-                      const renderSidebarToolItem = (tool: ToolInfoItem) => {
-                        const isActive = activeTab === tool.id;
-                        const isSelectedInfo = selectedInfoTool === tool.id;
-                        const ToolIcon = tool.icon;
-
-                        return (
-                          <div key={tool.id} className="relative group">
-                            <div
-                              className={`w-full flex items-center justify-between p-2.5 rounded-2xl transition-all ${
-                                isActive
-                                  ? `${tool.colorActiveBg} ${tool.colorActiveText} font-bold shadow-xs`
-                                  : 'text-slate-700 hover:bg-slate-50 font-medium'
-                              }`}
-                            >
-                              {/* Main clickable area to switch calculator */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  handleTabChange(tool.id);
-                                  setSidebarOpen(false);
-                                }}
-                                className="flex-1 flex items-center gap-3 cursor-pointer text-left min-w-0 pr-1"
-                              >
-                                <div
-                                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-105 ${
-                                    isActive
-                                      ? `${tool.colorBg} text-white shadow-xs`
-                                      : 'bg-slate-100 text-slate-600'
-                                  }`}
-                                >
-                                  <ToolIcon className="w-4 h-4" />
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="text-sm font-bold truncate">{tool.title}</div>
-                                  <div className="text-[11px] text-slate-500 font-normal truncate">
-                                    {tool.subtitle}
-                                  </div>
-                                </div>
-                              </button>
-
-                              {/* Right Area: Badge, Active Dot, and Info Button */}
-                              <div className="flex items-center gap-1.5 shrink-0 pl-1">
-                                {tool.id === 'history' && history.length > 0 && (
-                                  <span className="bg-indigo-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                                    {history.length}
-                                  </span>
-                                )}
-
-                                {isActive && tool.id !== 'history' && (
-                                  <span className={`w-2 h-2 rounded-full ${tool.colorActiveDot}`}></span>
-                                )}
-
-                                {/* Small 'info' Icon Button */}
-                                <div>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedInfoTool((prev) => (prev === tool.id ? null : tool.id));
-                                      triggerVibration('click');
-                                    }}
-                                    aria-label={`About ${tool.title}`}
-                                    title={`What does ${tool.title} do?`}
-                                    className={`w-7 h-7 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
-                                      isSelectedInfo
-                                        ? 'bg-blue-600 text-white shadow-xs'
-                                        : 'text-slate-400 hover:text-blue-600 hover:bg-slate-200/80 active:scale-95'
-                                    }`}
-                                  >
-                                    <Info className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Tapped Info Overlay Card */}
-                            <AnimatePresence>
-                              {isSelectedInfo && (
-                                <motion.div
-                                  initial={{ opacity: 0, height: 0 }}
-                                  animate={{ opacity: 1, height: 'auto' }}
-                                  exit={{ opacity: 0, height: 0 }}
-                                  transition={{ duration: 0.2 }}
-                                  className="overflow-hidden"
-                                >
-                                  <div className="mt-1.5 p-3.5 bg-slate-50 border border-blue-200/80 rounded-2xl shadow-xs text-xs space-y-2.5">
-                                    <div className="flex items-start justify-between gap-2">
-                                      <div className="flex items-center gap-2">
-                                        <div
-                                          className={`w-6 h-6 rounded-lg ${tool.colorBg} text-white flex items-center justify-center shrink-0 shadow-xs`}
-                                        >
-                                          <ToolIcon className="w-3.5 h-3.5" />
-                                        </div>
-                                        <span className="font-bold text-slate-800 text-xs">
-                                          {tool.title}
-                                        </span>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => setSelectedInfoTool(null)}
-                                        className="w-5 h-5 rounded-md hover:bg-slate-200 text-slate-400 hover:text-slate-600 flex items-center justify-center cursor-pointer transition-colors"
-                                        aria-label="Close summary"
-                                      >
-                                        <X className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-
-                                    <p className="text-slate-600 text-[11.5px] leading-relaxed font-normal">
-                                      {tool.summary}
-                                    </p>
-
-                                    <div className="space-y-1 pt-1 border-t border-slate-200/70">
-                                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                                        Key Features
-                                      </div>
-                                      {tool.features.map((feat, idx) => (
-                                        <div
-                                          key={idx}
-                                          className="flex items-center gap-1.5 text-slate-600 text-[11px]"
-                                        >
-                                          <CheckCircle2 className="w-3 h-3 text-blue-500 shrink-0" />
-                                          <span>{feat}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-
-                                    <div className="pt-1 flex gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          handleTabChange(tool.id);
-                                          setSidebarOpen(false);
-                                          setSelectedInfoTool(null);
-                                        }}
-                                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-3 rounded-xl transition-all shadow-xs text-xs flex items-center justify-center gap-1.5 active:scale-98 cursor-pointer"
-                                      >
-                                        <span>Open {tool.title}</span>
-                                        <ChevronRight className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-                        );
-                      };
-
-                      return (
-                        <div className="space-y-3">
-                          {/* Dropdown Category 1: All Calculators */}
-                          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 overflow-hidden">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenCategories((prev) => ({
-                                  allCalculators: !prev.allCalculators,
-                                  quickTools: false,
-                                  notesManager: false,
-                                  settings: false,
-                                }));
-                                triggerVibration('click');
-                              }}
-                              className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-slate-100/80 transition-colors cursor-pointer"
-                            >
-                              <div className="flex items-center gap-2">
-                                <Calculator className="w-4 h-4 text-blue-600" />
-                                <span className="text-xs font-extrabold text-slate-800 tracking-tight">
-                                  All Calculators
-                                </span>
-                                <span className="text-[10px] font-bold text-slate-500 bg-slate-200/70 px-1.5 py-0.5 rounded-md">
-                                  {allCalculatorsTools.length}
-                                </span>
-                              </div>
-                              <ChevronDown
-                                className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
-                                  openCategories.allCalculators ? 'rotate-180 text-blue-600' : ''
-                                }`}
-                              />
-                            </button>
-
-                            <AnimatePresence initial={false}>
-                              {openCategories.allCalculators && (
-                                <motion.div
-                                  initial={{ height: 0, opacity: 0 }}
-                                  animate={{ height: 'auto', opacity: 1 }}
-                                  exit={{ height: 0, opacity: 0 }}
-                                  transition={{ duration: 0.2 }}
-                                  className="overflow-hidden"
-                                >
-                                  <div className="p-1.5 pt-0 space-y-1 border-t border-slate-100 bg-white">
-                                    {allCalculatorsTools.map((tool) => renderSidebarToolItem(tool))}
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-
-                          {/* Dropdown Category 2: Quick Tools */}
-                          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 overflow-hidden">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenCategories((prev) => ({
-                                  allCalculators: false,
-                                  quickTools: !prev.quickTools,
-                                  notesManager: false,
-                                  settings: false,
-                                }));
-                                triggerVibration('click');
-                              }}
-                              className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-slate-100/80 transition-colors cursor-pointer"
-                            >
-                              <div className="flex items-center gap-2">
-                                <LayoutGrid className="w-4 h-4 text-emerald-600" />
-                                <span className="text-xs font-extrabold text-slate-800 tracking-tight">
-                                  Quick Tools
-                                </span>
-                                <span className="text-[10px] font-bold text-slate-500 bg-slate-200/70 px-1.5 py-0.5 rounded-md">
-                                  {quickToolsList.length}
-                                </span>
-                              </div>
-                              <ChevronDown
-                                className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
-                                  openCategories.quickTools ? 'rotate-180 text-emerald-600' : ''
-                                }`}
-                              />
-                            </button>
-
-                            <AnimatePresence initial={false}>
-                              {openCategories.quickTools && (
-                                <motion.div
-                                  initial={{ height: 0, opacity: 0 }}
-                                  animate={{ height: 'auto', opacity: 1 }}
-                                  exit={{ height: 0, opacity: 0 }}
-                                  transition={{ duration: 0.2 }}
-                                  className="overflow-hidden"
-                                >
-                                  <div className="p-1.5 pt-0 space-y-1 border-t border-slate-100 bg-white">
-                                    {quickToolsList.map((tool) => renderSidebarToolItem(tool))}
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-
-                          {/* Dropdown Category 3: Notes Manager (Directly above History) */}
-                          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 overflow-hidden">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenCategories((prev) => ({
-                                  allCalculators: false,
-                                  quickTools: false,
-                                  notesManager: !prev.notesManager,
-                                  settings: false,
-                                }));
-                                triggerVibration('click');
-                              }}
-                              className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-slate-100/80 transition-colors cursor-pointer"
-                            >
-                              <div className="flex items-center gap-2">
-                                <StickyNote className="w-4 h-4 text-amber-600" />
-                                <span className="text-xs font-extrabold text-slate-800 tracking-tight">
-                                  Notes Manager
-                                </span>
-                                <span className="text-[10px] font-bold text-amber-700 bg-amber-100/80 px-1.5 py-0.5 rounded-md">
-                                  {notesManagerTools.length}
-                                </span>
-                              </div>
-                              <ChevronDown
-                                className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
-                                  openCategories.notesManager ? 'rotate-180 text-amber-600' : ''
-                                }`}
-                              />
-                            </button>
-
-                            <AnimatePresence initial={false}>
-                              {openCategories.notesManager && (
-                                <motion.div
-                                  initial={{ height: 0, opacity: 0 }}
-                                  animate={{ height: 'auto', opacity: 1 }}
-                                  exit={{ height: 0, opacity: 0 }}
-                                  transition={{ duration: 0.2 }}
-                                  className="overflow-hidden"
-                                >
-                                  <div className="p-1.5 pt-0 space-y-1 border-t border-slate-100 bg-white">
-                                    {notesManagerTools.map((tool) => renderSidebarToolItem(tool))}
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-
-                          {/* Standalone Calculation History below the categories */}
-                          {historyTool && (
-                            <div className="pt-1">
-                              {renderSidebarToolItem(historyTool)}
-                            </div>
-                          )}
-
-                          {/* Dropdown Category 4: Settings (Positioned directly below Calculator History) */}
-                          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 overflow-hidden">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenCategories((prev) => ({
-                                  allCalculators: false,
-                                  quickTools: false,
-                                  notesManager: false,
-                                  settings: !prev.settings,
-                                }));
-                                triggerVibration('click');
-                              }}
-                              className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-slate-100/80 transition-colors cursor-pointer"
-                            >
-                              <div className="flex items-center gap-2">
-                                <Settings className="w-4 h-4 text-indigo-600" />
-                                <span className="text-xs font-extrabold text-slate-800 tracking-tight">
-                                  Settings
-                                </span>
-                                <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100/80 px-1.5 py-0.5 rounded-md">
-                                  2
-                                </span>
-                              </div>
-                              <ChevronDown
-                                className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
-                                  openCategories.settings ? 'rotate-180 text-indigo-600' : ''
-                                }`}
-                              />
-                            </button>
-
-                            <AnimatePresence initial={false}>
-                              {openCategories.settings && (
-                                <motion.div
-                                  initial={{ height: 0, opacity: 0 }}
-                                  animate={{ height: 'auto', opacity: 1 }}
-                                  exit={{ height: 0, opacity: 0 }}
-                                  transition={{ duration: 0.2 }}
-                                  className="overflow-hidden"
-                                >
-                                  <div className="p-2 pt-0 space-y-2 border-t border-slate-100 bg-white">
-                                    {/* Nested Option 1: Country and Currency */}
-                                    <div className="rounded-2xl border border-slate-200/70 bg-slate-50/50 overflow-hidden mt-1.5">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setOpenSettingsSub((prev) => ({
-                                            ...prev,
-                                            countryCurrency: !prev.countryCurrency,
-                                          }));
-                                          triggerVibration('click');
-                                        }}
-                                        className="w-full flex items-center justify-between p-2.5 text-left hover:bg-slate-100/70 transition-colors cursor-pointer"
-                                      >
-                                        <div className="flex items-center gap-2.5 min-w-0">
-                                          <div className="w-7 h-7 rounded-lg bg-blue-100/80 text-blue-700 flex items-center justify-center shrink-0">
-                                            <Globe className="w-4 h-4" />
-                                          </div>
-                                          <div className="min-w-0">
-                                            <div className="text-xs font-bold text-slate-800 leading-tight">Country and Currency</div>
-                                            <div className="text-[10px] text-slate-400">Default currency & symbol</div>
-                                          </div>
-                                        </div>
-                                        <div className="flex items-center gap-1.5 shrink-0">
-                                          <span className="text-xs font-black text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded-md">{currency}</span>
-                                          <ChevronDown
-                                            className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
-                                              openSettingsSub.countryCurrency ? 'rotate-180 text-blue-600' : ''
-                                            }`}
-                                          />
-                                        </div>
-                                      </button>
-
-                                      <AnimatePresence initial={false}>
-                                        {openSettingsSub.countryCurrency && (
-                                          <motion.div
-                                            initial={{ height: 0, opacity: 0 }}
-                                            animate={{ height: 'auto', opacity: 1 }}
-                                            exit={{ height: 0, opacity: 0 }}
-                                            transition={{ duration: 0.2 }}
-                                            className="overflow-hidden p-2.5 pt-1 space-y-2 border-t border-slate-100 bg-white"
-                                          >
-                                            <div className="relative">
-                                              <select
-                                                id="country-selection-dropdown"
-                                                value={CURRENCIES.find((c) => c.symbol === currency)?.code || 'INR'}
-                                                onChange={(e) => {
-                                                  const selected = CURRENCIES.find((c) => c.code === e.target.value);
-                                                  if (selected) {
-                                                    setCurrency(selected.symbol);
-                                                    triggerVibration('click');
-                                                  }
-                                                }}
-                                                className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200/90 text-slate-800 font-bold text-xs py-2.5 pl-10 pr-8 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all appearance-none cursor-pointer shadow-xs"
-                                              >
-                                                {CURRENCIES.map((c) => (
-                                                  <option key={c.code} value={c.code} className="text-slate-800 py-1">
-                                                    {c.flag} {c.country} ({c.code} {c.symbol})
-                                                  </option>
-                                                ))}
-                                              </select>
-
-                                              <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center pointer-events-none text-base">
-                                                {CURRENCIES.find((c) => c.symbol === currency)?.flag || '🌐'}
-                                              </div>
-
-                                              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                                                <ChevronDown className="w-3.5 h-3.5" />
-                                              </div>
-                                            </div>
-
-                                            {(() => {
-                                              const activeCurr = CURRENCIES.find((c) => c.symbol === currency) || CURRENCIES[0];
-                                              return (
-                                                <div className="p-2 bg-blue-50/70 rounded-xl border border-blue-100 flex items-center justify-between text-xs">
-                                                  <div className="flex items-center gap-2 min-w-0">
-                                                    <span className="text-base shrink-0">{activeCurr.flag}</span>
-                                                    <div className="min-w-0">
-                                                      <div className="font-bold text-slate-800 leading-tight truncate">{activeCurr.country}</div>
-                                                      <div className="text-[10px] text-slate-500 truncate">{activeCurr.name}</div>
-                                                    </div>
-                                                  </div>
-                                                  <div className="text-right shrink-0 ml-2">
-                                                    <div className="font-black text-blue-700 font-mono text-xs">{activeCurr.symbol}</div>
-                                                    <div className="text-[9px] font-bold text-blue-500 uppercase">{activeCurr.code}</div>
-                                                  </div>
-                                                </div>
-                                              );
-                                            })()}
-                                          </motion.div>
-                                        )}
-                                      </AnimatePresence>
-                                    </div>
-
-                                    {/* Nested Option 2: Social Media */}
-                                    <div className="rounded-2xl border border-slate-200/70 bg-slate-50/50 overflow-hidden">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setOpenSettingsSub((prev) => ({
-                                            ...prev,
-                                            socialMedia: !prev.socialMedia,
-                                          }));
-                                          triggerVibration('click');
-                                        }}
-                                        className="w-full flex items-center justify-between p-2.5 text-left hover:bg-slate-100/70 transition-colors cursor-pointer"
-                                      >
-                                        <div className="flex items-center gap-2.5 min-w-0">
-                                          <div className="w-7 h-7 rounded-lg bg-pink-100/80 text-pink-700 flex items-center justify-center shrink-0">
-                                            <Share2 className="w-4 h-4" />
-                                          </div>
-                                          <div className="min-w-0">
-                                            <div className="text-xs font-bold text-slate-800 leading-tight">Social Media</div>
-                                            <div className="text-[10px] text-slate-400">Official links & channels</div>
-                                          </div>
-                                        </div>
-                                        <ChevronDown
-                                          className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
-                                            openSettingsSub.socialMedia ? 'rotate-180 text-pink-600' : ''
-                                          }`}
-                                        />
-                                      </button>
-
-                                      <AnimatePresence initial={false}>
-                                        {openSettingsSub.socialMedia && (
-                                          <motion.div
-                                            initial={{ height: 0, opacity: 0 }}
-                                            animate={{ height: 'auto', opacity: 1 }}
-                                            exit={{ height: 0, opacity: 0 }}
-                                            transition={{ duration: 0.2 }}
-                                            className="overflow-hidden p-2.5 pt-1 space-y-2 border-t border-slate-100 bg-white"
-                                          >
-                                            <a
-                                              href="https://www.facebook.com/share/1K2QJZzRQY/"
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              onClick={() => triggerVibration('click')}
-                                              className="w-full p-2 rounded-xl bg-slate-50 hover:bg-blue-50/80 border border-slate-200/80 hover:border-blue-200 flex items-center justify-between transition-all group cursor-pointer shadow-2xs"
-                                            >
-                                              <div className="flex items-center gap-2.5 min-w-0">
-                                                <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
-                                                  <Facebook className="w-3.5 h-3.5" />
-                                                </div>
-                                                <div className="min-w-0">
-                                                  <div className="text-xs font-bold text-slate-800 group-hover:text-blue-700 transition-colors truncate">
-                                                    Facebook Page
-                                                  </div>
-                                                  <div className="text-[10px] text-slate-400 truncate">
-                                                    Official updates & community
-                                                  </div>
-                                                </div>
-                                              </div>
-                                              <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 shrink-0 ml-1.5 transition-colors" />
-                                            </a>
-
-                                            <a
-                                              href="https://www.instagram.com/sudipdebnath416?srtk=MWUzbTA1ZW43a2w4Ng=="
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              onClick={() => triggerVibration('click')}
-                                              className="w-full p-2 rounded-xl bg-slate-50 hover:bg-pink-50/80 border border-slate-200/80 hover:border-pink-200 flex items-center justify-between transition-all group cursor-pointer shadow-2xs"
-                                            >
-                                              <div className="flex items-center gap-2.5 min-w-0">
-                                                <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
-                                                  <Instagram className="w-3.5 h-3.5" />
-                                                </div>
-                                                <div className="min-w-0">
-                                                  <div className="text-xs font-bold text-slate-800 group-hover:text-rose-600 transition-colors truncate">
-                                                    Instagram Feed
-                                                  </div>
-                                                  <div className="text-[10px] text-slate-400 truncate">
-                                                    @sudipdebnath416
-                                                  </div>
-                                                </div>
-                                              </div>
-                                              <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-rose-500 shrink-0 ml-1.5 transition-colors" />
-                                            </a>
-                                          </motion.div>
-                                        )}
-                                      </AnimatePresence>
-                                    </div>
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </div>
-
-                {/* Drawer Footer */}
-                <div className="p-3 bg-slate-50 border-t border-slate-200/80 text-center">
-                  <p className="text-[11px] font-semibold text-slate-500">
-                    Retail Calculator Pro • v1.2
-                  </p>
-                </div>
-              </motion.aside>
-            </>
-          )}
-        </AnimatePresence>
-
-
-
         {/* Main Content Area */}
         <main
-          className={`flex-1 flex flex-col relative overflow-x-hidden ${
+          className={`flex-1 flex flex-col relative overflow-x-hidden pb-20 ${
             activeTab === 'calculator'
-              ? 'p-0 sm:p-6 md:p-8 space-y-0 sm:space-y-6 md:space-y-8'
-              : 'p-2.5 sm:p-6 md:p-8 pb-4 sm:pb-8 space-y-4 sm:space-y-6 md:space-y-8'
+              ? 'p-0 sm:p-6 md:p-8 sm:pb-24 space-y-0 sm:space-y-6 md:space-y-8'
+              : activeTab === 'home'
+              ? 'p-0 pb-20'
+              : 'p-3 sm:p-6 md:p-8 pb-24 space-y-4 sm:space-y-6 md:space-y-8'
           }`}
         >
-          <AnimatePresence mode="wait" custom={direction}>
+          <AnimatePresence mode="wait" initial={false} custom={direction}>
             <motion.div
               key={activeTab}
               custom={direction}
               variants={{
                 enter: (dir: number) => ({
-                  x: dir > 0 ? 60 : -60,
+                  x: dir > 0 ? 40 : -40,
                   opacity: 0,
                 }),
                 center: {
@@ -2399,20 +1825,32 @@ export default function RetailCalc() {
                   opacity: 1,
                 },
                 exit: (dir: number) => ({
-                  x: dir > 0 ? -60 : 60,
+                  x: dir > 0 ? -40 : 40,
                   opacity: 0,
                 }),
               }}
               initial="enter"
               animate="center"
               exit="exit"
-              transition={{ duration: 0.22, ease: [0.25, 0.1, 0.25, 1] }}
+              transition={{ duration: 0.18, ease: [0.25, 0.1, 0.25, 1] }}
               className={`w-full flex-1 flex flex-col ${
-                activeTab === 'calculator'
+                activeTab === 'calculator' || activeTab === 'home'
                   ? 'space-y-0 sm:space-y-6 md:space-y-8'
                   : 'space-y-4 sm:space-y-6 md:space-y-8'
               }`}
             >
+              {/* TAB: CALCULATOR MAX HOME DASHBOARD */}
+              {activeTab === 'home' && (
+                <DashboardHome
+                  searchQuery={dashboardSearch}
+                  onSearchChange={setDashboardSearch}
+                  searchInputRef={searchInputRef}
+                  onSelectTool={(toolTab) => handleTabChange(toolTab)}
+                  notes={dashboardNotes}
+                  tasksCount={dashboardTasksCount}
+                />
+              )}
+
               {/* TAB: AGE CALCULATOR */}
               {activeTab === 'age' && (
                 <section>
@@ -2832,6 +2270,67 @@ export default function RetailCalc() {
             </motion.div>
           </AnimatePresence>
         </main>
+
+        {/* Bottom Navigation Bar: Home, History, Search, Notes, Profile */}
+        {!isNoteFullScreen && (
+          <nav
+            aria-label="Primary bottom navigation"
+            className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/80 shadow-[0_-4px_20px_rgba(15,23,42,0.04)] pb-[env(safe-area-inset-bottom)]"
+          >
+            <div className="max-w-5xl mx-auto grid grid-cols-5 items-center h-14 px-2">
+              <button
+                type="button"
+                onClick={() => handleTabChange('home')}
+                className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
+                  activeTab === 'home' ? 'text-slate-900 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
+                }`}
+              >
+                <Home className={`w-5 h-5 ${activeTab === 'home' ? 'fill-slate-900 text-slate-900' : ''}`} />
+                <span className="text-[10px] tracking-tight">Home</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTabChange('history')}
+                className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
+                  activeTab === 'history' ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
+                }`}
+              >
+                <Clock className="w-5 h-5" />
+                <span className="text-[10px] tracking-tight">History</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleFocusDashboardSearch}
+                className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-slate-400 hover:text-slate-700 font-medium transition-colors cursor-pointer rounded-xl"
+              >
+                <Search className="w-5 h-5" />
+                <span className="text-[10px] tracking-tight">Search</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTabChange('notes')}
+                className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
+                  activeTab === 'notes' || activeTab === 'tasks' ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
+                }`}
+              >
+                <FileText className="w-5 h-5" />
+                <span className="text-[10px] tracking-tight">Notes</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setProfileOpenSignal((n) => n + 1)}
+                className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-slate-400 hover:text-slate-700 font-medium transition-colors cursor-pointer rounded-xl"
+              >
+                <User className="w-5 h-5" />
+                <span className="text-[10px] tracking-tight">Profile</span>
+              </button>
+            </div>
+          </nav>
+        )}
       </div>
 
       {/* Delete Confirmation Modal Dialog */}

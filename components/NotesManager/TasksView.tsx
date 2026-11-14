@@ -429,7 +429,7 @@ export default function TasksView({ currentUser }: TasksViewProps) {
   const handleDeleteSubtask = async (parentId: string, subtaskId: string) => {
     const updated = tasks.map((t) => {
       if (t.id === parentId) {
-        const subs = (t.subtasks || []).map((s) => s.id !== subtaskId);
+        const subs = (t.subtasks || []).filter((s) => s.id !== subtaskId);
         return { ...t, subtasks: subs, updatedAt: new Date().toISOString() };
       }
       return t;

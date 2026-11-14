@@ -1,4 +1,4 @@
-const CACHE_NAME = 'retail-calc-pwa-v1';
+const CACHE_NAME = 'calculator-max-pwa-v2';
 
 const PRECACHE_URLS = [
   '/',
@@ -50,7 +50,8 @@ self.addEventListener('fetch', (event) => {
   if (
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/auth/') ||
-    url.pathname.includes('webpack-hmr')
+    url.pathname.includes('webpack-hmr') ||
+    url.pathname.includes('hot-update')
   ) {
     return;
   }
@@ -76,12 +77,33 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Stale-while-revalidate for static assets, icons, stylesheets, and Next.js chunks
-  const isStaticAsset =
+  // Network-first for JS/CSS and Next.js bundles to prevent SSR/client chunk mismatches
+  const isCodeBundle =
     url.pathname.startsWith('/_next/static/') ||
-    /\.(?:png|jpg|jpeg|svg|webp|ico|css|js|woff2?|json)$/i.test(url.pathname);
+    /\.(?:js|css)$/i.test(url.pathname);
 
-  if (isStaticAsset) {
+  if (isCodeBundle) {
+    event.respondWith(
+      fetch(request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.ok) {
+            const responseClone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
+          }
+          return networkResponse;
+        })
+        .catch(async () => {
+          const cachedResponse = await caches.match(request);
+          return cachedResponse || Response.error();
+        })
+    );
+    return;
+  }
+
+  // Stale-while-revalidate for icons, images, fonts, and manifest
+  const isMediaOrManifest = /\.(?:png|jpg|jpeg|svg|webp|ico|woff2?|json)$/i.test(url.pathname);
+
+  if (isMediaOrManifest) {
     event.respondWith(
       caches.open(CACHE_NAME).then(async (cache) => {
         const cachedResponse = await cache.match(request);

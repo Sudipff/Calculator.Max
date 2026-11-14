@@ -22,21 +22,23 @@ declare global {
 }
 
 function getMemoryStore(): Record<string, StoredEmailUser> {
-  if (!global._inMemoryEmailUsers) {
-    global._inMemoryEmailUsers = {};
+  let store = global._inMemoryEmailUsers;
+  if (!store) {
+    store = {};
     try {
       if (fs.existsSync(STORE_FILE_PATH)) {
         const raw = fs.readFileSync(STORE_FILE_PATH, 'utf-8');
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
-          global._inMemoryEmailUsers = parsed;
+          store = parsed as Record<string, StoredEmailUser>;
         }
       }
     } catch {
       // Ignore file read errors in restricted environments
     }
+    global._inMemoryEmailUsers = store;
   }
-  return global._inMemoryEmailUsers;
+  return store;
 }
 
 function saveMemoryStore(store: Record<string, StoredEmailUser>) {
