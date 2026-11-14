@@ -244,5 +244,9 @@ html[data-theme='dark'] textarea::placeholder {
   color: #94a3b8 !important;
 }
 
+html[data-theme='dark'] [data-history-chip-active="true"] {
+  border-color: transparent !important;
+}
+
 
 

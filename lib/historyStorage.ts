@@ -8,6 +8,7 @@ export interface CalculationDetails {
   dbId?: string | number | null;
   syncStatus?: 'synced' | 'syncing' | 'local' | 'error';
   savedAmount?: number;
+  isFavorite?: boolean;
 }
 
 export interface HistoryItem {
@@ -20,6 +21,7 @@ export interface HistoryItem {
   dbId?: string | number | null;
   syncStatus?: 'synced' | 'syncing' | 'local' | 'error';
   savedAmount?: number;
+  isFavorite?: boolean;
 }
 
 const BASE_STORAGE_KEY = 'retail-calc-history';
@@ -82,6 +84,7 @@ export function saveCalculationHistory(
     dbId: calculationDetails.dbId,
     syncStatus: calculationDetails.syncStatus || 'local',
     savedAmount: calculationDetails.savedAmount,
+    isFavorite: Boolean(calculationDetails.isFavorite),
   };
 
   // Prepend new calculation to existing array (limiting to last 50 entries)
@@ -209,6 +212,35 @@ export function clearCalculationHistory(userId?: string | null): HistoryItem[] {
     }
   }
   return [];
+}
+
+/**
+ * Toggles the favorite flag for a calculation history item and persists across local caches.
+ */
+export function toggleCalculationHistoryFavorite(
+  itemId: string,
+  userId?: string | null
+): HistoryItem[] {
+  const existingHistory = getCalculationHistory(userId);
+  const updatedHistory = existingHistory.map((item) =>
+    item.id === itemId || (item.dbId && item.dbId.toString() === itemId)
+      ? { ...item, isFavorite: !item.isFavorite }
+      : item
+  );
+
+  if (typeof window !== 'undefined') {
+    try {
+      const key = getStorageKey(userId);
+      localStorage.setItem(key, JSON.stringify(updatedHistory.slice(0, 50)));
+      if (!userId) {
+        localStorage.setItem(BASE_STORAGE_KEY, JSON.stringify(updatedHistory.slice(0, 50)));
+      }
+    } catch (error) {
+      console.error('Failed to update favorite status in local storage:', error);
+    }
+  }
+
+  return updatedHistory;
 }
 
 /**

@@ -133,7 +133,9 @@ export default function NotesView({
   const [fullPageNewTag, setFullPageNewTag] = useState('');
   const [showFullPageTagInput, setShowFullPageTagInput] = useState(false);
   const [showFullPageReminder, setShowFullPageReminder] = useState(false);
+  const [showManagerMenu, setShowManagerMenu] = useState(false);
 
+  const managerMenuRef = useRef<HTMLDivElement>(null);
   const threeDotMenuRef = useRef<HTMLDivElement>(null);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isLongPressFiredRef = useRef<boolean>(false);
@@ -144,17 +146,20 @@ export default function NotesView({
     setIsMounted(true);
   }, []);
 
-  // Close three-dot palette popover when clicking outside
+  // Close manager or editor three-dot popover when clicking outside
   useEffect(() => {
-    if (!showThreeDotMenu) return;
+    if (!showThreeDotMenu && !showManagerMenu) return;
     const handleOutsideClick = (event: MouseEvent) => {
-      if (threeDotMenuRef.current && !threeDotMenuRef.current.contains(event.target as Node)) {
+      if (showThreeDotMenu && threeDotMenuRef.current && !threeDotMenuRef.current.contains(event.target as Node)) {
         setShowThreeDotMenu(false);
+      }
+      if (showManagerMenu && managerMenuRef.current && !managerMenuRef.current.contains(event.target as Node)) {
+        setShowManagerMenu(false);
       }
     };
     document.addEventListener('mousedown', handleOutsideClick);
     return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [showThreeDotMenu]);
+  }, [showThreeDotMenu, showManagerMenu]);
 
   // Layout Optimization: Prevent Background Scrolling and Hide Main Header when Note Editing View is active
   useEffect(() => {
@@ -630,27 +635,88 @@ export default function NotesView({
           </div>
         </div>
 
-        {/* Full-Width Search Bar */}
-        <div className="relative w-full">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="search"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search your notes..."
-            aria-label="Search your notes"
-            className="w-full min-h-[42px] bg-white/95 border border-slate-200/90 text-slate-900 font-medium text-xs sm:text-sm rounded-2xl py-2 pl-10 pr-9 shadow-[0_1px_4px_rgba(15,23,42,0.03)] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all"
-          />
-          {searchQuery && (
+        {/* Shortened Search Bar + Three-Dot Overflow Menu */}
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1 min-w-0">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search your notes..."
+              aria-label="Search your notes"
+              className="w-full min-h-[42px] bg-white/95 border border-slate-200/90 text-slate-900 font-medium text-xs sm:text-sm rounded-2xl py-2 pl-10 pr-9 shadow-[0_1px_4px_rgba(15,23,42,0.03)] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 cursor-pointer"
+                aria-label="Clear notes search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="relative shrink-0" ref={managerMenuRef}>
             <button
               type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 cursor-pointer"
-              aria-label="Clear notes search"
+              id="notes-header-menu-btn"
+              onClick={() => setShowManagerMenu((prev) => !prev)}
+              className="min-w-[42px] min-h-[42px] rounded-2xl bg-white/95 border border-slate-200/90 text-slate-700 hover:bg-slate-50 active:scale-95 flex items-center justify-center shadow-[0_1px_4px_rgba(15,23,42,0.03)] transition-all cursor-pointer"
+              aria-label="Notes actions menu"
+              aria-expanded={showManagerMenu}
+              title="Notes actions"
             >
-              <X className="w-3.5 h-3.5" />
+              <MoreVertical className="w-4.5 h-4.5" />
             </button>
-          )}
+
+            {showManagerMenu && (
+              <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-2xl border border-slate-200 shadow-xl py-1.5 z-40">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowManagerMenu(false);
+                    setOnlyPinned((prev) => !prev);
+                  }}
+                  className="w-full px-3.5 py-2.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center justify-between gap-2 cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <Pin className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Pinned Only</span>
+                  </span>
+                  {onlyPinned && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowManagerMenu(false);
+                    handleSelectAll();
+                  }}
+                  className="w-full px-3.5 py-2.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                >
+                  <CheckSquare className="w-3.5 h-3.5 text-slate-500" />
+                  <span>{selectedNoteIds.length > 0 ? 'Clear Selection' : 'Select All Notes'}</span>
+                </button>
+
+                <div className="my-1 border-t border-slate-100" />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowManagerMenu(false);
+                    void handleManualRefresh();
+                  }}
+                  className="w-full px-3.5 py-2.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                >
+                  <RotateCw className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Sync & Refresh Notes</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Interactive Filter Pills: All Notes, Pinned, + Labels */}

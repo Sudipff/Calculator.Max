@@ -14,24 +14,19 @@ import {
   CreditCard,
   LayoutGrid,
   ChevronDown,
-  Download,
   Search,
   X,
   AlertCircle,
-  FileSpreadsheet,
   FileText,
   Globe,
-  CheckCircle2,
   Check,
   RefreshCw,
-  HardDrive,
   Loader2,
   Coins,
   CalendarDays,
   Cake,
   StickyNote,
   ListTodo,
-  Eye,
   Home,
   User,
   ArrowLeft,
@@ -50,6 +45,7 @@ import DashboardHome from '../components/DashboardHome';
 import CurrencyExchange from '../components/CurrencyExchange';
 import NotesView from '../components/NotesManager/NotesView';
 import TasksView from '../components/NotesManager/TasksView';
+import HistoryView from '../components/HistoryView';
 import HistoryPreviewModal from '../components/HistoryPreviewModal';
 import ProfileSettingsView, { type BackupPayload } from '../components/ProfileSettingsView';
 import { createClient } from '@/utils/supabase/client';
@@ -59,6 +55,7 @@ import {
   deleteCalculationHistoryItem,
   clearCalculationHistory,
   setCalculationHistory,
+  toggleCalculationHistoryFavorite,
   parseSavedAmountFromText,
   HistoryItem,
 } from '../lib/historyStorage';
@@ -459,9 +456,20 @@ export default function RetailCalc() {
     }
 
     if (isCloudSuccess) {
-      // Cloud database is the absolute source of truth: replace state and local cache
-      setHistory(cloudItems);
-      setCalculationHistory(cloudItems, user.id);
+      // Preserve local favorite status across cloud refreshes
+      const mergedCloudItems = cloudItems.map((cloudItem) => {
+        const matchedLocal = localItems.find(
+          (localItem) =>
+            (cloudItem.dbId && localItem.dbId?.toString() === cloudItem.dbId.toString()) ||
+            localItem.id === cloudItem.id ||
+            (localItem.type === cloudItem.type &&
+              localItem.details === cloudItem.details &&
+              localItem.result === cloudItem.result)
+        );
+        return matchedLocal?.isFavorite ? { ...cloudItem, isFavorite: true } : cloudItem;
+      });
+      setHistory(mergedCloudItems);
+      setCalculationHistory(mergedCloudItems, user.id);
 
       // Clean up legacy calculation_history from user_metadata so stale tokens never resurrect deleted items
       try {
@@ -1028,12 +1036,19 @@ export default function RetailCalc() {
       return false;
     };
 
+    const getDocScrollTop = () =>
+      Math.max(
+        window.scrollY || 0,
+        document.documentElement?.scrollTop || 0,
+        document.body?.scrollTop || 0
+      );
+
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1 || isOverlayBlockedRef.current || isPullRefreshingRef.current) {
         tracking = false;
         return;
       }
-      if (window.scrollY > 2 || hasScrolledInnerContainer(e.target)) {
+      if (getDocScrollTop() > 2 || hasScrolledInnerContainer(e.target)) {
         tracking = false;
         return;
       }
@@ -1049,7 +1064,7 @@ export default function RetailCalc() {
       const dx = e.touches[0].clientX - startX;
 
       if (!activelyPulling) {
-        if (dy <= 0 || Math.abs(dx) > dy * 0.9 || window.scrollY > 2) {
+        if (dy <= 0 || Math.abs(dx) > dy * 0.9 || getDocScrollTop() > 2) {
           tracking = false;
           return;
         }
@@ -1060,7 +1075,7 @@ export default function RetailCalc() {
         }
       }
 
-      if (dy > 10 && window.scrollY <= 2) {
+      if (dy > 10 && getDocScrollTop() <= 2) {
         e.preventDefault();
         const damped = Math.min(84, Math.round((dy - 10) * 0.45));
         pullDistanceRef.current = damped;
@@ -1307,9 +1322,6 @@ export default function RetailCalc() {
     triggerVibration('success');
   };
 
-  // History search state
-  const [historySearch, setHistorySearch] = useState('');
-
   // Quick Tools field error state trackers
   const [discPriceErr, setDiscPriceErr] = useState(false);
   const [discErr, setDiscErr] = useState(false);
@@ -1317,29 +1329,26 @@ export default function RetailCalc() {
   const [weightBudgetErr, setWeightBudgetErr] = useState(false);
   const [unitInputErr, setUnitInputErr] = useState(false);
 
-  // Filtered History list by keyword search
-  const filteredHistory = useMemo(() => {
-    if (!historySearch.trim()) return history;
-    const q = historySearch.toLowerCase();
-    return history.filter(
-      (item) =>
-        item.type.toLowerCase().includes(q) ||
-        item.result.toLowerCase().includes(q) ||
-        item.details.toLowerCase().includes(q) ||
-        item.timestamp.toLowerCase().includes(q)
-    );
-  }, [history, historySearch]);
+  const handleToggleFavoriteHistory = useCallback(
+    (itemId: string) => {
+      triggerVibration('click');
+      const updated = toggleCalculationHistoryFavorite(itemId, currentUser?.id);
+      setHistory(updated);
+    },
+    [currentUser?.id]
+  );
 
   // Export History to CSV Handler
-  const exportHistoryCSV = () => {
-    if (history.length === 0) {
+  const exportHistoryCSV = (itemsToExport?: HistoryItem[]) => {
+    const sourceItems = Array.isArray(itemsToExport) ? itemsToExport : history;
+    if (sourceItems.length === 0) {
       triggerVibration('error');
       return;
     }
     triggerVibration('success');
 
-    const headers = ['ID', 'Database ID', 'Sync Status', 'Type', 'Result', 'Details', 'Timestamp'];
-    const rows = history.map((item) => [
+    const headers = ['ID', 'Database ID', 'Sync Status', 'Type', 'Result', 'Details', 'Timestamp', 'Favorite'];
+    const rows = sourceItems.map((item) => [
       sanitizeCsvCell(item.id),
       sanitizeCsvCell(item.dbId || (item.syncStatus === 'synced' ? 'Synced' : 'Not in DB')),
       sanitizeCsvCell(item.syncStatus || (item.dbId ? 'synced' : 'local')),
@@ -1347,6 +1356,7 @@ export default function RetailCalc() {
       sanitizeCsvCell(item.result),
       sanitizeCsvCell(item.details),
       sanitizeCsvCell(item.timestamp),
+      sanitizeCsvCell(item.isFavorite ? 'Yes' : 'No'),
     ]);
 
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -1361,14 +1371,15 @@ export default function RetailCalc() {
     URL.revokeObjectURL(url);
   };
 
-  // Export History to PDF Handler (All Records)
-  const handleDownloadAllPDF = () => {
-    if (filteredHistory.length === 0) {
+  // Export History to PDF Handler (All or Filtered Records)
+  const handleDownloadAllPDF = (itemsToExport?: HistoryItem[]) => {
+    const sourceItems = Array.isArray(itemsToExport) ? itemsToExport : history;
+    if (sourceItems.length === 0) {
       triggerVibration('error');
       return;
     }
     triggerVibration('success');
-    exportAllHistoryPDF(filteredHistory);
+    exportAllHistoryPDF(sourceItems);
   };
 
   // Export Single History Item PDF Handler
@@ -2484,295 +2495,27 @@ export default function RetailCalc() {
                 </section>
               )}
 
-              {/* TAB 4 / HISTORY LIST */}
+              {/* TAB 4: REDESIGNED DATE-GROUPED CALCULATOR HISTORY */}
               {activeTab === 'history' && (
-                <section className="mt-4 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                      <Clock className="w-5 h-5 text-indigo-500" /> Calculation History
-                    </h3>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      {historyRefreshNotice && (
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          <span>{historyRefreshNotice}</span>
-                        </span>
-                      )}
-
-                      {history.length > 0 && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={handleDownloadAllPDF}
-                            className="text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/60 px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
-                            title="Download complete history as PDF report"
-                          >
-                            <FileText className="w-3.5 h-3.5 text-blue-600" />
-                            <span>Download PDF</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={handleRequestClearHistory}
-                            className="text-xs font-bold text-red-500 bg-red-50 hover:bg-red-100 px-3.5 py-2 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
-                            title="Clear all calculation history records"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Clear All</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={exportHistoryCSV}
-                            className="text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/60 px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
-                            title="Export history as CSV spreadsheet"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Export CSV</span>
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Search Bar for History */}
-                  {history.length > 0 && (
-                    <div className="relative">
-                      <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                      <input
-                        type="text"
-                        value={historySearch}
-                        onChange={(e) => setHistorySearch(e.target.value)}
-                        placeholder="Search history..."
-                        className="w-full bg-slate-50 border border-slate-200/80 rounded-2xl py-2.5 pl-10 pr-9 text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 transition-all"
-                      />
-                      {historySearch && (
-                        <button
-                          type="button"
-                          onClick={() => setHistorySearch('')}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  {history.length === 0 ? (
-                    <div className="bg-white border border-slate-100 rounded-3xl p-8 text-center shadow-sm">
-                      <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3 text-slate-300">
-                        <Clock className="w-6 h-6" />
-                      </div>
-                      <p className="text-sm text-slate-500 font-medium">No calculation history saved yet</p>
-                      <p className="text-xs text-slate-400 mt-1">
-                        Your calculated EMI rates, wishlist goals, and discounts will appear here.
-                      </p>
-                    </div>
-                  ) : filteredHistory.length === 0 ? (
-                    <div className="bg-white border border-slate-100 rounded-3xl p-8 text-center shadow-sm">
-                      <p className="text-sm text-slate-500 font-medium">No results matching &quot;{historySearch}&quot;</p>
-                      <button
-                        type="button"
-                        onClick={() => setHistorySearch('')}
-                        className="mt-2 text-xs text-indigo-600 font-bold hover:underline cursor-pointer"
-                      >
-                        Clear search filter
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                      <AnimatePresence>
-                        {filteredHistory.map((item) => {
-                          const itemSavings =
-                            item.savedAmount !== undefined
-                              ? item.savedAmount
-                              : parseSavedAmountFromText(item.type, item.details, item.result);
-
-                          return (
-                            <motion.div
-                              key={item.id}
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, scale: 0.95 }}
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => {
-                                triggerVibration('click');
-                                setPreviewHistoryItem(item);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  triggerVibration('click');
-                                  setPreviewHistoryItem(item);
-                                }
-                              }}
-                              className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between gap-3 hover:border-indigo-200 hover:shadow-md transition-all cursor-pointer group text-left"
-                              title="Click to inspect full calculation details & parameters"
-                            >
-                              <div className="flex items-start gap-3.5">
-                                <div
-                                  className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-105 ${
-                                    item.type === 'Age'
-                                      ? 'bg-rose-50 text-rose-600'
-                                      : item.type === 'Calculator'
-                                      ? 'bg-violet-50 text-violet-600'
-                                      : item.type === 'EMI'
-                                      ? 'bg-blue-50 text-blue-600'
-                                      : item.type === 'Wishlist'
-                                      ? 'bg-emerald-50 text-emerald-600'
-                                      : item.type === 'Discount'
-                                      ? 'bg-sky-50 text-sky-600'
-                                      : item.type === 'Weight'
-                                      ? 'bg-orange-50 text-orange-600'
-                                      : item.type === 'Currency'
-                                      ? 'bg-amber-50 text-amber-600'
-                                      : 'bg-purple-50 text-purple-600'
-                                  }`}
-                                >
-                                  {item.type === 'Age' && <CalendarDays className="w-5 h-5" />}
-                                  {item.type === 'Calculator' && <Calculator className="w-5 h-5" />}
-                                  {item.type === 'EMI' && <CreditCard className="w-5 h-5" />}
-                                  {item.type === 'Wishlist' && <Target className="w-5 h-5" />}
-                                  {item.type === 'Discount' && <Percent className="w-5 h-5" />}
-                                  {item.type === 'Weight' && <Scale className="w-5 h-5" />}
-                                  {item.type === 'Unit' && <ArrowRightLeft className="w-5 h-5" />}
-                                  {item.type === 'Currency' && <Coins className="w-5 h-5" />}
-                                </div>
-
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between gap-1.5 mb-1">
-                                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 bg-slate-100/80 px-1.5 py-0.5 rounded">
-                                      {item.type}
-                                    </span>
-                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 opacity-75 group-hover:opacity-100 transition-opacity ml-auto">
-                                      <Eye className="w-3 h-3" />
-                                      <span>Details</span>
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between items-start mb-1 gap-1">
-                                    <span className="font-bold text-slate-800 text-sm truncate leading-snug">
-                                      {item.result}
-                                    </span>
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                      <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-md">
-                                        {item.timestamp}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDownloadSinglePDF(item);
-                                        }}
-                                        className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-colors cursor-pointer"
-                                        title="Download PDF receipt for this calculation"
-                                        aria-label="Download PDF receipt"
-                                      >
-                                        <FileText className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => handleRequestDeleteItem(item, e)}
-                                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-100 transition-colors cursor-pointer"
-                                        title="Delete this calculation record"
-                                        aria-label="Delete this calculation record"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <p className="text-xs text-slate-500 line-clamp-2">{item.details}</p>
-                                </div>
-                              </div>
-
-                              {/* Database Save Status Indicator & Savings Tag */}
-                              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap text-[11px]">
-                                {/* Database Sync Indicator */}
-                                {item.syncStatus === 'synced' || item.dbId ? (
-                                  <div
-                                    className="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-md"
-                                    title="This record is successfully saved in the database"
-                                  >
-                                    <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
-                                    <span>
-                                      DB ID: <strong className="font-mono text-emerald-900">#{item.dbId || item.id}</strong>
-                                    </span>
-                                    <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-100/70 px-1 py-0.2 rounded">
-                                      ✓ Saved in DB
-                                    </span>
-                                  </div>
-                                ) : item.syncStatus === 'syncing' ? (
-                                  <div
-                                    className="inline-flex items-center gap-1 font-bold text-blue-700 bg-blue-50 border border-blue-200/80 px-2 py-0.5 rounded-md animate-pulse"
-                                    title="Currently saving to database..."
-                                  >
-                                    <Loader2 className="w-3 h-3 text-blue-600 animate-spin shrink-0" />
-                                    <span>Saving to DB...</span>
-                                  </div>
-                                ) : item.syncStatus === 'error' ? (
-                                  <div
-                                    className="inline-flex items-center gap-1 font-bold text-rose-700 bg-rose-50 border border-rose-200/80 px-2 py-0.5 rounded-md"
-                                    title="Database save failed"
-                                  >
-                                    <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
-                                    <span>Not Saved (DB Error)</span>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        retrySyncItem(item);
-                                      }}
-                                      className="ml-1 px-1.5 py-0.2 rounded text-[9px] bg-rose-200 hover:bg-rose-300 text-rose-900 font-black cursor-pointer transition-colors"
-                                      title="Retry saving to database"
-                                    >
-                                      Retry
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <div
-                                    className="inline-flex items-center gap-1 font-bold text-amber-700 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-md"
-                                    title={currentUser ? 'Stored on this local device' : 'Stored locally. Sign in to save to database.'}
-                                  >
-                                    <HardDrive className="w-3 h-3 text-amber-600 shrink-0" />
-                                    <span>Local Device Only</span>
-                                    {currentUser ? (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          retrySyncItem(item);
-                                        }}
-                                        className="ml-1 px-1.5 py-0.2 rounded text-[9px] bg-amber-200 hover:bg-amber-300 text-amber-900 font-black cursor-pointer transition-colors"
-                                        title="Save this record to cloud database"
-                                      >
-                                        Save to DB
-                                      </button>
-                                    ) : (
-                                      <span className="text-[9px] font-normal text-amber-600/80">(No DB ID)</span>
-                                    )}
-                                  </div>
-                                )}
-
-                                {/* Saved Amount pill if applicable */}
-                                {itemSavings > 0 && (
-                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/70 px-1.5 py-0.5 rounded-md ml-auto">
-                                    <span>
-                                      Saved: {currency}
-                                      {itemSavings.toLocaleString(undefined, {
-                                        minimumFractionDigits: 0,
-                                        maximumFractionDigits: 2,
-                                      })}
-                                    </span>
-                                  </span>
-                                )}
-                              </div>
-                            </motion.div>
-                          );
-                        })}
-                      </AnimatePresence>
-                    </div>
-                  )}
+                <section className="py-1">
+                  <HistoryView
+                    history={history}
+                    currency={currency}
+                    currentUser={currentUser}
+                    refreshNotice={historyRefreshNotice}
+                    onRefreshHistory={handleManualRefreshHistory}
+                    onInspectItem={(item) => {
+                      triggerVibration('click');
+                      setPreviewHistoryItem(item);
+                    }}
+                    onToggleFavorite={handleToggleFavoriteHistory}
+                    onRequestDeleteItem={(item) => handleRequestDeleteItem(item)}
+                    onRequestClearAll={handleRequestClearHistory}
+                    onDownloadSinglePDF={handleDownloadSinglePDF}
+                    onDownloadAllPDF={(items) => handleDownloadAllPDF(items)}
+                    onExportCSV={(items) => exportHistoryCSV(items)}
+                    onRetrySyncItem={retrySyncItem}
+                  />
                 </section>
               )}
 
@@ -2803,7 +2546,7 @@ export default function RetailCalc() {
                       setShowSignOutConfirm(true);
                     }}
                     onSyncHistory={handleSyncFromCloudSql}
-                    onExportCalculations={exportHistoryCSV}
+                    onExportCalculations={() => exportHistoryCSV()}
                     onBuildLocalBackup={() => ({
                       calculations: history,
                       notes: getLocalNotes(currentUser?.id),
