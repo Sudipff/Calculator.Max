@@ -1,12 +1,44 @@
-import { NoteItem, TaskItem, TaskList } from './types/notes-tasks';
+import { NoteItem, TaskItem, TaskList, TaskPriority } from './types/notes-tasks';
 import { createClient } from '@/utils/supabase/client';
 
 const NOTES_STORAGE_PREFIX = 'retailcalc_notes_';
 const TASKS_STORAGE_PREFIX = 'retailcalc_tasks_';
 const LISTS_STORAGE_PREFIX = 'retailcalc_lists_';
+const TASK_PRIORITIES_PREFIX = 'retailcalc_task_priorities_';
 
 function getStorageKey(prefix: string, userId?: string | null): string {
   return `${prefix}${userId ? userId : 'local_guest'}`;
+}
+
+function loadPriorityMap(userId?: string | null): Record<string, TaskPriority> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(getStorageKey(TASK_PRIORITIES_PREFIX, userId));
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePriorityMapFromTasks(tasks: TaskItem[], userId?: string | null) {
+  if (typeof window === 'undefined') return;
+  try {
+    const existing = loadPriorityMap(userId);
+    tasks.forEach((t) => {
+      if (t.priority) {
+        existing[t.id] = t.priority;
+      }
+    });
+    localStorage.setItem(getStorageKey(TASK_PRIORITIES_PREFIX, userId), JSON.stringify(existing));
+  } catch {
+    // Ignore storage quota notice
+  }
+}
+
+function resolveTaskPriority(task: Pick<TaskItem, 'id' | 'isStarred' | 'priority'>, map: Record<string, TaskPriority>): TaskPriority {
+  if (task.priority) return task.priority;
+  if (map[task.id]) return map[task.id];
+  return task.isStarred ? 'high' : 'medium';
 }
 
 // ----------------- DEFAULT SEED DATA (If empty) -----------------
@@ -60,6 +92,7 @@ const DEFAULT_TASKS: TaskItem[] = [
     description: 'Compare gross margins across fashion apparel vs electronics.',
     completed: false,
     isStarred: true,
+    priority: 'high',
     dueDate: new Date(Date.now() + 86400000 * 2).toISOString(),
     reminderAt: null,
     createdAt: new Date().toISOString(),
@@ -325,12 +358,15 @@ export async function deleteTaskListFromSupabase(listId: string, userId?: string
 export function getLocalTasks(userId?: string | null): TaskItem[] {
   if (typeof window === 'undefined') return [];
   try {
+    const pMap = loadPriorityMap(userId);
     const raw = localStorage.getItem(getStorageKey(TASKS_STORAGE_PREFIX, userId));
     if (raw) {
-      return JSON.parse(raw);
+      const parsed: TaskItem[] = JSON.parse(raw);
+      return parsed.map((t) => ({ ...t, priority: resolveTaskPriority(t, pMap) }));
     }
     const initial = DEFAULT_TASKS;
     localStorage.setItem(getStorageKey(TASKS_STORAGE_PREFIX, userId), JSON.stringify(initial));
+    savePriorityMapFromTasks(initial, userId);
     return initial;
   } catch {
     return [];
@@ -340,6 +376,7 @@ export function getLocalTasks(userId?: string | null): TaskItem[] {
 export function saveLocalTasks(tasks: TaskItem[], userId?: string | null) {
   if (typeof window === 'undefined') return;
   try {
+    savePriorityMapFromTasks(tasks, userId);
     localStorage.setItem(getStorageKey(TASKS_STORAGE_PREFIX, userId), JSON.stringify(tasks));
   } catch (e) {
     console.warn('LocalStorage save tasks warning:', e);
@@ -348,10 +385,12 @@ export function saveLocalTasks(tasks: TaskItem[], userId?: string | null) {
 
 export async function fetchTasks(userId?: string | null): Promise<TaskItem[]> {
   const local = getLocalTasks(userId);
+  const pMap = loadPriorityMap(userId);
 
   if (!userId) {
     return local.map((t) => ({
       ...t,
+      priority: resolveTaskPriority(t, pMap),
       syncStatus: 'unsynced' as const,
       subtasks: (t.subtasks || []).map((st) => ({ ...st, syncStatus: 'unsynced' as const })),
     }));
@@ -376,6 +415,7 @@ export async function fetchTasks(userId?: string | null): Promise<TaskItem[]> {
         description: t.description || '',
         completed: !!t.completed,
         isStarred: !!t.is_starred,
+        priority: resolveTaskPriority({ id: t.id, isStarred: !!t.is_starred }, pMap),
         dueDate: t.due_date || null,
         reminderAt: t.reminder_at || null,
         syncStatus: 'synced' as const,

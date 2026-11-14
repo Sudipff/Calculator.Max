@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CheckCircle2,
   Circle,
-  Star,
   Plus,
   Trash2,
   Calendar,
@@ -13,15 +13,19 @@ import {
   BellOff,
   ListTodo,
   ChevronDown,
-  ChevronRight,
+  ChevronUp,
   Check,
   X,
   FolderPlus,
   AlertTriangle,
   RotateCw,
   Square,
+  Search,
+  ArrowLeft,
+  FileText,
+  Flag,
 } from 'lucide-react';
-import { TaskItem, TaskList } from '@/lib/types/notes-tasks';
+import { TaskItem, TaskList, TaskPriority } from '@/lib/types/notes-tasks';
 import {
   fetchTasks,
   saveLocalTasks,
@@ -38,11 +42,62 @@ import { playReminderChime, sendDeviceNotification, requestNotificationPermissio
 interface TasksViewProps {
   currentUser: any;
   triggerVibration?: (type: 'success' | 'error' | 'click' | 'reset') => void;
+  onFullScreenChange?: (isFullscreen: boolean) => void;
+  closeEditorSignal?: number;
 }
+
+type TaskFilterTab = 'all' | 'active' | 'completed' | 'priority';
 
 const ALERTS_STORAGE_KEY = 'retailcalc_tasks_alerts_enabled';
 
-export default function TasksView({ currentUser }: TasksViewProps) {
+function resolvePriority(task: Pick<TaskItem, 'priority' | 'isStarred'>): TaskPriority {
+  if (task.priority === 'high' || task.priority === 'medium' || task.priority === 'low') {
+    return task.priority;
+  }
+  return task.isStarred ? 'high' : 'medium';
+}
+
+function getTaskCardSurface(priority: TaskPriority, completed: boolean): { bg: string; border: string } {
+  if (completed) {
+    return { bg: '#eaf3ff', border: '#d1e2fb' };
+  }
+  switch (priority) {
+    case 'high':
+      return { bg: '#fdebed', border: '#f7d0d5' };
+    case 'low':
+      return { bg: '#e7f6ec', border: '#cdebd7' };
+    case 'medium':
+    default:
+      return { bg: '#fbf3d5', border: '#efe2b0' };
+  }
+}
+
+function getPriorityBadgeConfig(priority: TaskPriority): { label: string; className: string } {
+  switch (priority) {
+    case 'high':
+      return { label: 'High', className: 'bg-[#ef6b73] text-white' };
+    case 'low':
+      return { label: 'Low', className: 'bg-[#a6e3b5] text-[#14532d]' };
+    case 'medium':
+    default:
+      return { label: 'Medium', className: 'bg-[#f3da6b] text-[#5c4204]' };
+  }
+}
+
+function formatDueDateShort(iso?: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+export default function TasksView({
+  currentUser,
+  triggerVibration,
+  onFullScreenChange,
+  closeEditorSignal = 0,
+}: TasksViewProps) {
+  const [isMounted, setIsMounted] = useState(false);
   const [taskLists, setTaskLists] = useState<TaskList[]>([]);
   const [activeListId, setActiveListId] = useState<string>('default-my-tasks');
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -50,9 +105,9 @@ export default function TasksView({ currentUser }: TasksViewProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
 
-  // Filter & UI states
-  const [onlyStarred, setOnlyStarred] = useState(false);
-  const [showCompleted, setShowCompleted] = useState(true);
+  // Search & Filter states
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState<TaskFilterTab>('all');
 
   // Batch Selection State (Activated by Long-Press)
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
@@ -66,20 +121,29 @@ export default function TasksView({ currentUser }: TasksViewProps) {
   // Reliable Notification Toggle State
   const [alertsEnabled, setAlertsEnabled] = useState<boolean>(true);
 
-  // Quick Task Input
+  // Quick Task Creator Modal (Triggered by Floating + FAB)
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDesc, setNewTaskDesc] = useState('');
   const [newTaskDueDate, setNewTaskDueDate] = useState('');
-  const [newTaskIsStarred, setNewTaskIsStarred] = useState(false);
-  const [isInputExpanded, setIsInputExpanded] = useState(false);
+  const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority>('medium');
+
+  // Full-Page Task Detail & Editor Modal
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
+  const [isEditingDetail, setIsEditingDetail] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [editDueDate, setEditDueDate] = useState('');
+  const [editPriority, setEditPriority] = useState<TaskPriority>('medium');
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(true);
+  const [isAddingSubtaskInDetail, setIsAddingSubtaskInDetail] = useState(false);
+  const [detailSubtaskTitle, setDetailSubtaskTitle] = useState('');
+  const [isAddingNoteInDetail, setIsAddingNoteInDetail] = useState(false);
+  const [detailQuickNote, setDetailQuickNote] = useState('');
 
   // New List Modal
   const [showNewListModal, setShowNewListModal] = useState(false);
   const [newListName, setNewListName] = useState('');
-
-  // Subtask creation state
-  const [addingSubtaskForId, setAddingSubtaskForId] = useState<string | null>(null);
-  const [subtaskTitle, setSubtaskTitle] = useState('');
 
   // Active Reminder In-App Banner
   const [activeAlert, setActiveAlert] = useState<{ id: string; title: string; due: string } | null>(null);
@@ -89,8 +153,8 @@ export default function TasksView({ currentUser }: TasksViewProps) {
   const isLongPressFiredRef = useRef<boolean>(false);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Initialize notification toggle preference
   useEffect(() => {
+    setIsMounted(true);
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem(ALERTS_STORAGE_KEY);
       if (stored !== null) {
@@ -98,6 +162,46 @@ export default function TasksView({ currentUser }: TasksViewProps) {
       }
     }
   }, []);
+
+  const detailTask = useMemo(
+    () => (detailTaskId ? tasks.find((t) => t.id === detailTaskId) || null : null),
+    [detailTaskId, tasks]
+  );
+
+  // Sync full-screen overlay flag with app/page.tsx for hardware Back button & scroll lock
+  useEffect(() => {
+    if (detailTask) {
+      onFullScreenChange?.(true);
+      const originalBodyOverflow = document.body.style.overflow;
+      const originalHtmlOverflow = document.documentElement.style.overflow;
+      document.body.style.overflow = 'hidden';
+      document.documentElement.style.overflow = 'hidden';
+
+      return () => {
+        onFullScreenChange?.(false);
+        document.body.style.overflow = originalBodyOverflow;
+        document.documentElement.style.overflow = originalHtmlOverflow;
+      };
+    } else {
+      onFullScreenChange?.(false);
+    }
+  }, [detailTask, onFullScreenChange]);
+
+  // Close overlays cleanly when hardware back button fires
+  useEffect(() => {
+    if (closeEditorSignal > 0) {
+      if (confirmDeleteTarget) {
+        setConfirmDeleteTarget(null);
+      } else if (detailTaskId) {
+        setDetailTaskId(null);
+        setIsEditingDetail(false);
+      } else if (isCreateModalOpen) {
+        setIsCreateModalOpen(false);
+      } else if (showNewListModal) {
+        setShowNewListModal(false);
+      }
+    }
+  }, [closeEditorSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch lists & tasks
   useEffect(() => {
@@ -120,7 +224,7 @@ export default function TasksView({ currentUser }: TasksViewProps) {
     return () => {
       isSubscribed = false;
     };
-  }, [currentUser]);
+  }, [currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Interval check for due tasks and reminder notifications
   useEffect(() => {
@@ -137,7 +241,7 @@ export default function TasksView({ currentUser }: TasksViewProps) {
             (task as any)._alerted = true;
             playReminderChime(false);
             sendDeviceNotification(`Task Due: ${task.title}`, {
-              body: task.description || 'Your scheduled Google Task reminder has arrived.',
+              body: task.description || 'Your scheduled task reminder has arrived.',
             });
             setActiveAlert({
               id: task.id,
@@ -151,6 +255,22 @@ export default function TasksView({ currentUser }: TasksViewProps) {
 
     return () => clearInterval(interval);
   }, [tasks, alertsEnabled]);
+
+  // Open Detail View for a task card
+  const openTaskDetail = (task: TaskItem) => {
+    const pri = resolvePriority(task);
+    setDetailTaskId(task.id);
+    setIsEditingDetail(false);
+    setEditTitle(task.title);
+    setEditDesc(task.description || '');
+    setEditPriority(pri);
+    setEditDueDate(task.dueDate ? new Date(task.dueDate).toISOString().slice(0, 16) : '');
+    setIsDescriptionExpanded(true);
+    setIsAddingSubtaskInDetail(false);
+    setDetailSubtaskTitle('');
+    setIsAddingNoteInDetail(false);
+    setDetailQuickNote('');
+  };
 
   // Long-press helpers for Tasks
   const handleStartLongPress = (id: string, clientX?: number, clientY?: number) => {
@@ -193,14 +313,14 @@ export default function TasksView({ currentUser }: TasksViewProps) {
       ]);
       setTaskLists(freshLists);
       setTasks(freshTasks);
-      setRefreshNotice('Tasks synchronized in real-time');
-      setTimeout(() => setRefreshNotice(null), 3000);
+      setRefreshNotice('Tasks synchronized');
+      setTimeout(() => setRefreshNotice(null), 2500);
     } catch (err) {
       console.warn('Manual tasks refresh notice:', err);
     } finally {
       setTimeout(() => {
         setIsRefreshing(false);
-      }, 500);
+      }, 450);
     }
   };
 
@@ -226,6 +346,15 @@ export default function TasksView({ currentUser }: TasksViewProps) {
     }
   };
 
+  // Reset Quick Create Modal
+  const resetCreateModal = () => {
+    setNewTaskTitle('');
+    setNewTaskDesc('');
+    setNewTaskDueDate('');
+    setNewTaskPriority('medium');
+    setIsCreateModalOpen(false);
+  };
+
   // Create Task with immediate Supabase real-time sync
   const handleCreateTask = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -239,7 +368,8 @@ export default function TasksView({ currentUser }: TasksViewProps) {
       title: newTaskTitle.trim(),
       description: newTaskDesc.trim(),
       completed: false,
-      isStarred: newTaskIsStarred,
+      isStarred: newTaskPriority === 'high',
+      priority: newTaskPriority,
       dueDate: newTaskDueDate ? new Date(newTaskDueDate).toISOString() : null,
       reminderAt: newTaskDueDate ? new Date(newTaskDueDate).toISOString() : null,
       syncStatus: currentUser?.id ? 'synced' : 'unsynced',
@@ -251,12 +381,8 @@ export default function TasksView({ currentUser }: TasksViewProps) {
     const updated = [newTask, ...tasks];
     setTasks(updated);
     saveLocalTasks(updated, currentUser?.id);
-
-    setNewTaskTitle('');
-    setNewTaskDesc('');
-    setNewTaskDueDate('');
-    setNewTaskIsStarred(false);
-    setIsInputExpanded(false);
+    triggerVibration?.('success');
+    resetCreateModal();
 
     if (currentUser?.id) {
       const res = await upsertTaskToSupabase(newTask, currentUser.id);
@@ -266,8 +392,84 @@ export default function TasksView({ currentUser }: TasksViewProps) {
     }
   };
 
+  // Save changes from Detail View
+  const handleSaveDetailChanges = async () => {
+    if (!detailTask || !editTitle.trim()) return;
+    const dueIso = editDueDate ? new Date(editDueDate).toISOString() : null;
+    const updatedTask: TaskItem = {
+      ...detailTask,
+      title: editTitle.trim(),
+      description: editDesc.trim(),
+      priority: editPriority,
+      isStarred: editPriority === 'high',
+      dueDate: dueIso,
+      reminderAt: dueIso,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const updated = tasks.map((t) => (t.id === detailTask.id ? updatedTask : t));
+    setTasks(updated);
+    saveLocalTasks(updated, currentUser?.id);
+    setIsEditingDetail(false);
+    triggerVibration?.('success');
+
+    if (currentUser?.id) {
+      const res = await upsertTaskToSupabase(updatedTask, currentUser.id);
+      setTasks((prev) => prev.map((t) => (t.id === detailTask.id ? { ...t, syncStatus: res.syncStatus } : t)));
+    }
+  };
+
+  // Append quick note in Detail View
+  const handleAppendNoteInDetail = async () => {
+    if (!detailTask || !detailQuickNote.trim()) return;
+    const combinedDesc = detailTask.description?.trim()
+      ? `${detailTask.description.trim()}\n\nNote: ${detailQuickNote.trim()}`
+      : detailQuickNote.trim();
+
+    const updatedTask: TaskItem = {
+      ...detailTask,
+      description: combinedDesc,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const updated = tasks.map((t) => (t.id === detailTask.id ? updatedTask : t));
+    setTasks(updated);
+    saveLocalTasks(updated, currentUser?.id);
+    setEditDesc(combinedDesc);
+    setDetailQuickNote('');
+    setIsAddingNoteInDetail(false);
+    setIsDescriptionExpanded(true);
+
+    if (currentUser?.id) {
+      const res = await upsertTaskToSupabase(updatedTask, currentUser.id);
+      setTasks((prev) => prev.map((t) => (t.id === detailTask.id ? { ...t, syncStatus: res.syncStatus } : t)));
+    }
+  };
+
+  // Update priority directly from Detail View
+  const handleChangeDetailPriority = async (nextPriority: TaskPriority) => {
+    setEditPriority(nextPriority);
+    if (!detailTask) return;
+
+    const updatedTask: TaskItem = {
+      ...detailTask,
+      priority: nextPriority,
+      isStarred: nextPriority === 'high',
+      updatedAt: new Date().toISOString(),
+    };
+    const updated = tasks.map((t) => (t.id === detailTask.id ? updatedTask : t));
+    setTasks(updated);
+    saveLocalTasks(updated, currentUser?.id);
+
+    if (currentUser?.id) {
+      const res = await upsertTaskToSupabase(updatedTask, currentUser.id);
+      setTasks((prev) => prev.map((t) => (t.id === detailTask.id ? { ...t, syncStatus: res.syncStatus } : t)));
+    }
+  };
+
   // Toggle Complete (Main Task) with real-time Supabase sync
-  const handleToggleComplete = async (taskId: string) => {
+  const handleToggleComplete = async (taskId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
     const updated = tasks.map((t) => {
       if (t.id === taskId) {
         const nextCompleted = !t.completed;
@@ -279,22 +481,7 @@ export default function TasksView({ currentUser }: TasksViewProps) {
 
     setTasks(updated);
     saveLocalTasks(updated, currentUser?.id);
-
-    const target = updated.find((t) => t.id === taskId);
-    if (target && currentUser?.id) {
-      const res = await upsertTaskToSupabase(target, currentUser.id);
-      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, syncStatus: res.syncStatus } : t)));
-    }
-  };
-
-  // Toggle Star (Priority Marking) with real-time Supabase sync
-  const handleToggleStar = async (taskId: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    const updated = tasks.map((t) =>
-      t.id === taskId ? { ...t, isStarred: !t.isStarred, updatedAt: new Date().toISOString() } : t
-    );
-    setTasks(updated);
-    saveLocalTasks(updated, currentUser?.id);
+    triggerVibration?.('click');
 
     const target = updated.find((t) => t.id === taskId);
     if (target && currentUser?.id) {
@@ -324,6 +511,9 @@ export default function TasksView({ currentUser }: TasksViewProps) {
       setTasks(updated);
       saveLocalTasks(updated, currentUser?.id);
       setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
+      if (detailTaskId === taskId) {
+        setDetailTaskId(null);
+      }
 
       if (currentUser?.id) {
         await deleteTaskFromSupabase(taskId, currentUser.id);
@@ -334,6 +524,9 @@ export default function TasksView({ currentUser }: TasksViewProps) {
       setTasks(updated);
       saveLocalTasks(updated, currentUser?.id);
       setSelectedTaskIds([]);
+      if (detailTaskId && idsToDelete.includes(detailTaskId)) {
+        setDetailTaskId(null);
+      }
 
       if (currentUser?.id) {
         await deleteTasksBatchFromSupabase(idsToDelete, currentUser.id);
@@ -353,7 +546,7 @@ export default function TasksView({ currentUser }: TasksViewProps) {
   };
 
   const handleSelectAll = () => {
-    const allFilteredIds = listTasks.map((t) => t.id);
+    const allFilteredIds = filteredTasks.map((t) => t.id);
     if (selectedTaskIds.length === allFilteredIds.length) {
       setSelectedTaskIds([]);
     } else {
@@ -366,15 +559,15 @@ export default function TasksView({ currentUser }: TasksViewProps) {
   };
 
   // Add Subtask with real-time Supabase sync
-  const handleAddSubtask = async (parentId: string) => {
-    if (!subtaskTitle.trim()) return;
+  const handleAddSubtask = async (parentId: string, titleValue: string) => {
+    if (!titleValue.trim()) return;
 
     const newSubtask: TaskItem = {
       id: 'sub-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       userId: currentUser?.id,
       listId: activeListId,
       parentId,
-      title: subtaskTitle.trim(),
+      title: titleValue.trim(),
       completed: false,
       isStarred: false,
       syncStatus: currentUser?.id ? 'synced' : 'unsynced',
@@ -395,8 +588,8 @@ export default function TasksView({ currentUser }: TasksViewProps) {
 
     setTasks(updated);
     saveLocalTasks(updated, currentUser?.id);
-    setSubtaskTitle('');
-    setAddingSubtaskForId(null);
+    setDetailSubtaskTitle('');
+    setIsAddingSubtaskInDetail(false);
 
     const parentTask = updated.find((t) => t.id === parentId);
     if (parentTask && currentUser?.id) {
@@ -490,55 +683,74 @@ export default function TasksView({ currentUser }: TasksViewProps) {
     }
   };
 
-  // Filter tasks by active list & stars
-  const listTasks = useMemo(() => {
-    return tasks.filter((t) => {
-      const matchStarred = onlyStarred ? t.isStarred : true;
-      const matchCategory = onlyStarred ? true : t.listId === activeListId || (!t.listId && activeListId === 'default-my-tasks');
-      return matchStarred && matchCategory;
-    });
-  }, [tasks, activeListId, onlyStarred]);
+  // Filter & sort tasks for compact multi-column grid
+  const filteredTasks = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const priorityRank: Record<TaskPriority, number> = { high: 0, medium: 1, low: 2 };
 
-  const activeTasks = useMemo(() => listTasks.filter((t) => !t.completed), [listTasks]);
-  const completedTasks = useMemo(() => listTasks.filter((t) => t.completed), [listTasks]);
+    return tasks
+      .filter((t) => {
+        const matchList = t.listId === activeListId || (!t.listId && activeListId === 'default-my-tasks');
+        if (!matchList) return false;
 
-  const activeListName = useMemo(() => {
-    if (onlyStarred) return 'Starred Tasks';
-    const found = taskLists.find((l) => l.id === activeListId);
-    return found ? found.name : 'My Tasks';
-  }, [taskLists, activeListId, onlyStarred]);
+        const pri = resolvePriority(t);
+        if (activeFilter === 'active' && t.completed) return false;
+        if (activeFilter === 'completed' && !t.completed) return false;
+        if (activeFilter === 'priority' && pri !== 'high') return false;
+
+        if (q !== '') {
+          const matchesSub = (t.subtasks || []).some((st) => st.title.toLowerCase().includes(q));
+          const matchText =
+            t.title.toLowerCase().includes(q) ||
+            (t.description || '').toLowerCase().includes(q) ||
+            pri.includes(q) ||
+            matchesSub;
+          if (!matchText) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        if (activeFilter === 'priority') {
+          const rankDiff = priorityRank[resolvePriority(a)] - priorityRank[resolvePriority(b)];
+          if (rankDiff !== 0) return rankDiff;
+        }
+        if (a.completed !== b.completed) return a.completed ? 1 : -1;
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      });
+  }, [tasks, activeListId, activeFilter, searchQuery]);
 
   return (
-    <div className="space-y-5 sm:space-y-6">
+    <div className="w-full max-w-full min-w-0 overflow-x-clip space-y-4 sm:space-y-5 pb-16">
       {/* Active In-App Reminder Alert Banner */}
       {activeAlert && (
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-4 rounded-3xl shadow-xl flex items-center justify-between gap-4 animate-in slide-in-from-top-4 duration-300">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
-              <Bell className="w-5 h-5 text-white animate-bounce" />
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-3.5 rounded-2xl shadow-lg flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+              <Bell className="w-4 h-4 text-white" />
             </div>
-            <div>
-              <div className="text-[11px] font-bold uppercase tracking-wider text-blue-200">
-                Scheduled Reminder • {activeAlert.due}
+            <div className="min-w-0">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-blue-100">
+                Reminder · {activeAlert.due}
               </div>
-              <div className="text-sm font-extrabold text-white">{activeAlert.title}</div>
+              <div className="text-xs sm:text-sm font-extrabold text-white truncate">{activeAlert.title}</div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
               onClick={() => {
                 handleToggleComplete(activeAlert.id);
                 setActiveAlert(null);
               }}
-              className="px-3 py-1.5 bg-white text-blue-700 font-bold text-xs rounded-xl hover:bg-blue-50 transition-colors shadow-xs cursor-pointer"
+              className="px-3 py-1.5 bg-white text-blue-700 font-bold text-xs rounded-xl hover:bg-blue-50 transition-colors cursor-pointer"
             >
-              Mark Done
+              Done
             </button>
             <button
               type="button"
               onClick={() => setActiveAlert(null)}
               className="p-1.5 hover:bg-white/20 rounded-lg text-white/80 hover:text-white cursor-pointer"
+              aria-label="Dismiss reminder"
             >
               <X className="w-4 h-4" />
             </button>
@@ -546,80 +758,150 @@ export default function TasksView({ currentUser }: TasksViewProps) {
         </div>
       )}
 
-      {/* Header Container with Notification Toggle and Corresponding Refresh Button Positioned to its Right */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 sm:p-6 rounded-3xl border border-slate-200/80 shadow-xs">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2.5">
-            <span className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
-              <ListTodo className="w-4 h-4" />
-            </span>
-            <span>Tasks Manager</span>
+      {/* Compact Title, Search & Filter Header matching Calculator Max Tasks Manager */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase truncate">
+            Tasks Manager
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            Google Tasks-style nested sub-tasks, priority stars &amp; long-press batch selection.
-          </p>
-        </div>
 
-        {/* Right Action Group: Notification Toggle + Refresh Button Positioned to its Right */}
-        <div className="flex items-center gap-2.5 flex-wrap">
-          {refreshNotice && (
-            <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
-              <Check className="w-3 h-3 text-emerald-600" />
-              <span>{refreshNotice}</span>
-            </span>
-          )}
-
-          {/* Reliable Interactive Notification Toggle Switch */}
-          <button
-            type="button"
-            id="tasks-notification-toggle-btn"
-            onClick={handleToggleAlerts}
-            className={`px-3.5 py-2 rounded-2xl text-xs font-bold border transition-all flex items-center gap-2.5 cursor-pointer shadow-xs active:scale-95 select-none ${
-              alertsEnabled
-                ? 'bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100'
-                : 'bg-slate-100 border-slate-300 text-slate-600 hover:bg-slate-200'
-            }`}
-            title={`Click to ${alertsEnabled ? 'disable' : 'enable'} task device alerts`}
-          >
-            {alertsEnabled ? (
-              <Bell className="w-4 h-4 text-emerald-600" />
-            ) : (
-              <BellOff className="w-4 h-4 text-slate-400" />
+          <div className="flex items-center gap-2 shrink-0">
+            {refreshNotice && (
+              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                <Check className="w-3 h-3 text-emerald-600" />
+                <span>{refreshNotice}</span>
+              </span>
             )}
 
-            <span>Alerts: {alertsEnabled ? 'ON' : 'OFF'}</span>
+            <button
+              type="button"
+              id="tasks-notification-toggle-btn"
+              onClick={handleToggleAlerts}
+              className={`px-2.5 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1.5 cursor-pointer select-none min-h-[36px] ${
+                alertsEnabled
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'
+                  : 'bg-white/90 border-slate-200 text-slate-600 hover:bg-slate-100'
+              }`}
+              title={`Click to ${alertsEnabled ? 'disable' : 'enable'} task device alerts`}
+            >
+              {alertsEnabled ? (
+                <Bell className="w-3.5 h-3.5 text-emerald-600" />
+              ) : (
+                <BellOff className="w-3.5 h-3.5 text-slate-400" />
+              )}
+              <span>{alertsEnabled ? 'Alerts On' : 'Alerts Off'}</span>
+            </button>
 
-            {/* Visual Sliding Switch Knob */}
-            <div
-              className={`w-9 h-5 flex items-center rounded-full p-0.5 transition-colors duration-200 ${
-                alertsEnabled ? 'bg-emerald-600' : 'bg-slate-300'
+            <button
+              type="button"
+              id="tasks-realtime-refresh-btn"
+              onClick={handleManualRefreshTasks}
+              disabled={isRefreshing}
+              className="w-9 h-9 rounded-full bg-white/90 hover:bg-blue-50 border border-slate-200/80 hover:border-blue-300 text-slate-600 hover:text-blue-700 flex items-center justify-center shadow-2xs transition-all cursor-pointer active:scale-90 disabled:opacity-50"
+              title="Refresh tasks in real-time"
+              aria-label="Refresh tasks"
+            >
+              <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Full-Width Search Bar */}
+        <div className="relative w-full">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search tasks..."
+            aria-label="Search tasks"
+            className="w-full min-h-[42px] bg-white/95 border border-slate-200/90 text-slate-900 font-medium text-xs sm:text-sm rounded-2xl py-2 pl-10 pr-9 shadow-[0_1px_4px_rgba(15,23,42,0.03)] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 cursor-pointer"
+              aria-label="Clear task search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Interactive Status & Priority Filter Bar: All, Active, Completed, Priority */}
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          {(
+            [
+              { id: 'all', label: 'All' },
+              { id: 'active', label: 'Active' },
+              { id: 'completed', label: 'Completed' },
+              { id: 'priority', label: 'Priority' },
+            ] as { id: TaskFilterTab; label: string }[]
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveFilter(tab.id)}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                activeFilter === tab.id
+                  ? 'bg-slate-900 text-white shadow-2xs font-bold'
+                  : 'bg-white/90 text-slate-700 hover:bg-slate-100 border border-slate-200/80'
               }`}
             >
-              <div
-                className={`bg-white w-4 h-4 rounded-full shadow-xs transform transition-transform duration-200 ${
-                  alertsEnabled ? 'translate-x-4' : 'translate-x-0'
-                }`}
-              />
-            </div>
-          </button>
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
-          {/* Corresponding Distinct Round Refresh Button Placed Specifically to the Right of the Alert Toggle */}
+        {/* Compact Task List Tabs Strip (Preserves custom list management) */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
+          {taskLists.map((list) => (
+            <div
+              key={list.id}
+              className={`shrink-0 inline-flex items-center rounded-xl text-[11px] font-bold transition-all ${
+                activeListId === list.id
+                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                  : 'bg-white/75 text-slate-600 hover:bg-slate-100 border border-slate-200/70'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setActiveListId(list.id)}
+                className={`py-1.5 cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                  !list.isDefault ? 'pl-2.5 pr-1' : 'px-2.5'
+                }`}
+              >
+                <span>{list.name}</span>
+              </button>
+              {!list.isDefault && (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteList(list.id)}
+                  className="mr-1.5 p-0.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
+                  aria-label={`Delete ${list.name} list`}
+                  title="Delete list"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          ))}
+
           <button
             type="button"
-            id="tasks-realtime-refresh-btn"
-            onClick={handleManualRefreshTasks}
-            disabled={isRefreshing}
-            className="w-10 h-10 rounded-full bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-700 flex items-center justify-center shadow-xs transition-all cursor-pointer active:scale-90 disabled:opacity-50"
-            title="Refresh tasks data in real-time (no page reload)"
+            onClick={() => setShowNewListModal(true)}
+            className="px-2.5 py-1.5 bg-slate-100/90 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1 whitespace-nowrap"
           >
-            <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
+            <FolderPlus className="w-3 h-3 text-blue-600" />
+            <span>+ List</span>
           </button>
         </div>
       </div>
 
-      {/* Floating or Top Batch Action Bar for Tasks (Activated by Long-Press) */}
+      {/* Floating Batch Action Bar when items are selected via Long-Press */}
       {selectedTaskIds.length > 0 && (
-        <div className="sticky top-3 z-30 bg-slate-900 text-white p-3 sm:p-4 rounded-3xl shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-200 border border-slate-700">
+        <div className="sticky top-14 z-30 bg-slate-900 text-white p-3 sm:p-4 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 border border-slate-700">
           <div className="flex items-center gap-2.5">
             <span className="w-7 h-7 rounded-xl bg-blue-600 text-white flex items-center justify-center text-xs font-black">
               {selectedTaskIds.length}
@@ -635,7 +917,7 @@ export default function TasksView({ currentUser }: TasksViewProps) {
               onClick={handleSelectAll}
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-colors cursor-pointer"
             >
-              {selectedTaskIds.length === listTasks.length ? 'Deselect All' : 'Select All'}
+              {selectedTaskIds.length === filteredTasks.length ? 'Deselect All' : 'Select All'}
             </button>
 
             <button
@@ -660,212 +942,472 @@ export default function TasksView({ currentUser }: TasksViewProps) {
         </div>
       )}
 
-      {/* Custom Lists Tabs & Starred Filter */}
-      <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 scrollbar-none">
-        <div className="flex items-center gap-1.5 min-w-0">
-          {/* Starred High-Priority Tab */}
-          <button
-            type="button"
-            onClick={() => setOnlyStarred(!onlyStarred)}
-            className={`px-3.5 py-2 rounded-2xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-              onlyStarred
-                ? 'bg-amber-500 text-white shadow-xs'
-                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-            }`}
-          >
-            <Star className={`w-3.5 h-3.5 ${onlyStarred ? 'fill-white text-white' : 'text-amber-500'}`} />
-            <span>Starred</span>
-          </button>
-
-          {/* User Custom Lists */}
-          {!onlyStarred &&
-            taskLists.map((list) => (
-              <div
-                key={list.id}
-                className={`relative group shrink-0 inline-flex items-center rounded-2xl text-xs font-bold transition-all ${
-                  activeListId === list.id
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => setActiveListId(list.id)}
-                  className={`py-2 cursor-pointer flex items-center gap-1.5 ${
-                    !list.isDefault ? 'pl-3.5 pr-1.5' : 'px-3.5'
-                  }`}
-                >
-                  <span>{list.name}</span>
-                </button>
-                {!list.isDefault && (
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteList(list.id)}
-                    className={`mr-2 p-0.5 rounded-md cursor-pointer transition-colors ${
-                      activeListId === list.id
-                        ? 'text-white/75 hover:text-white hover:bg-white/15'
-                        : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
-                    }`}
-                    aria-label={`Delete ${list.name} list`}
-                    title="Delete list"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-            ))}
-
-          {/* "+ New List" Button */}
-          {!onlyStarred && (
-            <button
-              type="button"
-              onClick={() => setShowNewListModal(true)}
-              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-2xl transition-all shrink-0 cursor-pointer flex items-center gap-1"
-            >
-              <FolderPlus className="w-3.5 h-3.5 text-blue-600" />
-              <span>+ New List</span>
-            </button>
-          )}
+      {/* Compact Multi-Column Task Grid */}
+      {loading ? (
+        <div className="py-12 text-center text-slate-400 text-sm font-semibold flex items-center justify-center gap-2">
+          <RotateCw className="w-4 h-4 animate-spin text-blue-500" />
+          <span>Loading your tasks...</span>
         </div>
-      </div>
-
-      {/* Main Task Creator & List Card */}
-      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-4 sm:p-6 space-y-5 sm:space-y-6">
-        {/* Active List Heading */}
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2">
-            <h3 className="text-lg font-black text-slate-900 tracking-tight">{activeListName}</h3>
-            <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-              {activeTasks.length} active
-            </span>
+      ) : filteredTasks.length === 0 ? (
+        <div className="py-14 text-center max-w-sm mx-auto space-y-3 bg-white/80 rounded-2xl border border-slate-200/70 p-6">
+          <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto border border-blue-100">
+            <ListTodo className="w-6 h-6" />
           </div>
+          <h3 className="text-sm font-bold text-slate-800">
+            {searchQuery || activeFilter !== 'all' ? 'No matching tasks' : 'No tasks in this list'}
+          </h3>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            {searchQuery || activeFilter !== 'all'
+              ? 'Try clearing your search or switching the active filter.'
+              : 'Tap the + button below to create a task with priority and due date.'}
+          </p>
         </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3.5 w-full min-w-0">
+          {filteredTasks.map((task) => renderTaskCard(task))}
+        </div>
+      )}
 
-        {/* Quick Task Creation Box (Google Tasks style) */}
-        <form
-          onSubmit={handleCreateTask}
-          className="bg-slate-50 border border-slate-200 rounded-2xl p-3 sm:p-4 transition-all focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-500"
+      {/* Floating Dark Circular + Action Button (Bottom Right above Bottom Nav) */}
+      {!detailTask && !isCreateModalOpen && selectedTaskIds.length === 0 && (
+        <button
+          type="button"
+          onClick={() => setIsCreateModalOpen(true)}
+          aria-label="Create new task"
+          title="New Task"
+          className="fixed bottom-20 right-4 sm:right-6 z-30 w-13 h-13 rounded-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white shadow-[0_8px_24px_rgba(15,23,42,0.28)] flex items-center justify-center transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         >
-          <div className="flex items-center gap-3">
-            <Plus className="w-5 h-5 text-blue-600 shrink-0" />
-            <input
-              type="text"
-              value={newTaskTitle}
-              onChange={(e) => {
-                setNewTaskTitle(e.target.value);
-                if (!isInputExpanded) setIsInputExpanded(true);
-              }}
-              onFocus={() => setIsInputExpanded(true)}
-              placeholder="Add a task..."
-              className="w-full bg-transparent font-medium text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => setNewTaskIsStarred(!newTaskIsStarred)}
-              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                newTaskIsStarred ? 'text-amber-500 bg-amber-50' : 'text-slate-300 hover:text-amber-500'
-              }`}
-              title="Star priority task"
-            >
-              <Star className={`w-4 h-4 ${newTaskIsStarred ? 'fill-amber-500' : ''}`} />
-            </button>
-          </div>
+          <Plus className="w-6 h-6" />
+        </button>
+      )}
 
-          {isInputExpanded && (
-            <div className="mt-3 pt-3 border-t border-slate-200/70 space-y-3">
+      {/* Quick Create Task Modal / Sheet */}
+      {isCreateModalOpen && isMounted && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[99990] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/50 backdrop-blur-xs"
+          onClick={resetCreateModal}
+        >
+          <form
+            data-task-card="true"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={handleCreateTask}
+            className="w-full max-w-lg bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 p-4 sm:p-6 space-y-4 max-h-[88dvh] overflow-y-auto"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-black text-slate-900">New Task</h3>
+              <button
+                type="button"
+                onClick={resetCreateModal}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+                aria-label="Close new task modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <input
+                type="text"
+                autoFocus
+                value={newTaskTitle}
+                onChange={(e) => setNewTaskTitle(e.target.value)}
+                placeholder="Task title (e.g. Finish Q3 Report)"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+              />
+
               <textarea
                 value={newTaskDesc}
                 onChange={(e) => setNewTaskDesc(e.target.value)}
-                placeholder="Details & notes..."
-                rows={2}
-                className="w-full bg-transparent text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none resize-none leading-relaxed"
+                placeholder="Description or quick note..."
+                rows={3}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 resize-none leading-relaxed"
               />
 
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2.5 py-1 text-xs text-slate-600">
-                    <Calendar className="w-3.5 h-3.5 text-blue-600" />
-                    <input
-                      type="datetime-local"
-                      value={newTaskDueDate}
-                      onChange={(e) => setNewTaskDueDate(e.target.value)}
-                      className="bg-transparent text-xs text-slate-700 font-medium focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsInputExpanded(false);
-                      setNewTaskTitle('');
-                      setNewTaskDesc('');
-                      setNewTaskDueDate('');
-                    }}
-                    className="px-3 py-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={!newTaskTitle.trim()}
-                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
-                  >
-                    Save Task
-                  </button>
+              {/* Priority Selector */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                  <Flag className="w-3.5 h-3.5" />
+                  <span>Priority</span>
+                </span>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['high', 'medium', 'low'] as TaskPriority[]).map((pri) => {
+                    const badge = getPriorityBadgeConfig(pri);
+                    const active = newTaskPriority === pri;
+                    return (
+                      <button
+                        key={pri}
+                        type="button"
+                        onClick={() => setNewTaskPriority(pri)}
+                        className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                          active
+                            ? 'border-slate-900 ring-2 ring-slate-900/15 bg-slate-900 text-white'
+                            : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        {badge.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            </div>
-          )}
-        </form>
 
-        {/* Task Items List */}
-        {loading ? (
-          <div className="py-8 text-center text-slate-400 text-xs font-semibold">
-            Loading your tasks...
-          </div>
-        ) : activeTasks.length === 0 && completedTasks.length === 0 ? (
-          <div className="py-12 text-center max-w-sm mx-auto space-y-2">
-            <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto">
-              <Check className="w-6 h-6" />
+              {/* Due Date & Reminder */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Due Date &amp; Reminder</span>
+                </span>
+                <input
+                  type="datetime-local"
+                  value={newTaskDueDate}
+                  onChange={(e) => setNewTaskDueDate(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
             </div>
-            <h4 className="text-sm font-bold text-slate-800">All tasks completed!</h4>
-            <p className="text-xs text-slate-500">
-              Nice work! Add a new task above or organize with custom lists.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {/* Active (Uncompleted) Tasks */}
-            {activeTasks.map((task) => renderTaskRow(task))}
 
-            {/* Completed Tasks Accordion */}
-            {completedTasks.length > 0 && (
-              <div className="pt-4 border-t border-slate-100">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={resetCreateModal}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!newTaskTitle.trim()}
+                className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl shadow-xs cursor-pointer transition-all"
+              >
+                Add Task
+              </button>
+            </div>
+          </form>
+        </div>,
+        document.body
+      )}
+
+      {/* FULL-SCREEN TASK DETAIL VIEW (Matching Reference Design Center Screen) */}
+      {detailTask && isMounted && typeof document !== 'undefined' && createPortal(
+        <div
+          data-task-card="true"
+          style={{
+            backgroundColor: getTaskCardSurface(resolvePriority(detailTask), detailTask.completed).bg,
+          }}
+          className="fixed inset-0 z-[99999] w-screen h-[100dvh] flex flex-col overscroll-none touch-manipulation"
+        >
+          {/* Minimal Detail Top Bar: < Back on left, Edit/Save + Delete on right */}
+          <div className="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-black/10 px-4 sm:px-6 py-3 flex items-center justify-between gap-2 shrink-0 pt-[max(0.75rem,env(safe-area-inset-top))]">
+            <button
+              type="button"
+              onClick={() => {
+                if (isEditingDetail) {
+                  handleSaveDetailChanges();
+                }
+                setDetailTaskId(null);
+              }}
+              className="w-10 h-10 rounded-full hover:bg-black/5 text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+              aria-label="Back to tasks"
+              title="Back to tasks"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={(e) => promptDeleteSingle(detailTask, e)}
+                className="w-10 h-10 rounded-full text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-colors cursor-pointer"
+                aria-label="Delete task"
+                title="Delete task"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+
+              {isEditingDetail ? (
                 <button
                   type="button"
-                  onClick={() => setShowCompleted(!showCompleted)}
-                  className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 py-1 cursor-pointer select-none"
+                  onClick={handleSaveDetailChanges}
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer transition-all"
                 >
-                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showCompleted ? '' : '-rotate-90'}`} />
-                  <span>Completed ({completedTasks.length})</span>
+                  Save
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsEditingDetail(true)}
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer transition-all"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Detail Body */}
+          <div className="flex-1 overflow-y-auto overscroll-contain w-full max-w-2xl mx-auto px-4 sm:px-6 py-5 space-y-4 pb-[max(2rem,env(safe-area-inset-bottom))]">
+            {/* Title, Checkbox & Metadata Row */}
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                <button
+                  type="button"
+                  onClick={(e) => handleToggleComplete(detailTask.id, e)}
+                  aria-label={detailTask.completed ? 'Mark task incomplete' : 'Mark task complete'}
+                  className="mt-1 shrink-0 cursor-pointer"
+                >
+                  {detailTask.completed ? (
+                    <span className="w-6 h-6 rounded-lg bg-slate-900 text-white flex items-center justify-center shadow-2xs">
+                      <Check className="w-4 h-4 stroke-[3]" />
+                    </span>
+                  ) : (
+                    <span className="w-6 h-6 rounded-lg border-2 border-slate-500 bg-white/90 flex items-center justify-center hover:border-slate-800" />
+                  )}
                 </button>
 
-                {showCompleted && (
-                  <div className="mt-2 space-y-1.5 pl-2 opacity-75">
-                    {completedTasks.map((task) => renderTaskRow(task))}
-                  </div>
+                {isEditingDetail ? (
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    placeholder="Task title"
+                    className="w-full bg-white/90 border border-slate-300 rounded-xl px-3 py-2 text-lg sm:text-2xl font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                ) : (
+                  <h2
+                    className={`text-xl sm:text-2xl font-black tracking-tight leading-snug break-words ${
+                      detailTask.completed ? 'line-through text-slate-500' : 'text-slate-900'
+                    }`}
+                  >
+                    {detailTask.title}
+                  </h2>
                 )}
               </div>
-            )}
+
+              {/* Priority Selector & Due Date Status */}
+              <div className="flex flex-wrap items-center gap-2 pl-9">
+                {(['high', 'medium', 'low'] as TaskPriority[]).map((pri) => {
+                  const currentPri = isEditingDetail ? editPriority : resolvePriority(detailTask);
+                  const badge = getPriorityBadgeConfig(pri);
+                  const isCurrent = currentPri === pri;
+                  return (
+                    <button
+                      key={pri}
+                      type="button"
+                      onClick={() => handleChangeDetailPriority(pri)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                        isCurrent
+                          ? `${badge.className} ring-2 ring-slate-900/20 shadow-2xs`
+                          : 'bg-white/75 text-slate-600 border border-black/10 hover:bg-white'
+                      }`}
+                    >
+                      {badge.label}
+                    </button>
+                  );
+                })}
+
+                {isEditingDetail ? (
+                  <input
+                    type="datetime-local"
+                    value={editDueDate}
+                    onChange={(e) => setEditDueDate(e.target.value)}
+                    className="bg-white/90 border border-slate-300 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-slate-800"
+                  />
+                ) : (
+                  detailTask.dueDate && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/80 text-slate-700 border border-black/10 text-[11px] font-semibold">
+                      <Clock className="w-3 h-3 text-slate-500" />
+                      <span>Due {formatDueDateShort(detailTask.dueDate)}</span>
+                    </span>
+                  )
+                )}
+
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold ${
+                    detailTask.completed
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-white/80 text-slate-700 border border-black/10'
+                  }`}
+                >
+                  {detailTask.completed ? 'Completed' : 'Active'}
+                </span>
+              </div>
+            </div>
+
+            {/* Collapsible Description Card */}
+            <div className="bg-white/90 rounded-2xl border border-black/10 shadow-2xs overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setIsDescriptionExpanded((prev) => !prev)}
+                className="w-full px-4 py-3 flex items-center justify-between text-left cursor-pointer hover:bg-black/[0.02]"
+              >
+                <span className="text-xs font-extrabold text-slate-900">Description</span>
+                {isDescriptionExpanded ? (
+                  <ChevronUp className="w-4 h-4 text-slate-500" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-slate-500" />
+                )}
+              </button>
+
+              {isDescriptionExpanded && (
+                <div className="px-4 pb-3.5 pt-0.5">
+                  {isEditingDetail ? (
+                    <textarea
+                      value={editDesc}
+                      onChange={(e) => setEditDesc(e.target.value)}
+                      rows={4}
+                      placeholder="Add detailed task description or notes..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs sm:text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none leading-relaxed"
+                    />
+                  ) : (
+                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">
+                      {detailTask.description?.trim() || 'No description added yet. Tap Edit or Add note below.'}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Subtasks Interactive Section */}
+            <div className="bg-white/90 rounded-2xl border border-black/10 shadow-2xs overflow-hidden">
+              {(detailTask.subtasks || []).length > 0 && (
+                <div className="px-4 pt-3 pb-2 space-y-2 border-b border-slate-100">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                    Subtasks ({(detailTask.subtasks || []).filter((s) => s.completed).length}/
+                    {(detailTask.subtasks || []).length})
+                  </div>
+                  {(detailTask.subtasks || []).map((sub) => (
+                    <div key={sub.id} className="flex items-center justify-between gap-2 py-1">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleSubtask(detailTask.id, sub.id)}
+                          className="text-slate-500 hover:text-blue-600 cursor-pointer shrink-0"
+                        >
+                          {sub.completed ? (
+                            <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                          ) : (
+                            <Circle className="w-4 h-4" />
+                          )}
+                        </button>
+                        <span
+                          className={`text-xs sm:text-sm truncate ${
+                            sub.completed ? 'line-through text-slate-400' : 'text-slate-800 font-medium'
+                          }`}
+                        >
+                          {sub.title}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSubtask(detailTask.id, sub.id)}
+                        className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer shrink-0"
+                        title="Delete subtask"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {isAddingSubtaskInDetail ? (
+                <div className="p-3 flex items-center gap-2">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={detailSubtaskTitle}
+                    onChange={(e) => setDetailSubtaskTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddSubtask(detailTask.id, detailSubtaskTitle);
+                      }
+                    }}
+                    placeholder="Subtask title..."
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleAddSubtask(detailTask.id, detailSubtaskTitle)}
+                    className="px-3.5 py-2 bg-slate-900 text-white font-bold text-xs rounded-xl cursor-pointer"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingSubtaskInDetail(false)}
+                    className="p-2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingSubtaskInDetail(true);
+                    setDetailSubtaskTitle('');
+                  }}
+                  className="w-full px-4 py-3 flex items-center gap-2.5 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-black/[0.02] cursor-pointer"
+                >
+                  <Plus className="w-4 h-4 text-slate-600" />
+                  <span>Add subtask</span>
+                </button>
+              )}
+            </div>
+
+            {/* Add Note Action Row */}
+            <div className="bg-white/90 rounded-2xl border border-black/10 shadow-2xs overflow-hidden">
+              {isAddingNoteInDetail ? (
+                <div className="p-3 space-y-2">
+                  <textarea
+                    autoFocus
+                    value={detailQuickNote}
+                    onChange={(e) => setDetailQuickNote(e.target.value)}
+                    rows={2}
+                    placeholder="Write a quick note for this task..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingNoteInDetail(false)}
+                      className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAppendNoteInDetail}
+                      disabled={!detailQuickNote.trim()}
+                      className="px-3.5 py-1.5 bg-slate-900 disabled:opacity-40 text-white font-bold text-xs rounded-lg cursor-pointer"
+                    >
+                      Save Note
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingNoteInDetail(true);
+                    setDetailQuickNote('');
+                  }}
+                  className="w-full px-4 py-3 flex items-center gap-2.5 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-black/[0.02] cursor-pointer"
+                >
+                  <FileText className="w-4 h-4 text-slate-600" />
+                  <span>Add note</span>
+                </button>
+              )}
+            </div>
           </div>
-        )}
-      </div>
+        </div>,
+        document.body
+      )}
 
       {/* New List Modal */}
-      {showNewListModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+      {showNewListModal && isMounted && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[99995] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
           <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
             <h3 className="text-lg font-black text-slate-900">Create new list</h3>
             <div>
@@ -897,18 +1439,19 @@ export default function TasksView({ currentUser }: TasksViewProps) {
                 type="button"
                 onClick={handleCreateList}
                 disabled={!newListName.trim()}
-                className="px-5 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl shadow-xs cursor-pointer"
+                className="px-5 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-xl shadow-xs cursor-pointer"
               >
                 Done
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* EXPLICIT CONFIRMATION DIALOG (DELETION SAFEGUARD FOR TASKS) */}
-      {confirmDeleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+      {confirmDeleteTarget && isMounted && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
           <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 border border-rose-100">
@@ -977,20 +1520,29 @@ export default function TasksView({ currentUser }: TasksViewProps) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
 
-  function renderTaskRow(task: TaskItem) {
-    const isAddingSub = addingSubtaskForId === task.id;
+  function renderTaskCard(task: TaskItem) {
+    const priority = resolvePriority(task);
+    const surface = getTaskCardSurface(priority, task.completed);
+    const badge = getPriorityBadgeConfig(priority);
+    const dueLabel = formatDueDateShort(task.dueDate || task.reminderAt);
+    const isOverdue =
+      !task.completed && (task.dueDate || task.reminderAt)
+        ? new Date(task.dueDate || task.reminderAt!).getTime() < Date.now()
+        : false;
     const subtaskCount = task.subtasks?.length || 0;
-    const completedSubtaskCount = (task.subtasks || []).filter((s) => s.completed).length;
+    const completedSubCount = (task.subtasks || []).filter((s) => s.completed).length;
     const isSelected = selectedTaskIds.includes(task.id);
 
     return (
-      <div
+      <article
         key={task.id}
+        data-task-card="true"
         onTouchStart={(e) => handleStartLongPress(task.id, e.touches[0]?.clientX, e.touches[0]?.clientY)}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleCancelLongPress}
@@ -1004,229 +1556,115 @@ export default function TasksView({ currentUser }: TasksViewProps) {
           }
           if (selectedTaskIds.length > 0) {
             handleToggleSelectTask(task.id, e);
+          } else {
+            openTaskDetail(task);
           }
         }}
-        className={`group border-2 rounded-2xl p-3 sm:p-3.5 transition-all select-none ${
-          isSelected
-            ? 'border-blue-500 bg-blue-50/50 ring-2 ring-blue-400 shadow-sm'
-            : task.completed
-            ? 'border-slate-200/80 bg-slate-50/60'
-            : 'border-slate-200/80 bg-white hover:border-slate-300 hover:shadow-xs'
+        style={{
+          backgroundColor: surface.bg,
+          borderColor: isSelected ? '#2563eb' : surface.border,
+        }}
+        className={`group relative rounded-2xl p-3 sm:p-3.5 border transition-all duration-150 hover:shadow-md hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between min-h-[124px] sm:min-h-[136px] shadow-[0_2px_8px_rgba(15,23,42,0.04)] select-none overflow-hidden ${
+          isSelected ? 'ring-2 ring-blue-500 shadow-md scale-[1.01]' : ''
         }`}
       >
-        <div className="flex items-start justify-between gap-3">
-          {/* Batch Selection Checkbox, Checkbox and Title */}
-          <div className="flex items-start gap-3 flex-1 min-w-0">
-            {/* Batch Selection Checkbox shown when in selection mode */}
-            {selectedTaskIds.length > 0 && (
+        {/* Top Section: Checkbox + Concise Title + Preview */}
+        <div className="min-w-0 space-y-1.5">
+          <div className="flex items-start gap-2">
+            {selectedTaskIds.length > 0 ? (
               <button
                 type="button"
                 onClick={(e) => handleToggleSelectTask(task.id, e)}
-                className={`mt-0.5 text-blue-600 shrink-0 cursor-pointer hover:scale-110 transition-transform ${
-                  isSelected ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'
+                aria-label={isSelected ? 'Deselect task' : 'Select task'}
+                className={`mt-0.5 shrink-0 cursor-pointer transition-transform hover:scale-110 ${
+                  isSelected ? 'text-blue-600' : 'text-slate-500 hover:text-slate-700'
                 }`}
-                title={isSelected ? 'Deselect task' : 'Select task'}
               >
                 {isSelected ? (
-                  <CheckCircle2 className="w-5 h-5 fill-blue-600 text-white" />
+                  <CheckCircle2 className="w-4.5 h-4.5 fill-blue-600 text-white" />
                 ) : (
-                  <Square className="w-5 h-5 bg-white rounded-md" />
+                  <Square className="w-4.5 h-4.5 bg-white/90 rounded-sm" />
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => handleToggleComplete(task.id, e)}
+                aria-label={task.completed ? 'Mark task incomplete' : 'Mark task complete'}
+                className="w-7 h-7 -ml-1 -mt-1 rounded-md flex items-center justify-center shrink-0 cursor-pointer active:scale-90 transition-transform"
+              >
+                {task.completed ? (
+                  <span className="w-5 h-5 rounded-md bg-slate-900 text-white flex items-center justify-center shadow-2xs">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  </span>
+                ) : (
+                  <span className="w-5 h-5 rounded-md border-[1.75px] border-slate-500/80 bg-white/85 hover:border-slate-800 transition-colors" />
                 )}
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleToggleComplete(task.id);
-              }}
-              className="mt-0.5 text-slate-400 hover:text-blue-600 transition-colors shrink-0 cursor-pointer"
+            <h4
+              className={`font-bold text-[13px] sm:text-sm tracking-tight leading-snug line-clamp-2 break-words min-w-0 flex-1 ${
+                task.completed ? 'line-through text-slate-500' : 'text-slate-900'
+              }`}
             >
-              {task.completed ? (
-                <CheckCircle2 className="w-5 h-5 text-blue-600" />
-              ) : (
-                <Circle className="w-5 h-5 hover:scale-105" />
-              )}
-            </button>
-
-            <div className="min-w-0 flex-1">
-              <div
-                className={`text-sm font-bold tracking-tight leading-snug break-words ${
-                  task.completed ? 'line-through text-slate-400 font-normal' : 'text-slate-900'
-                }`}
-              >
-                {task.title}
-              </div>
-
-              {task.description && (
-                <p className="text-xs text-slate-500 mt-0.5 line-clamp-2 leading-relaxed">
-                  {task.description}
-                </p>
-              )}
-
-              {/* Due date & Reminder tags */}
-              {(task.dueDate || task.reminderAt) && (
-                <div className="flex items-center gap-2 mt-1.5">
-                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
-                    <Calendar className="w-3 h-3 text-blue-600" />
-                    <span>
-                      {new Date(task.dueDate || task.reminderAt!).toLocaleString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
-                  </span>
-                </div>
-              )}
-            </div>
+              {task.title}
+            </h4>
           </div>
 
-          {/* Sync Status Badge, Star Priority & Safe Delete Action */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            {/* Visual Sync Status Indicator for Task */}
-            {task.syncStatus === 'synced' ? (
+          {/* Concise Preview Line (Description or Due Date) */}
+          <div className="pl-7 space-y-0.5">
+            {task.description && (
+              <p className="text-[11px] text-slate-600 line-clamp-1 leading-snug">
+                {task.description}
+              </p>
+            )}
+            <div
+              className={`text-[11px] font-medium truncate ${
+                isOverdue ? 'text-rose-700 font-semibold' : 'text-slate-600'
+              }`}
+            >
+              {dueLabel ? `${isOverdue ? 'Overdue' : 'Due'} ${dueLabel}` : 'No due date'}
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom Row: Priority Badge + Status Indicator */}
+        <div className="pt-2.5 mt-auto pl-7 flex items-center justify-between gap-1.5 min-w-0">
+          <span
+            className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-bold shrink-0 ${badge.className}`}
+          >
+            {badge.label}
+          </span>
+
+          <div className="flex items-center gap-1 text-[10px] font-bold shrink-0">
+            {task.completed ? (
+              <span className="inline-flex items-center gap-0.5 text-emerald-700">
+                <CheckCircle2 className="w-3 h-3" />
+                <span>Done</span>
+              </span>
+            ) : subtaskCount > 0 ? (
+              <span className="inline-flex items-center gap-0.5 text-slate-600 tabular-nums">
+                <ListTodo className="w-3 h-3" />
+                <span>
+                  {completedSubCount}/{subtaskCount}
+                </span>
+              </span>
+            ) : task.reminderAt || task.dueDate ? (
               <span
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs select-none"
-                title="Synced to cloud database"
+                className={`inline-flex items-center gap-0.5 ${
+                  isOverdue ? 'text-rose-600' : 'text-slate-500'
+                }`}
+                title={isOverdue ? 'Overdue task' : 'Scheduled task'}
               >
-                <Check className="w-3 h-3 text-emerald-600 stroke-[3]" />
-                <span className="hidden sm:inline">Synced</span>
+                <Bell className="w-3 h-3" />
               </span>
             ) : (
-              <span
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-300 shadow-2xs select-none"
-                title={currentUser?.id ? "Local copy (sync pending)" : "Local storage only"}
-              >
-                <X className="w-3 h-3 text-rose-600 stroke-[3]" />
-                <span className="hidden sm:inline">Unsynced</span>
-              </span>
+              <span className="text-slate-500 font-semibold">Active</span>
             )}
-
-            {/* Star Priority Button */}
-            <button
-              type="button"
-              onClick={(e) => handleToggleStar(task.id, e)}
-              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                task.isStarred
-                  ? 'text-amber-500 bg-amber-50 ring-1 ring-amber-300'
-                  : 'text-slate-300 hover:text-amber-500 opacity-60 group-hover:opacity-100'
-              }`}
-              title="Toggle priority star"
-            >
-              <Star className={`w-4 h-4 ${task.isStarred ? 'fill-amber-500' : ''}`} />
-            </button>
-
-            {/* Safe Delete Task Button (triggers confirmation dialog) */}
-            <button
-              type="button"
-              onClick={(e) => promptDeleteSingle(task, e)}
-              className="p-1.5 text-slate-300 hover:text-rose-500 rounded-lg hover:bg-rose-50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-              title="Delete task permanently"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
           </div>
         </div>
-
-        {/* Sub-tasks Section */}
-        <div className="mt-2.5 pl-8 space-y-1.5 border-t border-slate-100 pt-2">
-          {/* Subtask list */}
-          {task.subtasks && task.subtasks.length > 0 && (
-            <div className="space-y-1">
-              <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1">
-                <span>Sub-tasks</span>
-                <span className="text-blue-600 font-bold">
-                  ({completedSubtaskCount}/{subtaskCount})
-                </span>
-              </div>
-              {task.subtasks.map((sub) => (
-                <div
-                  key={sub.id}
-                  className="flex items-center justify-between gap-2 py-0.5 group/sub text-xs"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <button
-                      type="button"
-                      onClick={() => handleToggleSubtask(task.id, sub.id)}
-                      className="text-slate-400 hover:text-blue-600 cursor-pointer"
-                    >
-                      {sub.completed ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
-                      ) : (
-                        <Circle className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                    <span
-                      className={`truncate ${
-                        sub.completed ? 'line-through text-slate-400' : 'text-slate-700 font-medium'
-                      }`}
-                    >
-                      {sub.title}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteSubtask(task.id, sub.id)}
-                    className="text-slate-300 hover:text-rose-500 p-0.5 opacity-0 group-hover/sub:opacity-100 transition-opacity cursor-pointer"
-                    title="Delete subtask"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Add Subtask input / toggle */}
-          {isAddingSub ? (
-            <div className="flex items-center gap-1.5 pt-1">
-              <input
-                type="text"
-                autoFocus
-                value={subtaskTitle}
-                onChange={(e) => setSubtaskTitle(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddSubtask(task.id);
-                  }
-                }}
-                placeholder="Sub-task title (Enter to add)"
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              <button
-                type="button"
-                onClick={() => handleAddSubtask(task.id)}
-                className="px-2.5 py-1 bg-blue-600 text-white font-bold text-xs rounded-lg shrink-0 cursor-pointer"
-              >
-                Add
-              </button>
-              <button
-                type="button"
-                onClick={() => setAddingSubtaskForId(null)}
-                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setAddingSubtaskForId(task.id);
-                setSubtaskTitle('');
-              }}
-              className="text-[11px] font-bold text-slate-500 hover:text-blue-600 transition-colors flex items-center gap-1 py-0.5 cursor-pointer"
-            >
-              <Plus className="w-3 h-3" />
-              <span>Add sub-task</span>
-            </button>
-          )}
-        </div>
-      </div>
+      </article>
     );
   }
 }

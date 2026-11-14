@@ -166,12 +166,15 @@ html[data-theme='dark'] .text-slate-500 {
   color: #cbd5e1 !important;
 }
 
-/* Preserve dark high-contrast typography inside pastel dashboard tiles & note cards */
+/* Preserve dark high-contrast typography inside pastel dashboard tiles, note cards & task cards */
 html[data-theme='dark'] [class*="bg-[#"] .text-slate-900,
 html[data-theme='dark'] [class*="bg-[#"] .text-slate-800,
 html[data-theme='dark'] [data-note-card="true"] .text-slate-950,
 html[data-theme='dark'] [data-note-card="true"] .text-slate-900,
-html[data-theme='dark'] [data-note-card="true"] .text-slate-800 {
+html[data-theme='dark'] [data-note-card="true"] .text-slate-800,
+html[data-theme='dark'] [data-task-card="true"] .text-slate-950,
+html[data-theme='dark'] [data-task-card="true"] .text-slate-900,
+html[data-theme='dark'] [data-task-card="true"] .text-slate-800 {
   color: #0f172a !important;
 }
 
@@ -179,8 +182,35 @@ html[data-theme='dark'] [class*="bg-[#"] .text-slate-600,
 html[data-theme='dark'] [class*="bg-[#"] .text-slate-500,
 html[data-theme='dark'] [data-note-card="true"] .text-slate-700,
 html[data-theme='dark'] [data-note-card="true"] .text-slate-600,
-html[data-theme='dark'] [data-note-card="true"] .text-slate-500 {
+html[data-theme='dark'] [data-note-card="true"] .text-slate-500,
+html[data-theme='dark'] [data-task-card="true"] .text-slate-700,
+html[data-theme='dark'] [data-task-card="true"] .text-slate-600,
+html[data-theme='dark'] [data-task-card="true"] .text-slate-500 {
   color: #334155 !important;
+}
+
+/* Keep internal panels, dropdowns, toolbars, and inputs legible inside pastel note/task views in dark mode */
+html[data-theme='dark'] [data-note-card="true"] header,
+html[data-theme='dark'] [data-note-card="true"] .bg-white,
+html[data-theme='dark'] [data-note-card="true"] .bg-white\/95,
+html[data-theme='dark'] [data-note-card="true"] .bg-white\/90,
+html[data-theme='dark'] [data-note-card="true"] .bg-white\/85,
+html[data-theme='dark'] [data-note-card="true"] .bg-white\/80,
+html[data-theme='dark'] [data-task-card="true"] header,
+html[data-theme='dark'] [data-task-card="true"] .bg-white,
+html[data-theme='dark'] [data-task-card="true"] .bg-white\/95,
+html[data-theme='dark'] [data-task-card="true"] .bg-white\/90,
+html[data-theme='dark'] [data-task-card="true"] .bg-white\/85,
+html[data-theme='dark'] [data-task-card="true"] .bg-white\/80 {
+  background-color: rgba(255, 255, 255, 0.94) !important;
+  border-color: rgba(15, 23, 42, 0.12) !important;
+  color: #0f172a !important;
+}
+
+html[data-theme='dark'] [data-note-card="true"] .bg-slate-900,
+html[data-theme='dark'] [data-task-card="true"] .bg-slate-900 {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
 }
 
 html[data-theme='dark'] input,
@@ -189,6 +219,22 @@ html[data-theme='dark'] select {
   background-color: #0f172a !important;
   color: #f8fafc !important;
   border-color: #334155 !important;
+}
+
+html[data-theme='dark'] [data-note-card="true"] input:not([type="checkbox"]),
+html[data-theme='dark'] [data-note-card="true"] textarea,
+html[data-theme='dark'] [data-task-card="true"] input:not([type="checkbox"]),
+html[data-theme='dark'] [data-task-card="true"] textarea {
+  background-color: transparent !important;
+  color: #0f172a !important;
+  border-color: rgba(15, 23, 42, 0.16) !important;
+}
+
+html[data-theme='dark'] [data-note-card="true"] .bg-slate-50,
+html[data-theme='dark'] [data-task-card="true"] .bg-slate-50 {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
 }
 
 html[data-theme='dark'] input::placeholder,

@@ -21,8 +21,9 @@ import {
   Check,
   ArrowLeft,
   CheckCircle2,
+  MoreVertical,
 } from 'lucide-react';
-import { NoteItem, ChecklistItem, NOTE_COLORS } from '@/lib/types/notes-tasks';
+import { NoteItem, NOTE_COLORS } from '@/lib/types/notes-tasks';
 import {
   fetchNotes,
   saveLocalNotes,
@@ -115,30 +116,18 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
   >(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Quick Creator Modal / Sheet states
-  const [isEditorExpanded, setIsEditorExpanded] = useState(false);
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [color, setColor] = useState('default');
-  const [isPinned, setIsPinned] = useState(false);
-  const [isChecklist, setIsChecklist] = useState(false);
-  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
-  const [newChecklistText, setNewChecklistText] = useState('');
-  const [labels, setLabels] = useState<string[]>([]);
-  const [newTagInput, setNewTagInput] = useState('');
-  const [showTagInput, setShowTagInput] = useState(false);
-  const [reminderAt, setReminderAt] = useState<string>('');
-  const [isEmergency, setIsEmergency] = useState(false);
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showReminderPicker, setShowReminderPicker] = useState(false);
-
-  // Full-Page View state
+  // Unified Full-Page Note Editing View State
   const [editingNote, setEditingNote] = useState<NoteItem | null>(null);
+  const [isNewDraft, setIsNewDraft] = useState(false);
+  const [hasSavedCurrentNote, setHasSavedCurrentNote] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [showThreeDotMenu, setShowThreeDotMenu] = useState(false);
+  const [checklistDraftItem, setChecklistDraftItem] = useState('');
   const [fullPageNewTag, setFullPageNewTag] = useState('');
   const [showFullPageTagInput, setShowFullPageTagInput] = useState(false);
   const [showFullPageReminder, setShowFullPageReminder] = useState(false);
 
-  const editorRef = useRef<HTMLDivElement>(null);
+  const threeDotMenuRef = useRef<HTMLDivElement>(null);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isLongPressFiredRef = useRef<boolean>(false);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -148,7 +137,19 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
     setIsMounted(true);
   }, []);
 
-  // Layout Optimization: Prevent Background Scrolling and Hide Main Header when Full-Page View is active
+  // Close three-dot palette popover when clicking outside
+  useEffect(() => {
+    if (!showThreeDotMenu) return;
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (threeDotMenuRef.current && !threeDotMenuRef.current.contains(event.target as Node)) {
+        setShowThreeDotMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [showThreeDotMenu]);
+
+  // Layout Optimization: Prevent Background Scrolling and Hide Main Header when Note Editing View is active
   useEffect(() => {
     if (editingNote) {
       onFullScreenChange?.(true);
@@ -174,15 +175,15 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
     }
   }, [editingNote, onFullScreenChange]);
 
-  const handleSaveEditedNoteRef = useRef<(() => void) | null>(null);
+  const handleCloseEditorRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (closeEditorSignal > 0) {
       if (confirmDeleteTarget) {
         setConfirmDeleteTarget(null);
+      } else if (showThreeDotMenu) {
+        setShowThreeDotMenu(false);
       } else if (editingNote) {
-        handleSaveEditedNoteRef.current?.();
-      } else if (isEditorExpanded) {
-        setIsEditorExpanded(false);
+        handleCloseEditorRef.current?.();
       }
     }
   }, [closeEditorSignal]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -273,58 +274,57 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
     }
   };
 
-  const resetEditor = () => {
-    setTitle('');
-    setContent('');
-    setColor('default');
-    setIsPinned(false);
-    setIsChecklist(false);
-    setChecklistItems([]);
-    setNewChecklistText('');
-    setLabels([]);
-    setReminderAt('');
-    setIsEmergency(false);
-    setShowTagInput(false);
-    setShowColorPicker(false);
-    setShowReminderPicker(false);
-    setIsEditorExpanded(false);
-  };
-
-  const handleCreateNote = async () => {
-    if (!title.trim() && !content.trim() && checklistItems.length === 0) {
-      resetEditor();
-      return;
-    }
-
-    const newNote: NoteItem = {
+  const openNewNoteEditor = () => {
+    const nowIso = new Date().toISOString();
+    const blankDraft: NoteItem = {
       id: 'note-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       userId: currentUser?.id,
-      title: title.trim(),
-      content: content.trim(),
-      color,
-      isPinned,
-      isChecklist,
-      checklistItems,
-      labels,
-      reminderAt: reminderAt ? new Date(reminderAt).toISOString() : null,
-      isEmergency,
+      title: '',
+      content: '',
+      color: 'default',
+      isPinned: false,
+      isChecklist: false,
+      checklistItems: [],
+      labels: [],
+      reminderAt: null,
+      isEmergency: false,
       syncStatus: currentUser?.id ? 'synced' : 'unsynced',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
     };
+    setEditingNote(blankDraft);
+    setIsNewDraft(true);
+    setHasSavedCurrentNote(false);
+    setHasUnsavedChanges(false);
+    setShowThreeDotMenu(false);
+    setChecklistDraftItem('');
+    setFullPageNewTag('');
+    setShowFullPageTagInput(false);
+    setShowFullPageReminder(false);
+  };
 
-    const updated = [newNote, ...notes];
-    setNotes(updated);
-    saveLocalNotes(updated, currentUser?.id);
-    resetEditor();
+  const openExistingNoteEditor = (note: NoteItem) => {
+    setEditingNote({
+      ...note,
+      checklistItems: note.checklistItems.map((ci) => ({ ...ci })),
+      labels: [...note.labels],
+    });
+    setIsNewDraft(false);
+    setHasSavedCurrentNote(true);
+    setHasUnsavedChanges(false);
+    setShowThreeDotMenu(false);
+    setChecklistDraftItem('');
+    setFullPageNewTag('');
+    setShowFullPageTagInput(false);
+    setShowFullPageReminder(false);
+  };
 
-    // Immediate Supabase sync
-    if (currentUser?.id) {
-      const res = await upsertNoteToSupabase(newNote, currentUser.id);
-      if (res.syncStatus !== newNote.syncStatus) {
-        setNotes((prev) => prev.map((n) => (n.id === newNote.id ? { ...n, syncStatus: res.syncStatus } : n)));
-      }
-    }
+  const updateEditingNote = (updater: (prev: NoteItem) => NoteItem) => {
+    setEditingNote((prev) => {
+      if (!prev) return prev;
+      return updater(prev);
+    });
+    setHasUnsavedChanges(true);
   };
 
   // Deletion Safeguards (Requires explicit confirmation modal)
@@ -430,49 +430,134 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
   };
 
   const handleAddChecklistItemToEditor = () => {
-    if (!newChecklistText.trim()) return;
-    setChecklistItems([
-      ...checklistItems,
-      { id: 'item-' + Date.now(), text: newChecklistText.trim(), completed: false },
-    ]);
-    setNewChecklistText('');
+    if (!editingNote || !checklistDraftItem.trim()) return;
+    const textToAdd = checklistDraftItem.trim();
+    updateEditingNote((prev) => ({
+      ...prev,
+      checklistItems: [
+        ...prev.checklistItems,
+        { id: 'item-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5), text: textToAdd, completed: false },
+      ],
+    }));
+    setChecklistDraftItem('');
   };
 
-  const handleRemoveChecklistItemFromEditor = (id: string) => {
-    setChecklistItems(checklistItems.filter((i) => i.id !== id));
-  };
-
-  const handleAddTagToEditor = () => {
-    if (!newTagInput.trim()) return;
-    const tag = newTagInput.trim();
-    if (!labels.includes(tag)) {
-      setLabels([...labels, tag]);
-    }
-    setNewTagInput('');
-    setShowTagInput(false);
-  };
-
-  // Full-Page View save changes
-  const handleSaveEditedNote = async () => {
+  const handleAddTagInEditor = (tagText?: string) => {
     if (!editingNote) return;
+    const tag = (tagText ?? fullPageNewTag).trim();
+    if (!tag) return;
+    if (!editingNote.labels.includes(tag)) {
+      updateEditingNote((prev) => ({
+        ...prev,
+        labels: [...prev.labels, tag],
+      }));
+    }
+    if (!tagText) {
+      setFullPageNewTag('');
+    }
+  };
+
+  // Unified Persist Action (keeps editor open so user sees Saved badge & 3-dot Color Menu)
+  const persistNoteInEditor = async (closeAfter: boolean = false) => {
+    if (!editingNote) return;
+
+    const isBlankDraft =
+      !editingNote.title.trim() &&
+      !editingNote.content.trim() &&
+      editingNote.checklistItems.length === 0 &&
+      editingNote.labels.length === 0 &&
+      !editingNote.reminderAt;
+
+    if (isNewDraft && !hasSavedCurrentNote && isBlankDraft && closeAfter) {
+      setEditingNote(null);
+      setShowThreeDotMenu(false);
+      return;
+    }
 
     const noteToSave: NoteItem = {
       ...editingNote,
+      title: editingNote.title.trim() || (!closeAfter && isBlankDraft ? 'Untitled Note' : editingNote.title.trim()),
       updatedAt: new Date().toISOString(),
     };
 
-    const updated = notes.map((n) => (n.id === noteToSave.id ? noteToSave : n));
+    const existsInList = notes.some((n) => n.id === noteToSave.id);
+    const updated = existsInList
+      ? notes.map((n) => (n.id === noteToSave.id ? noteToSave : n))
+      : [noteToSave, ...notes];
+
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
-    setEditingNote(null);
+    setIsNewDraft(false);
+    setHasSavedCurrentNote(true);
+    setHasUnsavedChanges(false);
+
+    if (closeAfter) {
+      setEditingNote(null);
+      setShowThreeDotMenu(false);
+    } else {
+      setEditingNote(noteToSave);
+    }
 
     if (currentUser?.id) {
       const res = await upsertNoteToSupabase(noteToSave, currentUser.id);
       setNotes((prev) => prev.map((n) => (n.id === noteToSave.id ? { ...n, syncStatus: res.syncStatus } : n)));
+      if (!closeAfter) {
+        setEditingNote((prev) => (prev && prev.id === noteToSave.id ? { ...prev, syncStatus: res.syncStatus } : prev));
+      }
     }
   };
 
-  handleSaveEditedNoteRef.current = handleSaveEditedNote;
+  const handleChangeSavedNoteColor = async (colorId: string) => {
+    if (!editingNote) return;
+    const updatedNote: NoteItem = {
+      ...editingNote,
+      color: colorId,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const existsInList = notes.some((n) => n.id === updatedNote.id);
+    const updated = existsInList
+      ? notes.map((n) => (n.id === updatedNote.id ? updatedNote : n))
+      : [updatedNote, ...notes];
+
+    setEditingNote(updatedNote);
+    setNotes(updated);
+    saveLocalNotes(updated, currentUser?.id);
+    setShowThreeDotMenu(false);
+
+    if (currentUser?.id) {
+      const res = await upsertNoteToSupabase(updatedNote, currentUser.id);
+      setNotes((prev) => prev.map((n) => (n.id === updatedNote.id ? { ...n, syncStatus: res.syncStatus } : n)));
+      setEditingNote((prev) => (prev && prev.id === updatedNote.id ? { ...prev, syncStatus: res.syncStatus } : prev));
+    }
+  };
+
+  const handleCloseEditor = () => {
+    if (!editingNote) return;
+    const isBlankDraft =
+      isNewDraft &&
+      !hasSavedCurrentNote &&
+      !editingNote.title.trim() &&
+      !editingNote.content.trim() &&
+      editingNote.checklistItems.length === 0 &&
+      editingNote.labels.length === 0 &&
+      !editingNote.reminderAt;
+
+    if (isBlankDraft) {
+      setEditingNote(null);
+      setShowThreeDotMenu(false);
+      return;
+    }
+
+    if (hasUnsavedChanges || !hasSavedCurrentNote) {
+      void persistNoteInEditor(true);
+    } else {
+      setEditingNote(null);
+      setShowThreeDotMenu(false);
+    }
+  };
+
+  handleCloseEditorRef.current = handleCloseEditor;
 
   // Distinct labels across all notes
   const allLabels = useMemo(() => {
@@ -689,315 +774,11 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
         </div>
       )}
 
-      {/* Quick Create Note Sheet / Modal triggered by Floating + FAB */}
-      {isEditorExpanded && isMounted && typeof document !== 'undefined' && createPortal(
-        <div
-          className="fixed inset-0 z-[99990] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/50 backdrop-blur-xs"
-          onClick={() => {
-            if (title.trim() || content.trim() || checklistItems.length > 0) {
-              handleCreateNote();
-            } else {
-              resetEditor();
-            }
-          }}
-        >
-          <div
-            ref={editorRef}
-            data-note-card="true"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              backgroundColor: getCompactNoteSurface(color).bg,
-              borderColor: getCompactNoteSurface(color).border,
-            }}
-            className="w-full max-w-xl rounded-t-3xl sm:rounded-3xl transition-colors duration-200 shadow-2xl border p-4 sm:p-5 space-y-3.5 max-h-[88dvh] overflow-y-auto"
-          >
-            {/* Title & Pin Toggle */}
-            <div className="flex items-center justify-between gap-2">
-              <input
-                type="text"
-                autoFocus
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Note title"
-                className="w-full bg-transparent font-extrabold text-base text-slate-900 placeholder:text-slate-500 focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => setIsPinned(!isPinned)}
-                className={`p-2 rounded-xl transition-all cursor-pointer shadow-2xs shrink-0 ${
-                  isPinned
-                    ? 'text-white bg-slate-900 ring-2 ring-slate-300'
-                    : 'text-slate-700 bg-white/90 border border-slate-300 hover:text-amber-600'
-                }`}
-                title={isPinned ? 'Unpin note' : 'Pin note to top'}
-              >
-                <Pin className={`w-4 h-4 ${isPinned ? 'rotate-45 fill-white' : ''}`} />
-              </button>
-            </div>
-
-            {/* Note Content OR Interactive Checklist Editor */}
-            {!isChecklist ? (
-              <textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                placeholder="Write a concise note, formula, or reminder..."
-                rows={4}
-                className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none resize-none leading-relaxed"
-              />
-            ) : (
-              <div className="space-y-2 pt-1">
-                {checklistItems.map((item) => (
-                  <div key={item.id} className="flex items-center gap-2 group">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setChecklistItems(
-                          checklistItems.map((ci) => (ci.id === item.id ? { ...ci, completed: !ci.completed } : ci))
-                        );
-                      }}
-                      className="text-slate-600 hover:text-blue-600 cursor-pointer"
-                    >
-                      {item.completed ? <CheckSquare className="w-4 h-4 text-blue-600" /> : <Square className="w-4 h-4" />}
-                    </button>
-                    <span className={`text-sm flex-1 ${item.completed ? 'line-through text-slate-500' : 'text-slate-900 font-semibold'}`}>
-                      {item.text}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveChecklistItemFromEditor(item.id)}
-                      className="text-slate-500 hover:text-rose-600 p-1 cursor-pointer"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-
-                <div className="flex items-center gap-2 pt-1">
-                  <Plus className="w-4 h-4 text-slate-600" />
-                  <input
-                    type="text"
-                    value={newChecklistText}
-                    onChange={(e) => setNewChecklistText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAddChecklistItemToEditor();
-                      }
-                    }}
-                    placeholder="List item (press Enter to add)"
-                    className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddChecklistItemToEditor}
-                    className="text-xs font-bold text-blue-700 hover:text-blue-800 px-2 py-1 shrink-0 cursor-pointer"
-                  >
-                    Add
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Color-coded Labels Chips in Editor */}
-            {labels.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                {labels.map((lbl) => (
-                  <span
-                    key={lbl}
-                    className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full ${getTagColorClass(lbl)}`}
-                  >
-                    {lbl}
-                    <button
-                      type="button"
-                      onClick={() => setLabels(labels.filter((l) => l !== lbl))}
-                      className="hover:opacity-75 ml-0.5 cursor-pointer"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* Reminder Badge in Editor */}
-            {reminderAt && (
-              <div className="flex items-center justify-between text-xs font-semibold bg-amber-100/90 text-amber-950 px-3 py-1.5 rounded-xl border border-amber-300">
-                <span className="flex items-center gap-1.5">
-                  <Bell className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Reminder: {new Date(reminderAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span>
-                  {isEmergency && <span className="bg-rose-600 text-white text-[10px] px-1.5 py-0.2 rounded-md font-bold uppercase tracking-wider ml-1">Emergency</span>}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setReminderAt('');
-                    setIsEmergency(false);
-                  }}
-                  className="text-amber-900 hover:text-rose-600 cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
-
-            {/* Palette Selector */}
-            {showColorPicker && (
-              <div className="pt-2 border-t border-black/10 flex flex-wrap gap-2 items-center">
-                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider mr-1">Color:</span>
-                {NOTE_COLORS.slice(0, 9).map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => {
-                      setColor(c.id);
-                      setShowColorPicker(false);
-                    }}
-                    style={{ backgroundColor: getCompactNoteSurface(c.id).bg }}
-                    className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
-                      color === c.id ? 'border-slate-900 scale-110 shadow-sm' : 'border-slate-300'
-                    }`}
-                    title={c.name}
-                  >
-                    {color === c.id && <Check className="w-3.5 h-3.5 text-slate-900 stroke-[3]" />}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Tag Input */}
-            {showTagInput && (
-              <div className="flex items-center gap-2 pt-2 border-t border-black/10">
-                <Tag className="w-3.5 h-3.5 text-slate-600" />
-                <input
-                  type="text"
-                  value={newTagInput}
-                  onChange={(e) => setNewTagInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddTagToEditor();
-                    }
-                  }}
-                  placeholder="Enter tag (e.g. Food, Work, Personal, Math)"
-                  className="text-xs bg-transparent border-b border-slate-400 focus:border-blue-600 focus:outline-none flex-1 py-1 text-slate-900 placeholder:text-slate-500"
-                />
-                <button
-                  type="button"
-                  onClick={handleAddTagToEditor}
-                  className="text-xs font-bold bg-slate-900 text-white px-2.5 py-1 rounded-lg cursor-pointer"
-                >
-                  Add Tag
-                </button>
-              </div>
-            )}
-
-            {/* Reminder Picker */}
-            {showReminderPicker && (
-              <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-md space-y-2.5 text-xs">
-                <div className="font-bold text-slate-800 flex items-center gap-1.5">
-                  <Bell className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Set Time Reminder</span>
-                </div>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="datetime-local"
-                    value={reminderAt}
-                    onChange={(e) => setReminderAt(e.target.value)}
-                    className="bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-medium text-slate-800 focus:outline-none flex-1"
-                  />
-                  <label className="flex items-center gap-1.5 text-slate-700 font-semibold cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={isEmergency}
-                      onChange={(e) => setIsEmergency(e.target.checked)}
-                      className="rounded text-rose-600 focus:ring-rose-500"
-                    />
-                    <span className="text-rose-700 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" /> Emergency Alarm
-                    </span>
-                  </label>
-                </div>
-                <div className="flex justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      requestNotificationPermission();
-                      setShowReminderPicker(false);
-                    }}
-                    className="px-3 py-1 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800 cursor-pointer"
-                  >
-                    Done
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Bottom Actions Toolbar */}
-            <div className="flex items-center justify-between pt-2 border-t border-black/10">
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setShowColorPicker(!showColorPicker)}
-                  className="p-2 text-slate-800 hover:text-slate-950 rounded-xl hover:bg-black/5 transition-colors cursor-pointer"
-                  title="Card Color Palette"
-                >
-                  <Palette className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsChecklist(!isChecklist)}
-                  className={`p-2 rounded-xl transition-colors cursor-pointer ${
-                    isChecklist ? 'text-blue-700 bg-blue-100' : 'text-slate-800 hover:text-slate-950 hover:bg-black/5'
-                  }`}
-                  title={isChecklist ? 'Switch to text note' : 'Switch to checklist'}
-                >
-                  <CheckSquare className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowReminderPicker(!showReminderPicker)}
-                  className="p-2 text-slate-800 hover:text-slate-950 rounded-xl hover:bg-black/5 transition-colors cursor-pointer"
-                  title="Add reminder"
-                >
-                  <Bell className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowTagInput(!showTagInput)}
-                  className="p-2 text-slate-800 hover:text-slate-950 rounded-xl hover:bg-black/5 transition-colors cursor-pointer"
-                  title="Add label/tag"
-                >
-                  <Tag className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={resetEditor}
-                  className="text-xs font-semibold text-slate-600 hover:text-slate-800 px-3 py-1.5 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCreateNote}
-                  className="text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-xl transition-all shadow-xs cursor-pointer active:scale-95"
-                >
-                  Add Note
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
       {/* Floating + Action Button (Bottom Right above Bottom Nav) */}
-      {!editingNote && !isEditorExpanded && selectedNoteIds.length === 0 && (
+      {!editingNote && selectedNoteIds.length === 0 && (
         <button
           type="button"
-          onClick={() => setIsEditorExpanded(true)}
+          onClick={openNewNoteEditor}
           aria-label="Create new note"
           title="New Note"
           className="fixed bottom-20 right-4 sm:right-6 z-30 w-13 h-13 rounded-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white shadow-[0_8px_24px_rgba(15,23,42,0.28)] flex items-center justify-center transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
@@ -1006,152 +787,223 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
         </button>
       )}
 
-      {/* FULL-PAGE VIEW (Portaled to document.body to cover the entire screen, hide all headers, prevent background scroll, and optimize for mobile) */}
+      {/* NOTE EDITING VIEW (Clean Unified Full-Page Workspace) */}
       {editingNote && isMounted && typeof document !== 'undefined' && createPortal(
         <div
           data-note-card="true"
-          style={{ backgroundColor: editingColorTheme.hex }}
-          className="fixed inset-0 z-[99999] w-screen h-[100dvh] flex flex-col overscroll-none select-text touch-manipulation"
+          style={{ backgroundColor: getCompactNoteSurface(editingNote.color).bg }}
+          className="fixed inset-0 z-[99999] w-screen h-[100dvh] flex flex-col overscroll-none select-text touch-manipulation transition-colors duration-200"
         >
-          {/* Top Full-Page Navigation & Action Bar */}
-          <div className="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-black/10 px-3 sm:px-6 py-2.5 sm:py-3.5 flex items-center justify-between gap-2 shadow-xs shrink-0 pt-[max(0.625rem,env(safe-area-inset-top))]">
-            <div className="flex items-center gap-2">
+          {/* Consistent Top Toolbar: Back + Subtle Status | Pin, Delete, Save, Post-Save Three-Dot Menu */}
+          <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-black/10 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-2 shrink-0 pt-[max(0.625rem,env(safe-area-inset-top))]">
+            <div className="flex items-center gap-2 min-w-0">
               <button
                 type="button"
-                onClick={handleSaveEditedNote}
-                className="flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-xs transition-all cursor-pointer active:scale-95 min-h-[42px]"
-                title="Save changes and close note"
+                onClick={handleCloseEditor}
+                className="min-h-[42px] min-w-[42px] flex items-center justify-center rounded-xl text-slate-800 hover:bg-black/5 transition-colors cursor-pointer active:scale-95 shrink-0"
+                aria-label="Back to notes"
+                title="Back to notes"
               >
-                <ArrowLeft className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
-                <span className="font-extrabold">Back</span>
+                <ArrowLeft className="w-5 h-5" />
               </button>
 
-              {/* Sync Status Tick in Full Page */}
-              <div className="flex items-center">
-                {editingNote.syncStatus === 'synced' ? (
-                  <span
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs select-none"
-                    title="All changes synced to cloud database"
-                  >
-                    <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />
-                    <span className="hidden xs:inline sm:inline">Database Synced</span>
-                  </span>
-                ) : (
-                  <span
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-black bg-rose-100 text-rose-800 border border-rose-300 shadow-2xs select-none"
-                    title={currentUser?.id ? "Local copy (sync pending)" : "Saved in browser storage"}
-                  >
-                    <X className="w-3.5 h-3.5 text-rose-600 stroke-[3]" />
-                    <span className="hidden xs:inline sm:inline">Unsynced (Local)</span>
-                  </span>
-                )}
-              </div>
+              <span className="text-xs font-medium text-slate-600 truncate">
+                {!hasSavedCurrentNote
+                  ? 'New draft'
+                  : hasUnsavedChanges
+                  ? 'Unsaved edits'
+                  : editingNote.syncStatus === 'synced'
+                  ? 'Synced'
+                  : 'Saved'}
+              </span>
             </div>
 
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              {/* Pin Toggle Button in Full-Page View */}
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {/* Pin Action */}
               <button
                 type="button"
-                onClick={() => setEditingNote({ ...editingNote, isPinned: !editingNote.isPinned })}
-                className={`px-3 py-2 sm:py-2.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-xs min-h-[42px] ${
+                onClick={() => updateEditingNote((prev) => ({ ...prev, isPinned: !prev.isPinned }))}
+                className={`min-h-[40px] min-w-[40px] px-2.5 sm:px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 active:scale-95 ${
                   editingNote.isPinned
-                    ? 'bg-amber-500 text-white ring-2 ring-amber-300 hover:bg-amber-600 scale-105'
-                    : 'bg-white text-slate-800 border-2 border-slate-300 hover:bg-slate-50 hover:text-amber-600'
+                    ? 'bg-slate-900 text-white shadow-2xs'
+                    : 'bg-white border border-slate-200/90 text-slate-700 hover:bg-slate-50'
                 }`}
-                title={editingNote.isPinned ? 'Unpin note' : 'Pin note to top'}
+                aria-label={editingNote.isPinned ? 'Unpin note' : 'Pin note'}
+                title={editingNote.isPinned ? 'Unpin note' : 'Pin note'}
               >
-                <Pin className={`w-4 h-4 ${editingNote.isPinned ? 'rotate-45 fill-white' : ''}`} />
-                <span className="hidden sm:inline">{editingNote.isPinned ? 'Pinned' : 'Pin Note'}</span>
+                <Pin className={`w-4 h-4 rotate-45 ${editingNote.isPinned ? 'fill-white text-white' : ''}`} />
+                <span className="hidden sm:inline">{editingNote.isPinned ? 'Pinned' : 'Pin'}</span>
               </button>
 
-              {/* Delete Note with Confirmation Safeguard */}
+              {/* Delete Action */}
               <button
                 type="button"
-                onClick={(e) => promptDeleteSingle(editingNote, e)}
-                className="p-2.5 text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer min-h-[42px] min-w-[42px] flex items-center justify-center"
+                onClick={(e) => {
+                  const isBlankUnsavedDraft =
+                    isNewDraft &&
+                    !hasSavedCurrentNote &&
+                    !editingNote.title.trim() &&
+                    !editingNote.content.trim() &&
+                    editingNote.checklistItems.length === 0;
+                  if (isBlankUnsavedDraft) {
+                    setEditingNote(null);
+                    setShowThreeDotMenu(false);
+                    return;
+                  }
+                  promptDeleteSingle(editingNote, e);
+                }}
+                className="min-h-[40px] min-w-[40px] rounded-xl bg-white border border-slate-200/90 text-rose-600 hover:bg-rose-50 hover:border-rose-200 flex items-center justify-center transition-colors cursor-pointer shrink-0 active:scale-95"
+                aria-label="Delete note"
                 title="Delete note"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
 
-              {/* Done / Save Button */}
+              {/* Save Action */}
               <button
                 type="button"
-                onClick={handleSaveEditedNote}
-                className="px-4 sm:px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-xs transition-all cursor-pointer active:scale-95 min-h-[42px]"
+                onClick={() => void persistNoteInEditor(false)}
+                className={`min-h-[40px] px-3.5 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 active:scale-95 ${
+                  !hasSavedCurrentNote || hasUnsavedChanges
+                    ? 'bg-slate-900 hover:bg-slate-800 text-white shadow-xs'
+                    : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                }`}
+                title={!hasSavedCurrentNote || hasUnsavedChanges ? 'Save note' : 'Note saved'}
               >
-                Done
+                <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                <span>{!hasSavedCurrentNote || hasUnsavedChanges ? 'Save' : 'Saved'}</span>
               </button>
-            </div>
-          </div>
 
-          {/* Full-Page Content Workspace (Optimized for Mobile scroll & touch) */}
-          <div className="flex-1 overflow-y-auto overscroll-contain w-full max-w-4xl mx-auto px-4 sm:px-8 py-5 sm:py-8 flex flex-col space-y-5 sm:space-y-6 pb-[max(2rem,env(safe-area-inset-bottom))]">
-            {/* Color Palette Strip - Changes ENTIRE PAGE background */}
-            <div className="p-3 bg-white/75 backdrop-blur-md rounded-2xl border border-black/10 shadow-xs flex flex-wrap items-center gap-2">
-              <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wider mr-1 flex items-center gap-1.5">
-                <Palette className="w-3.5 h-3.5" />
-                <span>Card Background Color:</span>
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                {NOTE_COLORS.map((c) => (
+              {/* Three-Dot Color Palette Menu (Appears once saved) */}
+              {hasSavedCurrentNote && !hasUnsavedChanges && (
+                <div ref={threeDotMenuRef} className="relative">
                   <button
-                    key={c.id}
                     type="button"
-                    onClick={() => setEditingNote({ ...editingNote, color: c.id })}
-                    style={{ backgroundColor: c.hex }}
-                    className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full border-2 transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
-                      editingNote.color === c.id
-                        ? 'border-slate-900 scale-110 shadow-md ring-2 ring-slate-400'
-                        : 'border-slate-400'
+                    onClick={() => setShowThreeDotMenu((prev) => !prev)}
+                    aria-label="More options and color palette"
+                    aria-expanded={showThreeDotMenu}
+                    title="Color Palette & Options"
+                    className={`min-h-[40px] min-w-[40px] rounded-xl border flex items-center justify-center transition-colors cursor-pointer shrink-0 active:scale-95 ${
+                      showThreeDotMenu
+                        ? 'bg-slate-900 text-white border-slate-900'
+                        : 'bg-white border-slate-200/90 text-slate-700 hover:bg-slate-50'
                     }`}
-                    title={c.name}
                   >
-                    {editingNote.color === c.id && <Check className="w-3.5 h-3.5 text-slate-900 stroke-[3]" />}
+                    <MoreVertical className="w-4 h-4" />
                   </button>
-                ))}
+
+                  {showThreeDotMenu && (
+                    <div className="absolute right-0 top-full mt-2 w-64 sm:w-72 bg-white rounded-2xl border border-slate-200 shadow-2xl p-3.5 z-50 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                          <Palette className="w-3.5 h-3.5 text-slate-600" />
+                          <span>Note Color</span>
+                        </span>
+                        <span className="text-[11px] font-medium text-slate-500">
+                          {editingColorTheme.name}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-6 gap-2">
+                        {NOTE_COLORS.map((c) => {
+                          const swatchSurface = getCompactNoteSurface(c.id);
+                          const isSelectedColor = editingNote.color === c.id;
+                          return (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onClick={() => void handleChangeSavedNoteColor(c.id)}
+                              style={{ backgroundColor: swatchSurface.bg }}
+                              className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
+                                isSelectedColor
+                                  ? 'border-slate-900 scale-105 shadow-xs'
+                                  : 'border-slate-300/90'
+                              }`}
+                              title={c.name}
+                              aria-label={`Set note color to ${c.name}`}
+                            >
+                              {isSelectedColor && <Check className="w-3.5 h-3.5 text-slate-900 stroke-[3]" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-100">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateEditingNote((prev) => ({ ...prev, isChecklist: !prev.isChecklist }));
+                            setShowThreeDotMenu(false);
+                          }}
+                          className="w-full min-h-[38px] px-2.5 py-2 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center justify-between cursor-pointer transition-colors"
+                        >
+                          <span className="flex items-center gap-2">
+                            <CheckSquare className="w-3.5 h-3.5 text-slate-500" />
+                            <span>{editingNote.isChecklist ? 'Switch to Text Note' : 'Switch to Checklist'}</span>
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </header>
+
+          {/* Main Scrollable Workspace */}
+          <div className="flex-1 overflow-y-auto overscroll-contain w-full max-w-2xl mx-auto px-4 sm:px-8 py-5 sm:py-7 flex flex-col gap-5 pb-[max(2.5rem,env(safe-area-inset-bottom))]">
+            {/* Clean Writing Canvas */}
+            <section className="space-y-4">
+              <div className="border-b border-black/10 pb-3 flex items-center justify-between gap-3">
+                <input
+                  type="text"
+                  autoFocus={isNewDraft}
+                  value={editingNote.title}
+                  onChange={(e) => updateEditingNote((prev) => ({ ...prev, title: e.target.value }))}
+                  placeholder="Title"
+                  className="w-full bg-transparent font-black text-2xl sm:text-3xl text-slate-900 placeholder:text-slate-400 focus:outline-none tracking-tight"
+                />
+                {(!hasSavedCurrentNote || hasUnsavedChanges) && (
+                  <button
+                    type="button"
+                    onClick={() => updateEditingNote((prev) => ({ ...prev, isChecklist: !prev.isChecklist }))}
+                    className={`min-h-[36px] px-2.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+                      editingNote.isChecklist
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-white/80 border border-black/10 text-slate-700 hover:bg-white'
+                    }`}
+                    title={editingNote.isChecklist ? 'Switch to text note' : 'Switch to checklist'}
+                  >
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    <span>{editingNote.isChecklist ? 'Checklist' : 'List'}</span>
+                  </button>
+                )}
               </div>
-            </div>
 
-            {/* Note Title Input */}
-            <div className="border-b border-black/10 pb-3">
-              <input
-                type="text"
-                value={editingNote.title}
-                onChange={(e) => setEditingNote({ ...editingNote, title: e.target.value })}
-                placeholder="Title"
-                className="w-full bg-transparent font-black text-2xl sm:text-4xl text-slate-900 placeholder:text-slate-500/70 focus:outline-none tracking-tight"
-              />
-            </div>
-
-            {/* Note Content / Checklist Body */}
-            <div className="flex-1 flex flex-col min-h-[260px]">
               {!editingNote.isChecklist ? (
                 <textarea
                   value={editingNote.content}
-                  onChange={(e) => setEditingNote({ ...editingNote, content: e.target.value })}
-                  placeholder="Type your detailed notes here..."
-                  className="w-full flex-1 bg-transparent text-base sm:text-lg text-slate-900 placeholder:text-slate-500/70 focus:outline-none resize-none leading-relaxed min-h-[35vh]"
+                  onChange={(e) => updateEditingNote((prev) => ({ ...prev, content: e.target.value }))}
+                  placeholder="Start writing your note..."
+                  rows={8}
+                  className="w-full min-h-[210px] sm:min-h-[260px] bg-transparent text-sm sm:text-base text-slate-800 placeholder:text-slate-400 focus:outline-none resize-y leading-relaxed"
                 />
               ) : (
-                <div className="space-y-3 flex-1">
-                  <div className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                    Interactive Checklist ({editingNote.checklistItems.filter((i) => i.completed).length}/{editingNote.checklistItems.length} completed)
-                  </div>
+                <div className="bg-white/90 rounded-2xl border border-black/10 divide-y divide-black/5 overflow-hidden shadow-[0_1px_4px_rgba(15,23,42,0.03)]">
                   {editingNote.checklistItems.map((ci) => (
-                    <div
-                      key={ci.id}
-                      className="flex items-center gap-3 p-2.5 bg-white/60 backdrop-blur-xs rounded-xl border border-black/5 group"
-                    >
+                    <div key={ci.id} className="flex items-center gap-2.5 px-3 py-2 group">
                       <button
                         type="button"
                         onClick={() => {
-                          const items = editingNote.checklistItems.map((i) =>
-                            i.id === ci.id ? { ...i, completed: !i.completed } : i
-                          );
-                          setEditingNote({ ...editingNote, checklistItems: items });
+                          updateEditingNote((prev) => ({
+                            ...prev,
+                            checklistItems: prev.checklistItems.map((item) =>
+                              item.id === ci.id ? { ...item, completed: !item.completed } : item
+                            ),
+                          }));
                         }}
-                        className="text-slate-600 hover:text-blue-600 cursor-pointer shrink-0 min-h-[36px] min-w-[36px] flex items-center justify-center"
+                        className="min-h-[40px] min-w-[40px] flex items-center justify-center text-slate-600 hover:text-blue-600 cursor-pointer shrink-0"
+                        aria-label={ci.completed ? 'Mark incomplete' : 'Mark complete'}
                       >
                         {ci.completed ? (
                           <CheckSquare className="w-5 h-5 text-blue-600" />
@@ -1163,214 +1015,242 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
                         type="text"
                         value={ci.text}
                         onChange={(e) => {
-                          const items = editingNote.checklistItems.map((i) =>
-                            i.id === ci.id ? { ...i, text: e.target.value } : i
-                          );
-                          setEditingNote({ ...editingNote, checklistItems: items });
+                          const val = e.target.value;
+                          updateEditingNote((prev) => ({
+                            ...prev,
+                            checklistItems: prev.checklistItems.map((item) =>
+                              item.id === ci.id ? { ...item, text: val } : item
+                            ),
+                          }));
                         }}
-                        className={`text-sm sm:text-base flex-1 bg-transparent focus:outline-none ${
-                          ci.completed ? 'line-through text-slate-500' : 'text-slate-900 font-semibold'
+                        className={`flex-1 min-w-0 bg-transparent text-sm sm:text-base focus:outline-none ${
+                          ci.completed ? 'line-through text-slate-400' : 'text-slate-900 font-medium'
                         }`}
                       />
                       <button
                         type="button"
                         onClick={() => {
-                          setEditingNote({
-                            ...editingNote,
-                            checklistItems: editingNote.checklistItems.filter((i) => i.id !== ci.id),
-                          });
+                          updateEditingNote((prev) => ({
+                            ...prev,
+                            checklistItems: prev.checklistItems.filter((item) => item.id !== ci.id),
+                          }));
                         }}
-                        className="text-slate-500 hover:text-rose-600 p-2 opacity-70 group-hover:opacity-100 transition-opacity cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
+                        className="min-h-[38px] min-w-[38px] flex items-center justify-center text-slate-400 hover:text-rose-600 cursor-pointer shrink-0"
+                        aria-label="Remove checklist item"
                       >
                         <X className="w-4 h-4" />
                       </button>
                     </div>
                   ))}
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingNote({
-                        ...editingNote,
-                        checklistItems: [
-                          ...editingNote.checklistItems,
-                          { id: 'item-' + Date.now(), text: 'New task item', completed: false },
-                        ],
-                      });
-                    }}
-                    className="flex items-center gap-2 px-4 py-3 bg-white/90 hover:bg-white text-blue-700 font-bold text-xs sm:text-sm rounded-xl border border-blue-200 shadow-2xs mt-3 cursor-pointer min-h-[44px]"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Add Checklist Item</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Labels & Tags Manager */}
-            <div className="pt-4 border-t border-black/10 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
-                  <Tag className="w-3.5 h-3.5 text-slate-600" />
-                  <span>Labels &amp; Tags</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setShowFullPageTagInput(!showFullPageTagInput)}
-                  className="text-xs font-bold text-blue-700 hover:text-blue-800 cursor-pointer py-1 px-2"
-                >
-                  {showFullPageTagInput ? 'Close' : '+ Add Label'}
-                </button>
-              </div>
-
-              {showFullPageTagInput && (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={fullPageNewTag}
-                    onChange={(e) => setFullPageNewTag(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        if (fullPageNewTag.trim() && !editingNote.labels.includes(fullPageNewTag.trim())) {
-                          setEditingNote({ ...editingNote, labels: [...editingNote.labels, fullPageNewTag.trim()] });
-                          setFullPageNewTag('');
+                  <div className="flex items-center gap-2 px-3 py-2 bg-slate-50/70">
+                    <Plus className="w-4 h-4 text-slate-400 shrink-0 ml-2.5" />
+                    <input
+                      type="text"
+                      value={checklistDraftItem}
+                      onChange={(e) => setChecklistDraftItem(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddChecklistItemToEditor();
                         }
-                      }
-                    }}
-                    placeholder="Enter new label (e.g. Finance, Shopping)..."
-                    className="text-xs bg-white border border-slate-300 rounded-xl px-3 py-2.5 flex-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (fullPageNewTag.trim() && !editingNote.labels.includes(fullPageNewTag.trim())) {
-                        setEditingNote({ ...editingNote, labels: [...editingNote.labels, fullPageNewTag.trim()] });
-                        setFullPageNewTag('');
-                      }
-                    }}
-                    className="px-4 py-2.5 bg-blue-600 text-white font-bold text-xs rounded-xl cursor-pointer"
-                  >
-                    Add
-                  </button>
-                </div>
-              )}
-
-              <div className="flex flex-wrap gap-1.5">
-                {editingNote.labels.length === 0 ? (
-                  <span className="text-xs text-slate-600 italic">No labels assigned yet.</span>
-                ) : (
-                  editingNote.labels.map((lbl) => (
-                    <span
-                      key={lbl}
-                      className="inline-flex items-center gap-1.5 bg-black/10 text-slate-900 text-xs font-bold px-2.5 py-1 rounded-lg"
+                      }}
+                      placeholder="Add list item..."
+                      className="flex-1 min-w-0 bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none py-2"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddChecklistItemToEditor}
+                      disabled={!checklistDraftItem.trim()}
+                      className="min-h-[36px] px-3 rounded-lg bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold cursor-pointer whitespace-nowrap shrink-0"
                     >
-                      #{lbl}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setEditingNote({
-                            ...editingNote,
-                            labels: editingNote.labels.filter((l) => l !== lbl),
-                          })
-                        }
-                        className="text-slate-600 hover:text-rose-600 cursor-pointer p-0.5"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </span>
-                  ))
-                )}
-              </div>
-            </div>
+                      Add
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
 
-            {/* Reminder Section */}
-            <div className="pt-4 border-t border-black/10 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
-                  <Bell className="w-3.5 h-3.5 text-slate-600" />
-                  <span>Scheduled Reminder</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setShowFullPageReminder(!showFullPageReminder)}
-                  className="text-xs font-bold text-blue-700 hover:text-blue-800 cursor-pointer py-1 px-2"
-                >
-                  {showFullPageReminder ? 'Hide' : editingNote.reminderAt ? 'Change Time' : '+ Set Reminder'}
-                </button>
-              </div>
-
-              {editingNote.reminderAt && (
-                <div className="flex items-center justify-between p-3 bg-amber-100/90 text-amber-950 rounded-xl text-xs font-bold border border-amber-300">
-                  <span className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-amber-700" />
-                    <span>{new Date(editingNote.reminderAt).toLocaleString()}</span>
-                    {editingNote.isEmergency && (
-                      <span className="bg-rose-600 text-white px-2 py-0.5 rounded text-[10px] uppercase font-black">
-                        Emergency Alarm
-                      </span>
-                    )}
+            {/* Neatly Organized Bottom Cards: Labels & Tags + Reminders */}
+            <section className="space-y-3 pt-2">
+              {/* 1. Labels & Tags Card */}
+              <div className="bg-white/90 rounded-2xl border border-black/10 p-4 space-y-3 shadow-[0_1px_4px_rgba(15,23,42,0.03)]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Labels &amp; Tags</span>
                   </span>
                   <button
                     type="button"
-                    onClick={() => setEditingNote({ ...editingNote, reminderAt: null, isEmergency: false })}
-                    className="text-amber-900 hover:text-rose-600 font-bold cursor-pointer px-2 py-1"
+                    onClick={() => setShowFullPageTagInput((prev) => !prev)}
+                    className="min-h-[32px] px-2.5 rounded-lg text-xs font-bold text-blue-700 hover:bg-blue-50 cursor-pointer whitespace-nowrap shrink-0 transition-colors"
                   >
-                    Remove
+                    {showFullPageTagInput ? 'Done' : '+ Add Tag'}
                   </button>
                 </div>
-              )}
 
-              {showFullPageReminder && (
-                <div className="p-3.5 bg-white border border-slate-200 rounded-2xl space-y-3">
-                  <div className="flex flex-col sm:flex-row gap-3">
+                {editingNote.labels.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {editingNote.labels.map((lbl) => (
+                      <span
+                        key={lbl}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold ${getTagColorClass(
+                          lbl
+                        )}`}
+                      >
+                        <span>{lbl}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateEditingNote((prev) => ({
+                              ...prev,
+                              labels: prev.labels.filter((l) => l !== lbl),
+                            }))
+                          }
+                          aria-label={`Remove tag ${lbl}`}
+                          className="hover:opacity-70 cursor-pointer p-0.5"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">No labels or tags assigned yet.</p>
+                )}
+
+                {showFullPageTagInput && (
+                  <div className="pt-2 border-t border-slate-100 space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={fullPageNewTag}
+                        onChange={(e) => setFullPageNewTag(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddTagInEditor();
+                          }
+                        }}
+                        placeholder="Type tag name (e.g. Work, Math, Shopping)"
+                        className="flex-1 min-w-0 min-h-[38px] bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleAddTagInEditor()}
+                        disabled={!fullPageNewTag.trim()}
+                        className="min-h-[38px] px-3.5 bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        Add
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {['Work', 'Personal', 'Shopping', 'Food', 'Math']
+                        .filter((preset) => !editingNote.labels.includes(preset))
+                        .map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => handleAddTagInEditor(preset)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold cursor-pointer transition-colors"
+                          >
+                            + {preset}
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 2. Reminders Card */}
+              <div className="bg-white/90 rounded-2xl border border-black/10 p-4 space-y-3 shadow-[0_1px_4px_rgba(15,23,42,0.03)]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <Bell className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Reminders</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      requestNotificationPermission();
+                      setShowFullPageReminder((prev) => !prev);
+                    }}
+                    className="min-h-[32px] px-2.5 rounded-lg text-xs font-bold text-blue-700 hover:bg-blue-50 cursor-pointer whitespace-nowrap shrink-0 transition-colors"
+                  >
+                    {showFullPageReminder
+                      ? 'Hide'
+                      : editingNote.reminderAt
+                      ? 'Edit Time'
+                      : '+ Set Reminder'}
+                  </button>
+                </div>
+
+                {editingNote.reminderAt ? (
+                  <div className="flex items-center justify-between gap-2 p-2.5 bg-amber-50 text-amber-950 rounded-xl border border-amber-200/90 text-xs font-semibold">
+                    <span className="flex items-center gap-2 min-w-0">
+                      <Clock className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span className="truncate">
+                        {new Date(editingNote.reminderAt).toLocaleString([], {
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                        })}
+                      </span>
+                      {editingNote.isEmergency && (
+                        <span className="text-rose-700 font-bold shrink-0">· Urgent</span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateEditingNote((prev) => ({ ...prev, reminderAt: null, isEmergency: false }))
+                      }
+                      className="text-xs font-bold text-rose-600 hover:text-rose-700 px-2 py-1 rounded-lg hover:bg-rose-50 cursor-pointer shrink-0"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">No reminder scheduled for this note.</p>
+                )}
+
+                {showFullPageReminder && (
+                  <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center gap-3">
                     <input
                       type="datetime-local"
                       value={editingNote.reminderAt ? editingNote.reminderAt.substring(0, 16) : ''}
-                      onChange={(e) =>
-                        setEditingNote({
-                          ...editingNote,
+                      onChange={(e) => {
+                        requestNotificationPermission();
+                        updateEditingNote((prev) => ({
+                          ...prev,
                           reminderAt: e.target.value ? new Date(e.target.value).toISOString() : null,
-                        })
-                      }
-                      className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-800 flex-1 focus:outline-none"
+                        }));
+                      }}
+                      className="flex-1 min-h-[40px] bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:border-slate-400"
                     />
-                    <label className="flex items-center gap-2 text-xs font-bold text-rose-700 cursor-pointer select-none">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-rose-700 cursor-pointer select-none min-h-[36px]">
                       <input
                         type="checkbox"
                         checked={!!editingNote.isEmergency}
-                        onChange={(e) => setEditingNote({ ...editingNote, isEmergency: e.target.checked })}
+                        onChange={(e) =>
+                          updateEditingNote((prev) => ({ ...prev, isEmergency: e.target.checked }))
+                        }
                         className="rounded text-rose-600"
                       />
                       <span>Emergency Alarm</span>
                     </label>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
 
-            {/* Bottom Meta & Save */}
-            <div className="pt-6 pb-8 border-t border-black/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs text-slate-700">
-              <div>
-                <span>Last updated: {new Date(editingNote.updatedAt).toLocaleString()}</span>
+              {/* Clean Footer Meta */}
+              <div className="flex items-center justify-between px-1 pt-1 text-[11px] text-slate-600">
+                <span>
+                  Updated {new Date(editingNote.updatedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                </span>
+                <span>{editingNote.isChecklist ? 'Checklist' : 'Text Note'}</span>
               </div>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setEditingNote(null)}
-                  className="px-4 py-2.5 font-bold text-slate-700 hover:bg-black/5 rounded-xl cursor-pointer min-h-[42px]"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveEditedNote}
-                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md transition-all cursor-pointer active:scale-95 min-h-[42px]"
-                >
-                  Save &amp; Close
-                </button>
-              </div>
-            </div>
+            </section>
           </div>
         </div>,
         document.body
@@ -1488,7 +1368,7 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
           if (selectedNoteIds.length > 0) {
             handleToggleSelectNote(note.id, e);
           } else {
-            setEditingNote(note);
+            openExistingNoteEditor(note);
           }
         }}
         style={{

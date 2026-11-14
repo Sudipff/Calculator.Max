@@ -21,6 +21,8 @@ export interface NoteItem {
   updatedAt: string;
 }
 
+export type TaskPriority = 'high' | 'medium' | 'low';
+
 export interface TaskItem {
   id: string;
   userId?: string;
@@ -30,6 +32,7 @@ export interface TaskItem {
   description?: string;
   completed: boolean;
   isStarred: boolean;
+  priority?: TaskPriority;
   dueDate?: string | null;
   reminderAt?: string | null;
   syncStatus?: 'synced' | 'unsynced';

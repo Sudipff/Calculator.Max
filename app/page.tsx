@@ -2242,6 +2242,8 @@ export default function RetailCalc() {
                   <TasksView
                     currentUser={currentUser}
                     triggerVibration={triggerVibration}
+                    onFullScreenChange={(isFullscreen) => setIsNoteFullScreen(isFullscreen)}
+                    closeEditorSignal={noteEditorCloseSignal}
                   />
                 </section>
               )}
