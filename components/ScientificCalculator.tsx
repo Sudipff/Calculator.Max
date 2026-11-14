@@ -1,6 +1,14 @@
 'use client';
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, {
+  useState,
+  useMemo,
+  useEffect,
+  useReducer,
+  useCallback,
+  useRef,
+  useDeferredValue,
+} from 'react';
 import {
   Copy,
   Check,
@@ -13,1065 +21,236 @@ import {
   BookmarkPlus,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import {
+  calcReducer,
+  INITIAL_CALC_STATE,
+  evaluateWithCache,
+  clearEvaluationCache,
+  buildFullExpression,
+  countUnclosedParens,
+} from '../lib/scientificEngine';
 
 interface ScientificCalculatorProps {
   triggerVibration: (type?: 'success' | 'error' | 'click' | 'reset') => void;
   onSaveHistory: (type: string, details: string, result: string) => void;
 }
 
-type AngleMode = 'DEG' | 'RAD';
-
-// Floating point sanitizer to remove IEEE 754 precision artifacts
-function cleanFloat(val: number): number {
-  if (Math.abs(val) < 1e-12) return 0;
-  const factor = 1e10;
-  return Math.round(val * factor) / factor;
-}
-
-// Factorial computation with strict validation
-function factorial(n: number): number {
-  if (!Number.isInteger(n) || n < 0) {
-    throw new Error('Factorial requires a non-negative integer.');
-  }
-  if (n > 170) {
-    throw new Error('Result exceeds maximum computable number (overflow).');
-  }
-  let res = 1;
-  for (let i = 2; i <= n; i++) {
-    res *= i;
-  }
-  return res;
-}
-
-type Token =
-  | { type: 'NUMBER'; value: number }
-  | { type: 'IDENT'; value: string }
-  | { type: 'OP'; value: '+' | '-' | '*' | '/' | '^' | '!' | '%' | 'mod' | 'yroot' }
-  | { type: 'LPAREN' }
-  | { type: 'RPAREN' }
-  | { type: 'COMMA' };
-
-// Helper to auto-close any unclosed '(' parentheses in an expression string
-function closeUnbalancedParens(str: string): string {
-  let openCount = 0;
-  for (const ch of str) {
-    if (ch === '(') openCount++;
-    else if (ch === ')' && openCount > 0) openCount--;
-  }
-  return openCount > 0 ? str + ')'.repeat(openCount) : str;
-}
-
-// Count unclosed '(' parentheses
-function countUnclosedParens(str: string): number {
-  let openCount = 0;
-  for (const ch of str) {
-    if (ch === '(') openCount++;
-    else if (ch === ')' && openCount > 0) openCount--;
-  }
-  return openCount;
-}
-
-// Check if a string is a simple number or constant suitable for direct exponentiation without wrapping parens
-function isAtomicOperand(str: string): boolean {
-  return /^-?(\d+(\.\d+)?(E[+-]?\d+)?|π|e|Ans)$/.test(str.trim());
-}
-
 export default function ScientificCalculator({
   triggerVibration,
   onSaveHistory,
 }: ScientificCalculatorProps) {
-  // Calculator state
-  const [expression, setExpression] = useState<string>('');
-  const [currentInput, setCurrentInput] = useState<string>('0');
-  const [isNewInput, setIsNewInput] = useState<boolean>(true);
-  const [evaluatedResult, setEvaluatedResult] = useState<string | null>(null);
-  const [lastAnswer, setLastAnswer] = useState<string>('0');
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [angleMode, setAngleMode] = useState<AngleMode>('DEG');
+  const [state, dispatch] = useReducer(calcReducer, INITIAL_CALC_STATE);
   const [isSecondFunction, setIsSecondFunction] = useState<boolean>(false);
   const [isHyperbolic, setIsHyperbolic] = useState<boolean>(false);
   const [calculatorView, setCalculatorView] = useState<'scientific' | 'standard'>('scientific');
-  const [memoryValue, setMemoryValue] = useState<number>(0);
-  const [hasMemory, setHasMemory] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [saved, setSaved] = useState<boolean>(false);
-  const [localTape, setLocalTape] = useState<Array<{ expr: string; res: string; time: string }>>([]);
   const [showTape, setShowTape] = useState<boolean>(false);
 
-  // Safe mathematical tokenizer + recursive-descent parser with strict domain checks
-  const safeEvaluateMath = useCallback(
-    (
-      rawExpr: string,
-      currentAngle: AngleMode,
-      ansValueStr: string = '0'
-    ): { result: number; display: string } => {
-      if (!rawExpr || !rawExpr.trim()) {
-        throw new Error('Empty expression');
-      }
-
-      // Normalize display symbols and balance parentheses
-      let normalized = rawExpr
-        .replace(/×/g, '*')
-        .replace(/÷/g, '/')
-        .replace(/−/g, '-')
-        .replace(/π/g, 'pi')
-        .trim();
-
-      // Strip trailing binary operators or commas at the end of an expression
-      normalized = normalized.replace(/(?:\bmod\b|\byroot\b|[+\-*/^,\s])+$/i, '').trim();
-      if (!normalized) {
-        throw new Error('Empty expression');
-      }
-
-      normalized = closeUnbalancedParens(normalized);
-
-      // 1. Tokenize
-      const rawTokens: Token[] = [];
-      let i = 0;
-      const len = normalized.length;
-
-      while (i < len) {
-        const ch = normalized[i];
-
-        if (/\s/.test(ch)) {
-          i++;
-          continue;
-        }
-
-        // Number literal (including decimals and scientific notation like 5E3, 1.2E-4, 1e+21)
-        if (/\d/.test(ch) || (ch === '.' && i + 1 < len && /\d/.test(normalized[i + 1]))) {
-          let numStr = '';
-          while (i < len && /[\d.]/.test(normalized[i])) {
-            numStr += normalized[i++];
-          }
-          // Uppercase E scientific notation (e.g. 5E3, 5E-3, 5E+3) or lowercase e+/-digits
-          if (i < len && (normalized[i] === 'E' || normalized[i] === 'e')) {
-            const nextCh = i + 1 < len ? normalized[i + 1] : '';
-            const afterSignCh = i + 2 < len ? normalized[i + 2] : '';
-            const isExplicitSignedExp = (nextCh === '+' || nextCh === '-') && /\d/.test(afterSignCh);
-            const isUppercaseUnsignedExp = normalized[i] === 'E' && /\d/.test(nextCh);
-
-            if (isExplicitSignedExp || isUppercaseUnsignedExp) {
-              numStr += normalized[i++]; // 'E' or 'e'
-              if (normalized[i] === '+' || normalized[i] === '-') {
-                numStr += normalized[i++];
-              }
-              while (i < len && /\d/.test(normalized[i])) {
-                numStr += normalized[i++];
-              }
-            }
-          }
-          const parsedNum = Number(numStr);
-          if (isNaN(parsedNum)) {
-            throw new Error(`Invalid number: ${numStr}`);
-          }
-          rawTokens.push({ type: 'NUMBER', value: parsedNum });
-          continue;
-        }
-
-        // Identifiers (functions, operators like mod/yroot, and constants: sin, cos, pi, e, ans, etc.)
-        if (/[a-zA-Z_]/.test(ch)) {
-          let ident = '';
-          while (i < len && /[a-zA-Z0-9_]/.test(normalized[i])) {
-            ident += normalized[i++];
-          }
-          const lower = ident.toLowerCase();
-          if (lower === 'mod') {
-            rawTokens.push({ type: 'OP', value: 'mod' });
-          } else if (lower === 'yroot') {
-            rawTokens.push({ type: 'OP', value: 'yroot' });
-          } else {
-            rawTokens.push({ type: 'IDENT', value: lower });
-          }
-          continue;
-        }
-
-        if (ch === '(') {
-          rawTokens.push({ type: 'LPAREN' });
-          i++;
-          continue;
-        }
-
-        if (ch === ')') {
-          rawTokens.push({ type: 'RPAREN' });
-          i++;
-          continue;
-        }
-
-        if (ch === ',') {
-          rawTokens.push({ type: 'COMMA' });
-          i++;
-          continue;
-        }
-
-        if (ch === '+' || ch === '-' || ch === '*' || ch === '/' || ch === '^' || ch === '!' || ch === '%') {
-          rawTokens.push({ type: 'OP', value: ch });
-          i++;
-          continue;
-        }
-
-        throw new Error(`Unexpected character: "${ch}"`);
-      }
-
-      if (rawTokens.length === 0) {
-        throw new Error('Empty expression');
-      }
-
-      // 2. Insert implicit multiplication tokens where appropriate
-      // e.g. 2pi, 2(3), (2)(3), 2sin(30), sin(30)cos(60), 5!2, 2Ans
-      const tokens: Token[] = [];
-      for (let idx = 0; idx < rawTokens.length; idx++) {
-        const curr = rawTokens[idx];
-        if (idx > 0) {
-          const prev = rawTokens[idx - 1];
-          const prevIsValueEnd =
-            prev.type === 'NUMBER' ||
-            prev.type === 'RPAREN' ||
-            (prev.type === 'IDENT' && (prev.value === 'pi' || prev.value === 'e' || prev.value === 'ans')) ||
-            (prev.type === 'OP' && (prev.value === '!' || prev.value === '%'));
-
-          const currIsValueStart =
-            curr.type === 'LPAREN' ||
-            curr.type === 'IDENT' ||
-            (curr.type === 'NUMBER' && prev.type !== 'NUMBER');
-
-          if (prevIsValueEnd && currIsValueStart) {
-            tokens.push({ type: 'OP', value: '*' });
-          }
-        }
-        tokens.push(curr);
-      }
-
-      // 3. Math helpers & functions
-      const toRad = (angle: number) => (currentAngle === 'DEG' ? (angle * Math.PI) / 180 : angle);
-      const fromRad = (rad: number) => (currentAngle === 'DEG' ? (rad * 180) / Math.PI : rad);
-
-      const applyUnaryFunction = (fnName: string, x: number): number => {
-        switch (fnName) {
-          case 'sin':
-            if (currentAngle === 'DEG' && x % 180 === 0) return 0;
-            return cleanFloat(Math.sin(toRad(x)));
-          case 'cos':
-            if (currentAngle === 'DEG' && (x - 90) % 180 === 0) return 0;
-            return cleanFloat(Math.cos(toRad(x)));
-          case 'tan':
-            if (currentAngle === 'DEG' && (x - 90) % 180 === 0) {
-              throw new Error(`tan(${x}°) is undefined (asymptote)`);
-            }
-            return cleanFloat(Math.tan(toRad(x)));
-          case 'asin':
-            if (x < -1 || x > 1) throw new Error('sin⁻¹ input must be between -1 and 1');
-            return cleanFloat(fromRad(Math.asin(x)));
-          case 'acos':
-            if (x < -1 || x > 1) throw new Error('cos⁻¹ input must be between -1 and 1');
-            return cleanFloat(fromRad(Math.acos(x)));
-          case 'atan':
-            return cleanFloat(fromRad(Math.atan(x)));
-          case 'sinh':
-            return cleanFloat(Math.sinh(x));
-          case 'cosh':
-            return cleanFloat(Math.cosh(x));
-          case 'tanh':
-            return cleanFloat(Math.tanh(x));
-          case 'asinh':
-            return cleanFloat(Math.asinh(x));
-          case 'acosh':
-            if (x < 1) throw new Error('cosh⁻¹ input must be ≥ 1');
-            return cleanFloat(Math.acosh(x));
-          case 'atanh':
-            if (x <= -1 || x >= 1) throw new Error('tanh⁻¹ input must be strictly between -1 and 1');
-            return cleanFloat(Math.atanh(x));
-          case 'sqrt':
-            if (x < 0) throw new Error('Square root of a negative number is undefined');
-            return cleanFloat(Math.sqrt(x));
-          case 'cbrt':
-            return cleanFloat(Math.cbrt(x));
-          case 'log':
-            if (x <= 0) throw new Error('Logarithm (log) is undefined for numbers ≤ 0');
-            return cleanFloat(Math.log10(x));
-          case 'log2':
-            if (x <= 0) throw new Error('Logarithm (log₂) is undefined for numbers ≤ 0');
-            return cleanFloat(Math.log2(x));
-          case 'ln':
-            if (x <= 0) throw new Error('Natural logarithm (ln) is undefined for numbers ≤ 0');
-            return cleanFloat(Math.log(x));
-          case 'exp':
-            return cleanFloat(Math.exp(x));
-          case 'tenpow':
-            return cleanFloat(Math.pow(10, x));
-          case 'twopow':
-            return cleanFloat(Math.pow(2, x));
-          case 'abs':
-            return cleanFloat(Math.abs(x));
-          case 'fact':
-            return factorial(cleanFloat(x));
-          default:
-            throw new Error(`Unknown function: ${fnName}`);
-        }
-      };
-
-      // 4. Recursive-descent parser
-      let pos = 0;
-      const peek = (): Token | undefined => tokens[pos];
-      const consume = (): Token => tokens[pos++];
-
-      const parseExpression = (): number => {
-        let left = parseTerm();
-        while (pos < tokens.length) {
-          const t = peek();
-          if (t && t.type === 'OP' && (t.value === '+' || t.value === '-')) {
-            consume();
-            if (pos >= tokens.length) break;
-            const right = parseTerm();
-            left = t.value === '+' ? left + right : left - right;
-          } else {
-            break;
-          }
-        }
-        return cleanFloat(left);
-      };
-
-      const parseTerm = (): number => {
-        let left = parseUnary();
-        while (pos < tokens.length) {
-          const t = peek();
-          if (t && t.type === 'OP' && (t.value === '*' || t.value === '/' || t.value === 'mod')) {
-            consume();
-            if (pos >= tokens.length) break;
-            const right = parseUnary();
-            if (t.value === '/') {
-              if (Math.abs(right) < 1e-15) {
-                throw new Error('Cannot divide by zero.');
-              }
-              left = left / right;
-            } else if (t.value === 'mod') {
-              if (Math.abs(right) < 1e-15) {
-                throw new Error('Modulo by zero is undefined.');
-              }
-              left = left % right;
-            } else {
-              left = left * right;
-            }
-          } else {
-            break;
-          }
-        }
-        return left;
-      };
-
-      const parseUnary = (): number => {
-        const t = peek();
-        if (t && t.type === 'OP' && t.value === '+') {
-          consume();
-          return parseUnary();
-        }
-        if (t && t.type === 'OP' && t.value === '-') {
-          consume();
-          return -parseUnary();
-        }
-        return parsePower();
-      };
-
-      const parsePower = (): number => {
-        const base = parsePostfix();
-        const t = peek();
-        if (t && t.type === 'OP' && (t.value === '^' || t.value === 'yroot')) {
-          consume();
-          if (pos >= tokens.length) return base;
-          const exponent = parseUnary();
-          if (t.value === 'yroot') {
-            if (Math.abs(exponent) < 1e-15) {
-              throw new Error('Root degree cannot be zero.');
-            }
-            if (base < 0) {
-              if (Number.isInteger(exponent) && Math.abs(exponent % 2) === 1) {
-                return cleanFloat(-Math.pow(-base, 1 / exponent));
-              }
-              throw new Error('Even root of a negative number is undefined.');
-            }
-            return cleanFloat(Math.pow(base, 1 / exponent));
-          }
-          const res = Math.pow(base, exponent);
-          if (isNaN(res)) {
-            throw new Error('Invalid exponentiation operation.');
-          }
-          return cleanFloat(res);
-        }
-        return base;
-      };
-
-      const parsePostfix = (): number => {
-        let val = parsePrimary();
-        while (pos < tokens.length) {
-          const t = peek();
-          if (t && t.type === 'OP' && (t.value === '!' || t.value === '%')) {
-            consume();
-            if (t.value === '!') {
-              val = factorial(cleanFloat(val));
-            } else {
-              val = val / 100;
-            }
-          } else {
-            break;
-          }
-        }
-        return val;
-      };
-
-      const parsePrimary = (): number => {
-        const t = peek();
-        if (!t) {
-          throw new Error('Incomplete expression.');
-        }
-
-        if (t.type === 'NUMBER') {
-          consume();
-          return t.value;
-        }
-
-        if (t.type === 'IDENT') {
-          consume();
-          if (t.value === 'pi') return Math.PI;
-          if (t.value === 'e') return Math.E;
-          if (t.value === 'ans') {
-            const parsedAns = Number(ansValueStr);
-            return isNaN(parsedAns) ? 0 : parsedAns;
-          }
-
-          const fnName = t.value;
-          const nextTok = peek();
-          if (nextTok && nextTok.type === 'LPAREN') {
-            consume(); // consume '('
-            const arg1 = parseExpression();
-            if (fnName === 'pow') {
-              const commaTok = peek();
-              if (commaTok && commaTok.type === 'COMMA') {
-                consume();
-                const arg2 = parseExpression();
-                const closeTok = peek();
-                if (closeTok && closeTok.type === 'RPAREN') consume();
-                const res = Math.pow(arg1, arg2);
-                if (isNaN(res)) throw new Error('Invalid power operation.');
-                return cleanFloat(res);
-              }
-            }
-            const closeTok = peek();
-            if (closeTok && closeTok.type === 'RPAREN') {
-              consume();
-            }
-            return applyUnaryFunction(fnName, arg1);
-          } else {
-            const arg1 = parseUnary();
-            return applyUnaryFunction(fnName, arg1);
-          }
-        }
-
-        if (t.type === 'LPAREN') {
-          consume();
-          const nextTok = peek();
-          if (nextTok && nextTok.type === 'RPAREN') {
-            consume();
-            return 0;
-          }
-          const val = parseExpression();
-          const closeTok = peek();
-          if (closeTok && closeTok.type === 'RPAREN') {
-            consume();
-          }
-          return val;
-        }
-
-        throw new Error('Invalid mathematical expression.');
-      };
-
-      const val = parseExpression();
-      if (pos < tokens.length) {
-        while (pos < tokens.length && tokens[pos].type === 'RPAREN') {
-          pos++;
-        }
-        if (pos < tokens.length) {
-          throw new Error('Invalid mathematical syntax.');
-        }
-      }
-
-      if (typeof val !== 'number' || isNaN(val)) {
-        throw new Error('Invalid mathematical expression.');
-      }
-      if (!isFinite(val)) {
-        throw new Error('Result exceeds maximum limit (Infinity/overflow).');
-      }
-
-      const cleaned = cleanFloat(val);
-      const display = Number.isInteger(cleaned)
-        ? cleaned.toString()
-        : parseFloat(cleaned.toFixed(10)).toString();
-
-      return { result: cleaned, display };
-    },
-    []
-  );
-
-  // Assemble complete expression from `expression` and `currentInput`
-  const buildFullExpression = useCallback(
-    (expr: string, curr: string, isNew: boolean): string => {
-      if (curr === 'Error') return '';
-      const trimmedExpr = expr.trim();
-      if (!trimmedExpr) {
-        return closeUnbalancedParens(curr);
-      }
-
-      if (isNew) {
-        const stripped = trimmedExpr.replace(/(?:\bmod\b|\byroot\b|[+\-×÷^,\s])+$/i, '').trim();
-        return closeUnbalancedParens(stripped || curr);
-      }
-
-      const balancedCurr = closeUnbalancedParens(curr);
-      if (trimmedExpr.endsWith(')')) {
-        return closeUnbalancedParens(`${trimmedExpr} × ${balancedCurr}`);
-      }
-      return closeUnbalancedParens(`${trimmedExpr} ${balancedCurr}`);
-    },
-    []
-  );
-
-  // Live real-time preview computation
-  const livePreview = useMemo(() => {
-    if (errorMessage) return null;
-    if (!expression && isNewInput) return null;
-
-    const fullExpr = buildFullExpression(expression, currentInput, isNewInput);
-    if (!fullExpr) return null;
-
-    try {
-      const { display } = safeEvaluateMath(fullExpr, angleMode, lastAnswer);
-      // Avoid redundant preview when current input is already the exact same single number
-      if (!expression && display === currentInput) return null;
-      return display;
-    } catch {
-      return null;
-    }
-  }, [expression, currentInput, isNewInput, errorMessage, angleMode, lastAnswer, buildFullExpression, safeEvaluateMath]);
-
-  // Key press handlers
-  const handleDigit = (digit: string) => {
-    triggerVibration('click');
-    setErrorMessage(null);
-
-    if (evaluatedResult !== null) {
-      setExpression('');
-      setEvaluatedResult(null);
-      setCurrentInput(digit);
-      setIsNewInput(false);
-      return;
-    }
-
-    if (isNewInput || currentInput === 'Error') {
-      setCurrentInput(digit);
-      setIsNewInput(false);
-      return;
-    }
-
-    setCurrentInput((prev) => {
-      if (prev === '0') {
-        return digit;
-      }
-      if (prev.endsWith(')') || prev.endsWith('π') || prev.endsWith('Ans') || (prev.endsWith('e') && !prev.endsWith('E'))) {
-        return `${prev} × ${digit}`;
-      }
-      return prev + digit;
-    });
-    setIsNewInput(false);
-  };
-
-  const handleDecimal = () => {
-    triggerVibration('click');
-    setErrorMessage(null);
-
-    if (evaluatedResult !== null) {
-      setExpression('');
-      setEvaluatedResult(null);
-      setCurrentInput('0.');
-      setIsNewInput(false);
-      return;
-    }
-
-    if (isNewInput || currentInput === 'Error') {
-      setCurrentInput('0.');
-      setIsNewInput(false);
-      return;
-    }
-
-    setCurrentInput((prev) => {
-      // Do not insert decimal inside scientific notation exponent
-      if (/E[+-]?\d*$/.test(prev)) return prev;
-      const lastNumberSegment = prev.split(/[^0-9.]/).pop() || '';
-      if (lastNumberSegment.includes('.')) return prev;
-      if (prev.endsWith('(')) return `${prev}0.`;
-      if (prev.endsWith(')') || prev.endsWith('π') || prev.endsWith('Ans')) return `${prev} × 0.`;
-      return prev + '.';
-    });
-    setIsNewInput(false);
-  };
-
-  const handleScientificExponent = () => {
-    triggerVibration('click');
-    setErrorMessage(null);
-
-    if (evaluatedResult !== null) {
-      setExpression('');
-      setEvaluatedResult(null);
-      setCurrentInput(`${evaluatedResult}E`);
-      setIsNewInput(false);
-      return;
-    }
-
-    if (isNewInput || currentInput === 'Error') {
-      setCurrentInput('1E');
-      setIsNewInput(false);
-      return;
-    }
-
-    setCurrentInput((prev) => {
-      if (/E[+-]?\d*$/.test(prev)) return prev;
-      if (/\d$/.test(prev)) return `${prev}E`;
-      if (prev.endsWith('(')) return `${prev}1E`;
-      return `${prev} × 1E`;
-    });
-    setIsNewInput(false);
-  };
-
-  const handleOperator = (op: string) => {
-    triggerVibration('click');
-    setErrorMessage(null);
-
-    if (currentInput === 'Error') {
-      setExpression(`0 ${op}`);
-      setCurrentInput('0');
-      setIsNewInput(true);
-      setEvaluatedResult(null);
-      return;
-    }
-
-    // 1. Chaining immediately after '='
-    if (evaluatedResult !== null) {
-      setExpression(`${evaluatedResult} ${op}`);
-      setCurrentInput(evaluatedResult);
-      setEvaluatedResult(null);
-      setIsNewInput(true);
-      return;
-    }
-
-    // 2. User pressed an operator right after another operator or '(' / ')' without typing a new number
-    if (isNewInput) {
-      if (!expression) {
-        const startVal = currentInput && currentInput !== 'Error' ? closeUnbalancedParens(currentInput) : '0';
-        setExpression(`${startVal} ${op}`);
-      } else if (/(?:\bmod|\byroot|[+\-×÷^])\s*$/.test(expression)) {
-        setExpression(expression.replace(/(?:\bmod|\byroot|[+\-×÷^])\s*$/, op));
-      } else {
-        setExpression(`${expression} ${op}`);
-      }
-      setIsNewInput(true);
-      return;
-    }
-
-    // Strip dangling 'E' or 'E-' if user directly hits an operator
-    const cleanedCurr = currentInput.replace(/E[+-]?$/, '');
-    const balancedCurr = closeUnbalancedParens(cleanedCurr || '0');
-    const combinedExpr = expression
-      ? expression.trim().endsWith(')')
-        ? `${expression.trim()} × ${balancedCurr}`
-        : `${expression.trim()} ${balancedCurr}`
-      : balancedCurr;
-
-    const nextExpression = `${combinedExpr} ${op}`;
-    setExpression(nextExpression);
-
-    try {
-      if (countUnclosedParens(combinedExpr) === 0) {
-        const { display } = safeEvaluateMath(combinedExpr, angleMode, lastAnswer);
-        setCurrentInput(display);
-      } else {
-        setCurrentInput('0');
-      }
-    } catch {
-      setCurrentInput('0');
-    }
-
-    setIsNewInput(true);
-  };
-
-  const handleFunction = (fnName: string) => {
-    triggerVibration('click');
-    setErrorMessage(null);
-
-    if (fnName === 'pow') {
-      handleOperator('^');
-      return;
-    }
-    if (fnName === 'yroot') {
-      handleOperator('yroot');
-      return;
-    }
-
-    const activeVal =
-      currentInput === 'Error' ? '0' : evaluatedResult !== null ? evaluatedResult : currentInput;
-
-    // Immediate unary/postfix wrappers
-    if (fnName === 'sq' || fnName === 'cube' || fnName === 'reciprocal' || fnName === 'factorial') {
-      const cleanedTarget = closeUnbalancedParens((activeVal || '0').replace(/E[+-]?$/, '') || '0');
-      const wrappedBase = isAtomicOperand(cleanedTarget) ? cleanedTarget : `(${cleanedTarget})`;
-
-      if (evaluatedResult !== null) {
-        setExpression('');
-        setEvaluatedResult(null);
-      }
-
-      if (fnName === 'sq') {
-        setCurrentInput(`${wrappedBase}^2`);
-      } else if (fnName === 'cube') {
-        setCurrentInput(`${wrappedBase}^3`);
-      } else if (fnName === 'reciprocal') {
-        setCurrentInput(`1/(${cleanedTarget})`);
-      } else if (fnName === 'factorial') {
-        setCurrentInput(`${wrappedBase}!`);
-      }
-      setIsNewInput(false);
-      return;
-    }
-
-    // Immediate prefix exponential wrappers: 10^x, 2^x, e^x
-    if (fnName === 'tenpow' || fnName === 'twopow' || fnName === 'exp') {
-      const prefix = fnName === 'tenpow' ? '10^(' : fnName === 'twopow' ? '2^(' : 'exp(';
-      if (evaluatedResult !== null) {
-        setExpression('');
-        setEvaluatedResult(null);
-        setCurrentInput(`${prefix}${evaluatedResult})`);
-        setIsNewInput(false);
-        return;
-      }
-      if (isNewInput) {
-        setCurrentInput(prefix);
-        setIsNewInput(false);
-        return;
-      }
-      setCurrentInput((prev) => {
-        if (prev.endsWith('(')) return `${prev}${prefix}`;
-        const closed = closeUnbalancedParens(prev);
-        return `${prefix}${closed})`;
-      });
-      setIsNewInput(false);
-      return;
-    }
-
-    // Standard prefix functions: sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh, ln, log, sqrt, cbrt, abs
-    if (evaluatedResult !== null) {
-      setExpression('');
-      setEvaluatedResult(null);
-      setCurrentInput(`${fnName}(${evaluatedResult})`);
-      setIsNewInput(false);
-      return;
-    }
-
-    if (isNewInput) {
-      setCurrentInput(`${fnName}(`);
-      setIsNewInput(false);
-      return;
-    }
-
-    setCurrentInput((prev) => {
-      if (prev.endsWith('(')) {
-        return `${prev}${fnName}(`;
-      }
-      const closed = closeUnbalancedParens(prev);
-      return `${fnName}(${closed})`;
-    });
-    setIsNewInput(false);
-  };
-
-  const handleConstant = (constant: string) => {
-    triggerVibration('click');
-    setErrorMessage(null);
-
-    if (evaluatedResult !== null) {
-      setExpression('');
-      setEvaluatedResult(null);
-      setCurrentInput(constant);
-      setIsNewInput(false);
-      return;
-    }
-
-    if (!isNewInput && currentInput !== 'Error') {
-      if (currentInput.endsWith('(')) {
-        setCurrentInput(`${currentInput}${constant}`);
-      } else {
-        setCurrentInput(`${currentInput} × ${constant}`);
-      }
-      setIsNewInput(false);
-      return;
-    }
-
-    setCurrentInput(constant);
-    setIsNewInput(false);
-  };
-
-  const handleParenthesis = (p: '(' | ')') => {
-    triggerVibration('click');
-    setErrorMessage(null);
-
-    if (p === '(') {
-      if (evaluatedResult !== null) {
-        setExpression(`${evaluatedResult} × (`);
-        setEvaluatedResult(null);
-        setCurrentInput('0');
-        setIsNewInput(true);
+  const [livePreview, setLivePreview] = useState<string | null>(null);
+
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const computeReqIdRef = useRef<number>(0);
+
+  const {
+    expression,
+    currentInput,
+    isNewInput,
+    evaluatedResult,
+    lastAnswer,
+    errorMessage,
+    angleMode,
+    memoryValue,
+    hasMemory,
+    tape: localTape,
+  } = state;
+
+  // Defer preview inputs so keystrokes & keypad presses always render immediately without blocking
+  const deferredExpr = useDeferredValue(expression);
+  const deferredInput = useDeferredValue(currentInput);
+  const deferredIsNew = useDeferredValue(isNewInput);
+  const deferredError = useDeferredValue(errorMessage);
+  const deferredAngle = useDeferredValue(angleMode);
+  const deferredLastAnswer = useDeferredValue(lastAnswer);
+
+  const openParenCount = useMemo(() => {
+    const activePart = isNewInput || currentInput === 'Error' ? '' : currentInput;
+    return countUnclosedParens(`${expression} ${activePart}`);
+  }, [expression, currentInput, isNewInput]);
+
+  // Decoupled asynchronous cancellable live-preview computation using bounded LRU cache
+  useEffect(() => {
+    computeReqIdRef.current += 1;
+    const reqId = computeReqIdRef.current;
+    let cancelled = false;
+    let idleHandle: number | null = null;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+    const runPreviewCalculation = () => {
+      if (cancelled || reqId !== computeReqIdRef.current) return;
+
+      if (deferredError || (!deferredExpr && deferredIsNew)) {
+        setLivePreview(null);
         return;
       }
 
-      if (!isNewInput && currentInput !== 'Error') {
-        if (currentInput.endsWith('(')) {
-          setCurrentInput((prev) => `${prev}(`);
-          return;
-        }
-        const closedCurr = closeUnbalancedParens(currentInput);
-        setExpression((prev) => (prev ? `${prev} ${closedCurr} × (` : `${closedCurr} × (`));
-        setCurrentInput('0');
-        setIsNewInput(true);
+      const previewExpr = buildFullExpression(deferredExpr, deferredInput, deferredIsNew, true);
+      if (!previewExpr) {
+        setLivePreview(null);
         return;
       }
 
-      setExpression((prev) => {
-        if (!prev) return '(';
-        if (prev.trim().endsWith(')')) return `${prev.trim()} × (`;
-        return `${prev} (`;
-      });
-      setCurrentInput('0');
-      setIsNewInput(true);
-    } else {
-      // Closing parenthesis ')'
-      if (!isNewInput && countUnclosedParens(currentInput) > 0) {
-        setCurrentInput((prev) => `${prev})`);
-        return;
-      }
-
-      const openInExpr = countUnclosedParens(expression);
-      if (openInExpr <= 0) {
-        return;
-      }
-
-      const closedCurr = !isNewInput && currentInput !== 'Error' ? closeUnbalancedParens(currentInput) : '';
-      const nextExpr = closedCurr
-        ? `${expression} ${closedCurr})`.trim()
-        : `${expression.replace(/(?:\bmod|\byroot|[+\-×÷^])\s*$/, '').trim()})`;
-
-      setExpression(nextExpr);
-
-      // Evaluate the closed parenthesized sub-expression so the display shows a helpful value instead of 0
       try {
-        // Find matching '(' for the just-appended ')'
-        let depth = 0;
-        let matchIdx = -1;
-        for (let idx = nextExpr.length - 1; idx >= 0; idx--) {
-          if (nextExpr[idx] === ')') depth++;
-          else if (nextExpr[idx] === '(') {
-            depth--;
-            if (depth === 0) {
-              matchIdx = idx;
-              break;
-            }
-          }
-        }
-        if (matchIdx !== -1) {
-          const subExpr = nextExpr.slice(matchIdx);
-          const { display } = safeEvaluateMath(subExpr, angleMode, lastAnswer);
-          setCurrentInput(display);
+        const { display } = evaluateWithCache(previewExpr, deferredAngle, deferredLastAnswer, {
+          allowAutoClose: true,
+        });
+        if (cancelled || reqId !== computeReqIdRef.current) return;
+        if (!deferredExpr && display === deferredInput) {
+          setLivePreview(null);
         } else {
-          setCurrentInput('0');
+          setLivePreview(display);
         }
       } catch {
-        setCurrentInput('0');
-      }
-      setIsNewInput(true);
-    }
-  };
-
-  const handleToggleSign = () => {
-    triggerVibration('click');
-    setErrorMessage(null);
-
-    if (currentInput === 'Error') {
-      setCurrentInput('0');
-      setIsNewInput(true);
-      return;
-    }
-
-    setCurrentInput((prev) => {
-      if (prev === '0') return '0';
-      // Support toggling sign of scientific notation exponent (e.g. 5E3 -> 5E-3)
-      const expMatch = prev.match(/^(.*E)([+-]?)(\d*)$/);
-      if (expMatch) {
-        const [, prefix, sign, digits] = expMatch;
-        const nextSign = sign === '-' ? '' : '-';
-        return `${prefix}${nextSign}${digits}`;
-      }
-      const toggled = prev.startsWith('-') ? prev.substring(1) : `-${prev}`;
-      if (evaluatedResult !== null) {
-        setEvaluatedResult(toggled);
-      }
-      return toggled;
-    });
-    setIsNewInput(false);
-  };
-
-  const handlePercent = () => {
-    triggerVibration('click');
-    setErrorMessage(null);
-    if (currentInput === 'Error') return;
-
-    if (evaluatedResult !== null) {
-      setExpression('');
-      setEvaluatedResult(null);
-    }
-    setCurrentInput((prev) => `${closeUnbalancedParens(prev)}%`);
-    setIsNewInput(false);
-  };
-
-  const handleBackspace = () => {
-    triggerVibration('click');
-    setErrorMessage(null);
-
-    if (evaluatedResult !== null) {
-      setEvaluatedResult(null);
-      setIsNewInput(false);
-    }
-
-    setCurrentInput((prev) => {
-      if (prev.length <= 1 || prev === 'Error') {
-        setIsNewInput(true);
-        return '0';
-      }
-      // Remove entire trailing function call prefix (e.g. 'sin(', 'asinh(', '10^(') in one press
-      const fnMatch = prev.match(/(asinh|acosh|atanh|sinh|cosh|tanh|asin|acos|atan|sin|cos|tan|sqrt|cbrt|log2|log|ln|abs|exp|10\^|2\^)\($/);
-      if (fnMatch) {
-        const sliced = prev.slice(0, -fnMatch[0].length);
-        if (!sliced) {
-          setIsNewInput(true);
-          return '0';
+        if (!cancelled && reqId === computeReqIdRef.current) {
+          setLivePreview(null);
         }
-        return sliced;
       }
-      if (prev.endsWith('Ans')) {
-        const sliced = prev.slice(0, -3);
-        if (!sliced) {
-          setIsNewInput(true);
-          return '0';
-        }
-        return sliced;
-      }
-      return prev.slice(0, -1);
-    });
-  };
+    };
 
-  const handleClearAll = () => {
+    const win = typeof window !== 'undefined' ? (window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    }) : null;
+
+    if (win && typeof win.requestIdleCallback === 'function') {
+      idleHandle = win.requestIdleCallback(runPreviewCalculation, { timeout: 60 });
+    } else {
+      timeoutHandle = setTimeout(runPreviewCalculation, 0);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleHandle !== null && win && typeof win.cancelIdleCallback === 'function') {
+        win.cancelIdleCallback(idleHandle);
+      }
+      if (timeoutHandle !== null) {
+        clearTimeout(timeoutHandle);
+      }
+    };
+  }, [
+    deferredExpr,
+    deferredInput,
+    deferredIsNew,
+    deferredError,
+    deferredAngle,
+    deferredLastAnswer,
+  ]);
+
+  // Unmount cleanup: release timers and bounded evaluation cache to prevent leaks
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
+      }
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      clearEvaluationCache();
+    };
+  }, []);
+
+  // Atomic action dispatchers
+  const handleDigit = useCallback(
+    (digit: string) => {
+      triggerVibration('click');
+      dispatch({ type: 'DIGIT', digit });
+    },
+    [triggerVibration]
+  );
+
+  const handleDecimal = useCallback(() => {
+    triggerVibration('click');
+    dispatch({ type: 'DECIMAL' });
+  }, [triggerVibration]);
+
+  const handleScientificExponent = useCallback(() => {
+    triggerVibration('click');
+    dispatch({ type: 'SCI_EXP' });
+  }, [triggerVibration]);
+
+  const handleOperator = useCallback(
+    (op: string) => {
+      triggerVibration('click');
+      dispatch({ type: 'OPERATOR', op });
+    },
+    [triggerVibration]
+  );
+
+  const handleFunction = useCallback(
+    (fnName: string) => {
+      triggerVibration('click');
+      dispatch({ type: 'FUNCTION', fnName });
+    },
+    [triggerVibration]
+  );
+
+  const handleConstant = useCallback(
+    (constant: string) => {
+      triggerVibration('click');
+      dispatch({ type: 'CONSTANT', constant });
+    },
+    [triggerVibration]
+  );
+
+  const handleParenthesis = useCallback(
+    (p: '(' | ')') => {
+      triggerVibration('click');
+      dispatch({ type: 'PAREN', paren: p });
+    },
+    [triggerVibration]
+  );
+
+  const handleToggleSign = useCallback(() => {
+    triggerVibration('click');
+    dispatch({ type: 'TOGGLE_SIGN' });
+  }, [triggerVibration]);
+
+  const handlePercent = useCallback(() => {
+    triggerVibration('click');
+    dispatch({ type: 'PERCENT' });
+  }, [triggerVibration]);
+
+  const handleBackspace = useCallback(() => {
+    triggerVibration('click');
+    dispatch({ type: 'BACKSPACE' });
+  }, [triggerVibration]);
+
+  const handleClearAll = useCallback(() => {
     triggerVibration('reset');
-    setExpression('');
-    setCurrentInput('0');
-    setIsNewInput(true);
-    setEvaluatedResult(null);
-    setErrorMessage(null);
-  };
+    dispatch({ type: 'CLEAR_ALL' });
+  }, [triggerVibration]);
 
-  const handleClearEntry = () => {
+  const handleClearEntry = useCallback(() => {
     triggerVibration('click');
-    setCurrentInput('0');
-    setIsNewInput(true);
-    setErrorMessage(null);
-  };
+    dispatch({ type: 'CLEAR_ENTRY' });
+  }, [triggerVibration]);
 
-  // Memory handlers
-  const handleMemory = (action: 'MC' | 'MR' | 'M+' | 'M-' | 'MS') => {
+  const handleMemory = useCallback(
+    (action: 'MC' | 'MR' | 'M+' | 'M-' | 'MS') => {
+      triggerVibration('click');
+      dispatch({ type: 'MEMORY', action });
+    },
+    [triggerVibration]
+  );
+
+  const handleEqual = useCallback(() => {
     triggerVibration('click');
-    let currentVal = 0;
-    try {
-      const target = evaluatedResult || currentInput;
-      if (target && target !== 'Error') {
-        const { result } = safeEvaluateMath(target, angleMode, lastAnswer);
-        currentVal = result;
-      }
-    } catch {
-      currentVal = parseFloat(evaluatedResult || currentInput) || 0;
-    }
-
-    switch (action) {
-      case 'MC':
-        setMemoryValue(0);
-        setHasMemory(false);
-        break;
-      case 'MR':
-        if (hasMemory) {
-          setErrorMessage(null);
-          if (evaluatedResult !== null) {
-            setExpression('');
-            setEvaluatedResult(null);
-          }
-          setCurrentInput(memoryValue.toString());
-          setIsNewInput(false);
-        }
-        break;
-      case 'M+':
-        setMemoryValue((prev) => cleanFloat(prev + currentVal));
-        setHasMemory(true);
-        break;
-      case 'M-':
-        setMemoryValue((prev) => cleanFloat(prev - currentVal));
-        setHasMemory(true);
-        break;
-      case 'MS':
-        setMemoryValue(cleanFloat(currentVal));
-        setHasMemory(true);
-        break;
-    }
-  };
-
-  // Main Equal Evaluation
-  const handleEqual = () => {
-    triggerVibration('click');
-    setErrorMessage(null);
-
-    if (currentInput === 'Error') {
-      handleClearAll();
-      return;
-    }
-
-    const fullExpr = buildFullExpression(expression, currentInput, isNewInput);
-    if (!fullExpr) return;
-
-    try {
-      const { display } = safeEvaluateMath(fullExpr, angleMode, lastAnswer);
-      setEvaluatedResult(display);
-      setLastAnswer(display);
-      setCurrentInput(display);
-      setExpression('');
-      setIsNewInput(true);
-      triggerVibration('success');
-
-      // Add to internal session tape
-      setLocalTape((prev) => [
-        {
-          expr: fullExpr,
-          res: display,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        },
-        ...prev.slice(0, 19),
-      ]);
-    } catch (err: any) {
-      triggerVibration('error');
-      setErrorMessage(err.message || 'Invalid mathematical expression');
-      setCurrentInput('Error');
-      setEvaluatedResult(null);
-      setIsNewInput(true);
-    }
-  };
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    dispatch({ type: 'EQUAL', timeStr });
+  }, [triggerVibration]);
 
   const handleCopy = () => {
     const textToCopy = evaluatedResult || currentInput;
@@ -1079,7 +258,11 @@ export default function ScientificCalculator({
     navigator.clipboard?.writeText(textToCopy);
     setCopied(true);
     triggerVibration('click');
-    setTimeout(() => setCopied(false), 2000);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => {
+      setCopied(false);
+      copyTimerRef.current = null;
+    }, 2000);
   };
 
   const handleSaveToHistory = () => {
@@ -1091,7 +274,7 @@ export default function ScientificCalculator({
       evaluatedResult !== null && lastTape && lastTape.res === evaluatedResult
         ? lastTape.expr
         : expression || !isNewInput
-        ? buildFullExpression(expression, currentInput, isNewInput)
+        ? buildFullExpression(expression, currentInput, isNewInput, true)
         : currentInput;
 
     const modeLabel = calculatorView === 'scientific' ? 'Scientific' : 'Standard';
@@ -1100,10 +283,14 @@ export default function ScientificCalculator({
     onSaveHistory('Calculator', details, `= ${res}`);
     setSaved(true);
     triggerVibration('success');
-    setTimeout(() => setSaved(false), 2000);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      setSaved(false);
+      saveTimerRef.current = null;
+    }, 2000);
   };
 
-  // Keyboard Shortcuts Support
+  // Keyboard Shortcuts Support — stable registration with zero listener churn
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
@@ -1111,37 +298,38 @@ export default function ScientificCalculator({
       }
 
       if (e.key >= '0' && e.key <= '9') {
-        handleDigit(e.key);
+        dispatch({ type: 'DIGIT', digit: e.key });
       } else if (e.key === '.') {
-        handleDecimal();
+        dispatch({ type: 'DECIMAL' });
       } else if (e.key === '+') {
-        handleOperator('+');
+        dispatch({ type: 'OPERATOR', op: '+' });
       } else if (e.key === '-') {
-        handleOperator('−');
+        dispatch({ type: 'OPERATOR', op: '−' });
       } else if (e.key === '*') {
-        handleOperator('×');
+        dispatch({ type: 'OPERATOR', op: '×' });
       } else if (e.key === '/') {
         e.preventDefault();
-        handleOperator('÷');
+        dispatch({ type: 'OPERATOR', op: '÷' });
       } else if (e.key === '^') {
-        handleOperator('^');
+        dispatch({ type: 'OPERATOR', op: '^' });
       } else if (e.key === 'Enter' || e.key === '=') {
         e.preventDefault();
-        handleEqual();
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        dispatch({ type: 'EQUAL', timeStr });
       } else if (e.key === 'Backspace') {
-        handleBackspace();
+        dispatch({ type: 'BACKSPACE' });
       } else if (e.key === 'Escape') {
-        handleClearAll();
+        dispatch({ type: 'CLEAR_ALL' });
       } else if (e.key === '(' || e.key === ')') {
-        handleParenthesis(e.key);
+        dispatch({ type: 'PAREN', paren: e.key });
       } else if (e.key === '%') {
-        handlePercent();
+        dispatch({ type: 'PERCENT' });
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  });
+  }, []);
 
   // Dynamic scientific function labels based on 2nd and HYP states
   const trigSinLabel = isHyperbolic
@@ -1199,7 +387,7 @@ export default function ScientificCalculator({
               <button
                 type="button"
                 onClick={() => {
-                  setAngleMode((prev) => (prev === 'DEG' ? 'RAD' : 'DEG'));
+                  dispatch({ type: 'TOGGLE_ANGLE' });
                   triggerVibration('click');
                 }}
                 className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer ${
@@ -1222,6 +410,14 @@ export default function ScientificCalculator({
               {isHyperbolic && (
                 <span className="px-1.5 py-0.5 rounded bg-cyan-500/30 text-cyan-300 text-[10px] font-bold">
                   HYP
+                </span>
+              )}
+              {openParenCount > 0 && (
+                <span
+                  className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold"
+                  title="Unclosed parentheses awaiting closing ')'"
+                >
+                  {openParenCount} (
                 </span>
               )}
             </div>
@@ -1342,7 +538,7 @@ export default function ScientificCalculator({
                 <span>Recent Tape Records</span>
                 <button
                   type="button"
-                  onClick={() => setLocalTape([])}
+                  onClick={() => dispatch({ type: 'CLEAR_TAPE' })}
                   className="text-rose-500 hover:text-rose-600 font-semibold text-[11px] cursor-pointer"
                 >
                   Clear Tape
@@ -1357,10 +553,7 @@ export default function ScientificCalculator({
                     <div
                       key={idx}
                       onClick={() => {
-                        setErrorMessage(null);
-                        setEvaluatedResult(null);
-                        setCurrentInput(item.res);
-                        setIsNewInput(false);
+                        dispatch({ type: 'LOAD_TAPE', res: item.res });
                         triggerVibration('click');
                       }}
                       className="p-2 rounded-xl bg-white border border-slate-100 flex items-center justify-between hover:border-indigo-200 cursor-pointer transition-colors"
@@ -1442,7 +635,7 @@ export default function ScientificCalculator({
               <button
                 type="button"
                 onClick={() => {
-                  setAngleMode((prev) => (prev === 'DEG' ? 'RAD' : 'DEG'));
+                  dispatch({ type: 'TOGGLE_ANGLE' });
                   triggerVibration('click');
                 }}
                 className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-slate-100 hover:bg-slate-200 text-indigo-700 border border-slate-200/80 transition-all active:scale-95 cursor-pointer"

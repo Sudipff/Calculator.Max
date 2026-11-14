@@ -12,16 +12,8 @@ import {
   ArrowRightLeft,
   Coins,
   Clock,
-  CheckCircle2,
-  Loader2,
-  AlertCircle,
-  HardDrive,
-  FileText,
-  Trash2,
   Copy,
   Check,
-  ExternalLink,
-  Hash,
   Sparkles,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -40,12 +32,7 @@ type ToolTabTarget =
 interface HistoryPreviewModalProps {
   item: HistoryItem | null;
   currency: string;
-  currentUser: any;
   onClose: () => void;
-  onDownloadPDF: (item: HistoryItem) => void;
-  onRequestDelete: (item: HistoryItem) => void;
-  onRetrySync: (item: HistoryItem) => void;
-  onOpenTool: (tab: ToolTabTarget) => void;
 }
 
 interface ParsedParamRow {
@@ -372,12 +359,7 @@ function parseSessionParameters(item: HistoryItem): {
 export default function HistoryPreviewModal({
   item,
   currency,
-  currentUser,
   onClose,
-  onDownloadPDF,
-  onRequestDelete,
-  onRetrySync,
-  onOpenTool,
 }: HistoryPreviewModalProps) {
   const [copied, setCopied] = useState(false);
 
@@ -576,120 +558,6 @@ export default function HistoryPreviewModal({
                   {item.details || 'No additional input parameters recorded.'}
                 </div>
               )}
-            </div>
-
-            {/* Session Metadata & Sync Status */}
-            <div className="bg-slate-50/70 border border-slate-200/70 rounded-2xl p-3.5 sm:p-4 space-y-2.5">
-              <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
-                Record Metadata & Sync Status
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                <div className="flex items-center justify-between sm:justify-start gap-2 bg-white border border-slate-200/70 rounded-xl px-3 py-2">
-                  <span className="text-slate-500 font-semibold flex items-center gap-1">
-                    <Hash className="w-3.5 h-3.5 text-slate-400" />
-                    Session ID:
-                  </span>
-                  <span className="font-mono font-bold text-slate-800 truncate">
-                    {item.id}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between bg-white border border-slate-200/70 rounded-xl px-3 py-2">
-                  <span className="text-slate-500 font-semibold">Cloud Sync:</span>
-                  {item.syncStatus === 'synced' || item.dbId ? (
-                    <span className="inline-flex items-center gap-1 font-bold text-emerald-700">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>Synced (#{item.dbId || item.id})</span>
-                    </span>
-                  ) : item.syncStatus === 'syncing' ? (
-                    <span className="inline-flex items-center gap-1 font-bold text-blue-700">
-                      <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin shrink-0" />
-                      <span>Saving...</span>
-                    </span>
-                  ) : item.syncStatus === 'error' ? (
-                    <div className="flex items-center gap-1.5">
-                      <span className="inline-flex items-center gap-1 font-bold text-rose-700">
-                        <AlertCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                        <span>Sync Error</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onRetrySync(item)}
-                        className="px-2 py-0.5 rounded bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold text-[10px] cursor-pointer"
-                      >
-                        Retry
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5">
-                      <span className="inline-flex items-center gap-1 font-bold text-amber-700">
-                        <HardDrive className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                        <span>Local Only</span>
-                      </span>
-                      {currentUser && (
-                        <button
-                          type="button"
-                          onClick={() => onRetrySync(item)}
-                          className="px-2 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[10px] cursor-pointer"
-                        >
-                          Save to DB
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer Action Bar */}
-          <div className="px-5 py-3.5 sm:px-6 sm:py-4 bg-slate-50 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2 shrink-0">
-            <div className="flex flex-wrap items-center gap-2">
-              {theme.tabTarget && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenTool(theme.tabTarget!);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs transition-all active:scale-95 cursor-pointer"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>{theme.tabButtonLabel}</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => onDownloadPDF(item)}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/70 font-bold text-xs transition-all active:scale-95 cursor-pointer"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                <span>Download PDF</span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2 ml-auto">
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onRequestDelete(item);
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200/70 font-bold text-xs transition-all active:scale-95 cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Delete</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold text-xs transition-colors cursor-pointer"
-              >
-                Close
-              </button>
             </div>
           </div>
         </motion.div>

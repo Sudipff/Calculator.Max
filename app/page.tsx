@@ -44,6 +44,7 @@ import EmiCalculator from '../components/EmiCalculator';
 import WishlistPlanner from '../components/WishlistPlanner';
 import AgeCalculator from '../components/AgeCalculator';
 import ScientificCalculator from '../components/ScientificCalculator';
+import CalculatorErrorBoundary from '../components/CalculatorErrorBoundary';
 import AuthHeader from '../components/AuthHeader';
 import CurrencyExchange from '../components/CurrencyExchange';
 import NotesView from '../components/NotesManager/NotesView';
@@ -2423,10 +2424,12 @@ export default function RetailCalc() {
               {/* TAB: SCIENTIFIC CALCULATOR */}
               {activeTab === 'calculator' && (
                 <section className="w-full flex-1 flex flex-col m-0 p-0">
-                  <ScientificCalculator
-                    triggerVibration={triggerVibration}
-                    onSaveHistory={(type, details, result) => saveHistoryItem(type, details, result)}
-                  />
+                  <CalculatorErrorBoundary>
+                    <ScientificCalculator
+                      triggerVibration={triggerVibration}
+                      onSaveHistory={(type, details, result) => saveHistoryItem(type, details, result)}
+                    />
+                  </CalculatorErrorBoundary>
                 </section>
               )}
 
@@ -2970,12 +2973,7 @@ export default function RetailCalc() {
             : null
         }
         currency={currency}
-        currentUser={currentUser}
         onClose={() => setPreviewHistoryItem(null)}
-        onDownloadPDF={handleDownloadSinglePDF}
-        onRequestDelete={(item) => handleRequestDeleteItem(item)}
-        onRetrySync={retrySyncItem}
-        onOpenTool={(tab) => handleTabChange(tab)}
       />
     </div>
   );
