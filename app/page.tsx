@@ -46,6 +46,7 @@ import AgeCalculator from '../components/AgeCalculator';
 import ScientificCalculator from '../components/ScientificCalculator';
 import CalculatorErrorBoundary from '../components/CalculatorErrorBoundary';
 import AuthHeader from '../components/AuthHeader';
+import PWAInstallButton from '../components/PWAInstallButton';
 import CurrencyExchange from '../components/CurrencyExchange';
 import NotesView from '../components/NotesManager/NotesView';
 import TasksView from '../components/NotesManager/TasksView';
@@ -1746,8 +1747,9 @@ export default function RetailCalc() {
             );
           })()}
 
-          {/* Top Right Auth & Cloud SQL Login */}
+          {/* Top Right Install Prompt, Auth & Cloud SQL Login */}
           <div className="flex items-center gap-2 shrink-0">
+            <PWAInstallButton compact />
             <AuthHeader
               onSyncHistory={handleSyncFromCloudSql}
               onUserChanged={handleUserChanged}
