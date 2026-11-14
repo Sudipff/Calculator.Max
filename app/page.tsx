@@ -62,6 +62,7 @@ import {
 import { getLocalNotes, getLocalTasks } from '../lib/notesTasksStorage';
 import type { NoteItem } from '../lib/types/notes-tasks';
 import { exportAllHistoryPDF, exportSingleItemPDF } from '../lib/pdfExport';
+import { sanitizeCsvCell } from '../lib/validation';
 
 type ActiveTab = 'home' | 'age' | 'calculator' | 'emi' | 'wishlist' | 'discount' | 'weight' | 'unit' | 'currency' | 'quick' | 'notes' | 'tasks' | 'history';
 export type VibrationType = 'success' | 'error' | 'click' | 'reset';
@@ -305,13 +306,20 @@ export default function RetailCalc() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [direction, setDirection] = useState<number>(1);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [isHeaderVisible, setIsHeaderVisible] = useState(true);
+  const [profileCloseSignal, setProfileCloseSignal] = useState(0);
+  const [noteEditorCloseSignal, setNoteEditorCloseSignal] = useState(0);
+  const [dashboardNoteCloseSignal, setDashboardNoteCloseSignal] = useState(0);
+  const [isDashboardNotePreviewOpen, setIsDashboardNotePreviewOpen] = useState(false);
+  const [exitPromptVisible, setExitPromptVisible] = useState(false);
   const [isNoteFullScreen, setIsNoteFullScreen] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [profileOpenSignal, setProfileOpenSignal] = useState(0);
   const [dashboardNotes, setDashboardNotes] = useState<NoteItem[]>([]);
   const [dashboardTasksCount, setDashboardTasksCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const navStackRef = useRef<ActiveTab[]>(['home']);
+  const lastBackPressAtRef = useRef<number>(0);
+  const exitPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isRefreshingHistory, setIsRefreshingHistory] = useState(false);
@@ -656,66 +664,208 @@ export default function RetailCalc() {
     }
   }, [activeTab]);
 
-  // Auto-hide header when scrolling down, show header when scrolling up
-  useEffect(() => {
+  const pushHistoryGuard = useCallback((tag: string) => {
     if (typeof window === 'undefined') return;
-
-    let prevScrollY = window.pageYOffset ?? window.scrollY ?? 0;
-
-    const handleScroll = () => {
-      const currentScrollY = window.pageYOffset ?? window.scrollY ?? document.documentElement.scrollTop ?? 0;
-
-      // Always show header at the very top of the page
-      if (currentScrollY <= 30) {
-        setIsHeaderVisible(true);
-        prevScrollY = currentScrollY;
-        return;
-      }
-
-      // Keep header visible if the auth modal is open
-      if (isAuthModalOpen) {
-        setIsHeaderVisible(true);
-        prevScrollY = currentScrollY;
-        return;
-      }
-
-      const diff = currentScrollY - prevScrollY;
-
-      // Ignore micro adjustments (jitter threshold)
-      if (Math.abs(diff) >= 8) {
-        if (diff > 0 && currentScrollY > 60) {
-          // Scrolling down -> smoothly hide header
-          setIsHeaderVisible(false);
-        } else if (diff < 0) {
-          // Scrolling up -> smoothly show header
-          setIsHeaderVisible(true);
-        }
-        prevScrollY = currentScrollY;
-      }
-    };
-
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    document.addEventListener('scroll', handleScroll, { passive: true });
-
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-      document.removeEventListener('scroll', handleScroll);
-    };
-  }, [isAuthModalOpen]);
+    try {
+      const currentState =
+        typeof window.history.state === 'object' && window.history.state !== null
+          ? window.history.state
+          : {};
+      window.history.pushState(
+        { ...currentState, __calcMaxGuard: true, __calcMaxTag: tag },
+        '',
+        window.location.href
+      );
+    } catch {
+      // Ignore history API restrictions in embedded sandboxes
+    }
+  }, []);
 
   const triggerVibration = (_type: VibrationType = 'click') => {
     // UI vibration completely removed as requested
   };
 
-  const handleTabChange = (newTab: ActiveTab) => {
-    if (newTab === activeTab) return;
-    const currentIdx = TAB_ORDER[activeTab] ?? 0;
-    const newIdx = TAB_ORDER[newTab] ?? 0;
-    setDirection(newIdx > currentIdx ? 1 : -1);
-    triggerVibration('click');
-    setActiveTab(newTab);
-    setIsHeaderVisible(true);
-  };
+  const handleTabChange = useCallback(
+    (newTab: ActiveTab) => {
+      if (newTab === activeTab) return;
+      const currentIdx = TAB_ORDER[activeTab] ?? 0;
+      const newIdx = TAB_ORDER[newTab] ?? 0;
+      setDirection(newIdx > currentIdx ? 1 : -1);
+      triggerVibration('click');
+
+      if (newTab === 'home') {
+        navStackRef.current = ['home'];
+      } else {
+        const stack = navStackRef.current;
+        if (stack[stack.length - 1] !== newTab) {
+          navStackRef.current = [...stack, newTab];
+        }
+        pushHistoryGuard(`tab:${newTab}`);
+      }
+
+      setActiveTab(newTab);
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      }
+    },
+    [activeTab, pushHistoryGuard]
+  );
+
+  const handleStepBackHierarchy = useCallback((): boolean => {
+    if (deleteConfirmTarget) {
+      setDeleteConfirmTarget(null);
+      return true;
+    }
+    if (previewHistoryItem) {
+      setPreviewHistoryItem(null);
+      return true;
+    }
+    if (isAuthModalOpen) {
+      setProfileCloseSignal((n) => n + 1);
+      return true;
+    }
+    if (isNoteFullScreen) {
+      setNoteEditorCloseSignal((n) => n + 1);
+      return true;
+    }
+    if (activeTab === 'home' && isDashboardNotePreviewOpen) {
+      setDashboardNoteCloseSignal((n) => n + 1);
+      return true;
+    }
+    if (activeTab === 'home' && dashboardSearch.trim() !== '') {
+      setDashboardSearch('');
+      return true;
+    }
+    if (activeTab !== 'home') {
+      const stack = navStackRef.current;
+      let targetTab: ActiveTab = 'home';
+      if (stack.length > 1) {
+        stack.pop();
+        targetTab = stack[stack.length - 1] || 'home';
+      } else {
+        navStackRef.current = ['home'];
+      }
+      setDirection(-1);
+      setActiveTab(targetTab);
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      }
+      return true;
+    }
+    return false;
+  }, [
+    activeTab,
+    dashboardSearch,
+    deleteConfirmTarget,
+    isAuthModalOpen,
+    isDashboardNotePreviewOpen,
+    isNoteFullScreen,
+    previewHistoryItem,
+  ]);
+
+  const backHandlerRef = useRef(handleStepBackHierarchy);
+  useEffect(() => {
+    backHandlerRef.current = handleStepBackHierarchy;
+  }, [handleStepBackHierarchy]);
+
+  // Push a browser history guard when interactive overlays open so Android Back closes them cleanly
+  useEffect(() => {
+    if (
+      previewHistoryItem ||
+      deleteConfirmTarget ||
+      isAuthModalOpen ||
+      isNoteFullScreen ||
+      isDashboardNotePreviewOpen
+    ) {
+      pushHistoryGuard('overlay');
+    }
+  }, [
+    deleteConfirmTarget,
+    isAuthModalOpen,
+    isDashboardNotePreviewOpen,
+    isNoteFullScreen,
+    previewHistoryItem,
+    pushHistoryGuard,
+  ]);
+
+  // Intercept hardware Back button (Android browser / PWA popstate + WebView/Capacitor backbutton)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      const baseState =
+        typeof window.history.state === 'object' && window.history.state !== null
+          ? window.history.state
+          : {};
+      if (!baseState.__calcMaxGuard) {
+        window.history.replaceState(
+          { ...baseState, __calcMaxGuard: true, __calcMaxBase: true },
+          '',
+          window.location.href
+        );
+        window.history.pushState(
+          { ...baseState, __calcMaxGuard: true, __calcMaxTag: 'home-root' },
+          '',
+          window.location.href
+        );
+      }
+    } catch {
+      // Ignore if History API is restricted
+    }
+
+    const handleBackAttempt = (fromPopState: boolean) => {
+      const handled = backHandlerRef.current();
+      if (handled) {
+        lastBackPressAtRef.current = 0;
+        setExitPromptVisible(false);
+        if (fromPopState) {
+          pushHistoryGuard('step-back');
+        }
+        return;
+      }
+
+      // Already at root Home dashboard: prevent immediate accidental exit on first back press
+      const now = Date.now();
+      if (now - lastBackPressAtRef.current < 2000) {
+        lastBackPressAtRef.current = 0;
+        setExitPromptVisible(false);
+        return;
+      }
+
+      lastBackPressAtRef.current = now;
+      setExitPromptVisible(true);
+      if (exitPromptTimerRef.current) {
+        clearTimeout(exitPromptTimerRef.current);
+      }
+      exitPromptTimerRef.current = setTimeout(() => {
+        setExitPromptVisible(false);
+      }, 2000);
+
+      if (fromPopState) {
+        pushHistoryGuard('home-exit-guard');
+      }
+    };
+
+    const onPopState = () => {
+      handleBackAttempt(true);
+    };
+
+    const onAndroidBackButton = (e: Event) => {
+      e.preventDefault();
+      handleBackAttempt(false);
+    };
+
+    window.addEventListener('popstate', onPopState);
+    document.addEventListener('backbutton', onAndroidBackButton);
+
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      document.removeEventListener('backbutton', onAndroidBackButton);
+      if (exitPromptTimerRef.current) {
+        clearTimeout(exitPromptTimerRef.current);
+      }
+    };
+  }, [pushHistoryGuard]);
 
   const handleFocusDashboardSearch = () => {
     if (activeTab !== 'home') {
@@ -961,13 +1111,13 @@ export default function RetailCalc() {
 
     const headers = ['ID', 'Database ID', 'Sync Status', 'Type', 'Result', 'Details', 'Timestamp'];
     const rows = history.map((item) => [
-      `"${item.id}"`,
-      `"${item.dbId || (item.syncStatus === 'synced' ? 'Synced' : 'Not in DB')}"`,
-      `"${item.syncStatus || (item.dbId ? 'synced' : 'local')}"`,
-      `"${item.type}"`,
-      `"${item.result.replace(/"/g, '""')}"`,
-      `"${item.details.replace(/"/g, '""')}"`,
-      `"${item.timestamp}"`,
+      sanitizeCsvCell(item.id),
+      sanitizeCsvCell(item.dbId || (item.syncStatus === 'synced' ? 'Synced' : 'Not in DB')),
+      sanitizeCsvCell(item.syncStatus || (item.dbId ? 'synced' : 'local')),
+      sanitizeCsvCell(item.type),
+      sanitizeCsvCell(item.result),
+      sanitizeCsvCell(item.details),
+      sanitizeCsvCell(item.timestamp),
     ]);
 
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -979,6 +1129,7 @@ export default function RetailCalc() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Export History to PDF Handler (All Records)
@@ -1727,83 +1878,111 @@ export default function RetailCalc() {
   return (
     <div className="min-h-[100dvh] w-full bg-gradient-to-br from-[#eef7ff] via-[#f6faf7] to-[#fdf6ef] text-slate-800 flex flex-col sm:items-center font-sans antialiased m-0 p-0">
       <div className="mobile-edge-shell w-full max-w-5xl relative flex-1 flex flex-col min-h-[100dvh] m-0 p-0">
-        {/* Top Header: App Icon + Calculator Max on left, Profile Icon on right */}
+        {/* Sticky Top Header: App Icon + Calculator Max + Profile Icon + Sticky Search Bar */}
         <header
-          className={`mobile-edge-header w-full shrink-0 h-14 px-4 sm:px-6 bg-white/80 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-40 flex justify-between items-center gap-3 transition-all duration-300 ease-in-out ${
-            isNoteFullScreen
-              ? 'hidden pointer-events-none'
-              : isHeaderVisible
-              ? 'translate-y-0 opacity-100 pointer-events-auto'
-              : '-translate-y-full opacity-0 pointer-events-none'
+          className={`mobile-edge-header w-full shrink-0 bg-white/90 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_14px_rgba(15,23,42,0.04)] sticky top-0 z-40 transition-colors ${
+            isNoteFullScreen ? 'hidden pointer-events-none' : 'block pointer-events-auto'
           }`}
         >
-          {/* Left: Back arrow (when inside a tool) + App Icon + CALCULATOR MAX */}
-          <div className="flex items-center gap-2.5 min-w-0">
-            {activeTab !== 'home' && (
-              <button
-                type="button"
-                onClick={() => handleTabChange('home')}
-                className="min-w-[40px] min-h-[40px] -ml-1.5 rounded-xl hover:bg-slate-100 text-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
-                aria-label="Back to Calculator Max dashboard"
-                title="Back to Home Dashboard"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-            )}
+          <div className="h-14 px-4 sm:px-6 flex justify-between items-center gap-3">
+            {/* Left: Back arrow (when inside a tool) + App Icon + CALCULATOR MAX */}
+            <div className="flex items-center gap-2.5 min-w-0">
+              {activeTab !== 'home' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!handleStepBackHierarchy()) {
+                      handleTabChange('home');
+                    }
+                  }}
+                  className="min-w-[40px] min-h-[40px] -ml-1.5 rounded-xl hover:bg-slate-100 text-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                  aria-label="Back to previous view"
+                  title="Back"
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </button>
+              )}
 
-            <h1 className="m-0 flex items-center min-w-0">
-              <button
-                type="button"
-                onClick={() => handleTabChange('home')}
-                className="flex items-center gap-2.5 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-xl min-w-0"
-              >
-                <Image
-                  src="/pwa-192x192.png"
-                  alt="Calculator Max"
-                  width={32}
-                  height={32}
-                  className="w-8 h-8 rounded-xl shadow-xs shrink-0"
-                  referrerPolicy="no-referrer"
-                />
-                <span className="flex items-center gap-2 min-w-0">
-                  <span className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 whitespace-nowrap leading-none">
-                    Calculator Max
+              <h1 className="m-0 flex items-center min-w-0">
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('home')}
+                  className="flex items-center gap-2.5 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-xl min-w-0"
+                >
+                  <Image
+                    src="/pwa-192x192.png"
+                    alt="Calculator Max"
+                    width={32}
+                    height={32}
+                    className="w-8 h-8 rounded-xl shadow-xs shrink-0"
+                    referrerPolicy="no-referrer"
+                  />
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 whitespace-nowrap leading-none">
+                      Calculator Max
+                    </span>
+                    {activeTab !== 'home' && (() => {
+                      const activeTool = CALCULATOR_TOOLS_INFO.find((t) => t.id === activeTab);
+                      return activeTool ? (
+                        <span className="hidden sm:inline text-xs font-semibold text-slate-500 truncate">
+                          · {activeTool.title}
+                        </span>
+                      ) : null;
+                    })()}
                   </span>
-                  {activeTab !== 'home' && (() => {
-                    const activeTool = CALCULATOR_TOOLS_INFO.find((t) => t.id === activeTab);
-                    return activeTool ? (
-                      <span className="hidden sm:inline text-xs font-semibold text-slate-500 truncate">
-                        · {activeTool.title}
-                      </span>
-                    ) : null;
-                  })()}
-                </span>
-              </button>
-            </h1>
+                </button>
+              </h1>
+            </div>
+
+            {/* Right: Install App (when available) + Profile Icon */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <PWAInstallButton compact />
+              <AuthHeader
+                compactProfile
+                openSignal={profileOpenSignal}
+                closeSignal={profileCloseSignal}
+                currencySlot={currencyPreferencesCard}
+                onSyncHistory={handleSyncFromCloudSql}
+                onUserChanged={handleUserChanged}
+                onModalOpenChange={(isOpen) => {
+                  setIsAuthModalOpen(isOpen);
+                }}
+              />
+            </div>
           </div>
 
-          {/* Right: Install App (when available) + Profile Icon */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            <PWAInstallButton compact />
-            <AuthHeader
-              compactProfile
-              openSignal={profileOpenSignal}
-              currencySlot={currencyPreferencesCard}
-              onSyncHistory={handleSyncFromCloudSql}
-              onUserChanged={handleUserChanged}
-              onModalOpenChange={(isOpen) => {
-                setIsAuthModalOpen(isOpen);
-                if (isOpen) {
-                  setIsHeaderVisible(true);
-                }
-              }}
-            />
-          </div>
+          {/* Sticky Full-Width Search Bar pinned inside the Top Header on Home Dashboard */}
+          {activeTab === 'home' && (
+            <div className="px-4 sm:px-6 pb-3 pt-0.5">
+              <div className="relative w-full">
+                <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  value={dashboardSearch}
+                  onChange={(e) => setDashboardSearch(e.target.value)}
+                  placeholder="Search calculators, tools..."
+                  aria-label="Search calculators, tools, and notes"
+                  className="w-full min-h-[44px] bg-slate-50/90 border border-slate-200/80 rounded-2xl pl-11 pr-10 py-2 text-sm font-medium text-slate-900 placeholder:text-slate-400 shadow-[0_1px_6px_rgba(15,23,42,0.03)] focus:bg-white focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
+                />
+                {dashboardSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setDashboardSearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                    aria-label="Clear search"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </header>
 
         {/* Main Content Area */}
         <main
-          className={`flex-1 flex flex-col relative overflow-x-hidden pb-20 ${
+          className={`flex-1 flex flex-col relative overflow-x-clip pb-20 ${
             activeTab === 'calculator'
               ? 'p-0 sm:p-6 md:p-8 sm:pb-24 space-y-0 sm:space-y-6 md:space-y-8'
               : activeTab === 'home'
@@ -1844,10 +2023,11 @@ export default function RetailCalc() {
                 <DashboardHome
                   searchQuery={dashboardSearch}
                   onSearchChange={setDashboardSearch}
-                  searchInputRef={searchInputRef}
                   onSelectTool={(toolTab) => handleTabChange(toolTab)}
                   notes={dashboardNotes}
                   tasksCount={dashboardTasksCount}
+                  closeNotePreviewSignal={dashboardNoteCloseSignal}
+                  onNotePreviewChange={setIsDashboardNotePreviewOpen}
                 />
               )}
 
@@ -1950,6 +2130,7 @@ export default function RetailCalc() {
                     currentUser={currentUser}
                     triggerVibration={triggerVibration}
                     onFullScreenChange={(isFullscreen) => setIsNoteFullScreen(isFullscreen)}
+                    closeEditorSignal={noteEditorCloseSignal}
                   />
                 </section>
               )}
@@ -2463,6 +2644,22 @@ export default function RetailCalc() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Android Back Exit Guard Toast */}
+      <AnimatePresence>
+        {exitPromptVisible && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 12 }}
+            role="status"
+            aria-live="polite"
+            className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-slate-900/95 text-white text-xs font-semibold shadow-lg pointer-events-none whitespace-nowrap"
+          >
+            Press back again to exit
+          </motion.div>
         )}
       </AnimatePresence>
 

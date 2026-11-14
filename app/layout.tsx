@@ -40,7 +40,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="h-full w-full">
-      <body className="min-h-full w-full max-w-[100vw] overflow-x-hidden antialiased">
+      <body className="min-h-full w-full max-w-[100vw] overflow-x-clip antialiased">
         {children}
         <PwaRuntime />
       </body>

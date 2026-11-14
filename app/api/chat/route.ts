@@ -1,17 +1,41 @@
 import { GoogleGenAI } from '@google/genai';
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, getClientIp, verifyCsrfAndOrigin } from '@/lib/security';
+import { isSafeHttpUrl, validateChatPayload } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
+    const csrf = verifyCsrfAndOrigin(req);
+    if (!csrf.ok) {
+      return NextResponse.json({ error: 'Forbidden: Cross-origin request blocked.' }, { status: 403 });
+    }
+
+    const ip = getClientIp(req);
+    const rate = checkRateLimit(`chat:${ip}`, 20, 60_000);
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please slow down and try again shortly.' },
+        { status: 429 }
+      );
+    }
+
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: 'Gemini API key is not configured on the server. Please set GEMINI_API_KEY in your Vercel environment variables.' },
+        { error: 'Gemini API key is not configured on the server.' },
         { status: 500 }
       );
     }
+
+    const rawBody = await req.json().catch(() => null);
+    const validated = validateChatPayload(rawBody);
+    if (!validated.valid) {
+      return NextResponse.json({ error: validated.error }, { status: 400 });
+    }
+
+    const { messages, mode, currency, latestHistory } = validated.data;
 
     const ai = new GoogleGenAI({
       apiKey,
@@ -22,14 +46,6 @@ export async function POST(req: NextRequest) {
       },
     });
 
-
-    const { messages, mode, context } = await req.json();
-
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      return NextResponse.json({ error: 'Messages array is required.' }, { status: 400 });
-    }
-
-    // Model selection based on user requirements and mode
     let modelName = 'gemini-3.7-flash';
     if (mode === 'fast') {
       modelName = 'gemini-3.1-flash-lite';
@@ -37,19 +53,19 @@ export async function POST(req: NextRequest) {
       modelName = 'gemini-3.7-flash';
     }
 
-    const systemInstruction = `You are RetailBot, a highly intelligent and unrestricted AI assistant integrated with live Google Search.
+    const systemInstruction = `You are RetailBot, a highly intelligent AI assistant integrated with live Google Search.
 
 Core Capabilities:
-1. **Google Search Grounding**: You have real-time Google Search enabled. You can answer ANY query on ANY topic — including general knowledge, public figures (e.g. Sheikh Ansar, celebrities, scholars, business leaders), current events, news, retail trends, and financial information. Always search Google when asked about specific people, real-world events, or live information.
-2. **Retail Calculator Guidance**: Help users with loan EMI calculations, interest rates, Wishlist savings goals, discount math, unit/weight conversions, currency exchange, and history tracking.
-3. **Structured & Clear Responses**: Format your responses with clean Markdown, bold text, bullet points, and numbered steps. When Google Search provides information, synthesize it clearly for the user.
+1. Google Search Grounding for live and retail/financial queries.
+2. Retail & Calculator Max guidance: EMI, wishlist savings goals, discounts, units, currency conversions, and history tracking.
+3. Clean Markdown formatting.
 
 Active App Context:
-- Preferred Currency Symbol: ${context?.currency || '₹'}
-- Latest Recorded History Calculation: ${context?.latestHistory ? JSON.stringify(context.latestHistory) : 'None'}`;
+- Preferred Currency Symbol: ${currency}
+- Latest Recorded History Calculation: ${latestHistory ? JSON.stringify(latestHistory) : 'None'}`;
 
-    const formattedContents = messages.map((msg: { role: string; text: string }) => ({
-      role: msg.role === 'user' ? 'user' : 'model',
+    const formattedContents = messages.map((msg) => ({
+      role: msg.role,
       parts: [{ text: msg.text }],
     }));
 
@@ -65,17 +81,15 @@ Active App Context:
 
     let replyText = response.text || 'I apologize, but I was unable to generate a response. Please try again.';
 
-    // Extract Google Search grounding citations if available
     const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
     const sources: { title: string; url: string }[] = [];
 
     if (groundingMetadata?.groundingChunks) {
       groundingMetadata.groundingChunks.forEach((chunk: any) => {
-        if (chunk?.web?.uri && chunk?.web?.title) {
-          // Avoid duplicate URIs
+        if (chunk?.web?.uri && chunk?.web?.title && isSafeHttpUrl(chunk.web.uri)) {
           if (!sources.some((s) => s.url === chunk.web.uri)) {
             sources.push({
-              title: chunk.web.title,
+              title: String(chunk.web.title).slice(0, 120),
               url: chunk.web.uri,
             });
           }
@@ -83,9 +97,9 @@ Active App Context:
       });
     }
 
-    // Append source references if available
     if (sources.length > 0) {
-      replyText += '\n\n---\n**🔍 Google Search References:**\n' +
+      replyText +=
+        '\n\n---\n**Google Search References:**\n' +
         sources.map((s) => `- [${s.title}](${s.url})`).join('\n');
     }
 
@@ -98,4 +112,3 @@ Active App Context:
     );
   }
 }
-

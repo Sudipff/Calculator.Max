@@ -11,6 +11,7 @@ export interface StoredEmailUser {
   displayName: string;
   photoURL?: string;
   passwordHash: string;
+  role: 'user' | 'admin';
   createdAt: string;
   updatedAt: string;
 }
@@ -82,7 +83,7 @@ export async function findStoredUserByEmail(email: string): Promise<StoredEmailU
   const cleanEmail = email.trim().toLowerCase();
   const store = getMemoryStore();
 
-  // 1. Check PostgreSQL if configured
+  // 1. Parameterized Drizzle PostgreSQL lookup
   const dbRecord = await safeDbQuery(async () => {
     const rows = await db
       .select()
@@ -99,6 +100,7 @@ export async function findStoredUserByEmail(email: string): Promise<StoredEmailU
       displayName: dbRecord.displayName || cleanEmail.split('@')[0],
       photoURL: dbRecord.photoURL || '',
       passwordHash: dbRecord.passwordHash,
+      role: dbRecord.role === 'admin' ? 'admin' : 'user',
       createdAt: dbRecord.createdAt ? new Date(dbRecord.createdAt).toISOString() : new Date().toISOString(),
       updatedAt: dbRecord.updatedAt ? new Date(dbRecord.updatedAt).toISOString() : new Date().toISOString(),
     };
@@ -107,9 +109,12 @@ export async function findStoredUserByEmail(email: string): Promise<StoredEmailU
     return mapped;
   }
 
-  // 2. Check memory/file store
+  // 2. Memory/file store lookup
   if (store[cleanEmail]) {
-    return store[cleanEmail];
+    return {
+      ...store[cleanEmail],
+      role: store[cleanEmail].role === 'admin' ? 'admin' : 'user',
+    };
   }
 
   return null;
@@ -121,6 +126,7 @@ export async function upsertStoredUser(params: {
   passwordHash?: string;
   displayName?: string;
   uid?: string;
+  role?: 'user' | 'admin';
 }): Promise<StoredEmailUser> {
   const cleanEmail = params.email.trim().toLowerCase();
   const store = getMemoryStore();
@@ -135,6 +141,8 @@ export async function upsertStoredUser(params: {
   const finalHash =
     params.passwordHash ||
     (params.password ? hashPasswordScrypt(params.password) : existing?.passwordHash || '');
+  const finalRole: 'user' | 'admin' =
+    params.role === 'admin' || existing?.role === 'admin' ? 'admin' : 'user';
 
   const now = new Date().toISOString();
   const userObj: StoredEmailUser = {
@@ -143,6 +151,7 @@ export async function upsertStoredUser(params: {
     displayName: finalName,
     photoURL: existing?.photoURL || '',
     passwordHash: finalHash,
+    role: finalRole,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
   };
@@ -150,7 +159,6 @@ export async function upsertStoredUser(params: {
   store[cleanEmail] = userObj;
   saveMemoryStore(store);
 
-  // Also persist to PostgreSQL if available
   await safeDbQuery(async () => {
     await db
       .insert(users)
@@ -159,6 +167,7 @@ export async function upsertStoredUser(params: {
         email: cleanEmail,
         displayName: finalName,
         passwordHash: finalHash,
+        role: finalRole,
         updatedAt: new Date(),
       })
       .onConflictDoUpdate({
@@ -173,4 +182,19 @@ export async function upsertStoredUser(params: {
   }, null);
 
   return userObj;
+}
+
+export async function deleteStoredUserByEmailOrUid(email?: string, uid?: string): Promise<void> {
+  const store = getMemoryStore();
+  if (email) {
+    delete store[email.trim().toLowerCase()];
+  }
+  if (uid) {
+    for (const [k, v] of Object.entries(store)) {
+      if (v.uid === uid) {
+        delete store[k];
+      }
+    }
+  }
+  saveMemoryStore(store);
 }

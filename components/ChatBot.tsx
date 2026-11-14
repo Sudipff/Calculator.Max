@@ -15,6 +15,7 @@ import {
   Info,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { isSafeHttpUrl } from '../lib/validation';
 import { VibrationType } from '../app/page';
 
 interface Message {
@@ -270,7 +271,25 @@ export default function ChatBot({ currency, latestHistoryItem, triggerVibration 
                 <p className="whitespace-pre-wrap">{msg.text}</p>
               ) : (
                 <div className="prose prose-slate prose-sm max-w-none dark:prose-invert leading-relaxed space-y-2">
-                  <ReactMarkdown>{msg.text}</ReactMarkdown>
+                  <ReactMarkdown
+                    components={{
+                      a: ({ href, children }) =>
+                        href && isSafeHttpUrl(href) ? (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 underline hover:text-blue-800"
+                          >
+                            {children}
+                          </a>
+                        ) : (
+                          <span>{children}</span>
+                        ),
+                    }}
+                  >
+                    {msg.text}
+                  </ReactMarkdown>
                 </div>
               )}
 

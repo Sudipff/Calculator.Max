@@ -24,6 +24,8 @@ import {
   ArrowLeft,
   KeyRound,
   Calculator,
+  Download,
+  Trash2,
 } from 'lucide-react';
 
 interface AuthHeaderProps {
@@ -32,6 +34,7 @@ interface AuthHeaderProps {
   onModalOpenChange?: (open: boolean) => void;
   compactProfile?: boolean;
   openSignal?: number;
+  closeSignal?: number;
   currencySlot?: React.ReactNode;
 }
 
@@ -43,6 +46,7 @@ export default function AuthHeader({
   onModalOpenChange,
   compactProfile = false,
   openSignal = 0,
+  closeSignal = 0,
   currencySlot,
 }: AuthHeaderProps) {
   const [mounted, setMounted] = useState(false);
@@ -65,6 +69,8 @@ export default function AuthHeader({
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [confirmEraseData, setConfirmEraseData] = useState(false);
+  const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
 
   const supabase = createClient();
   const onUserChangedRef = useRef(onUserChanged);
@@ -86,6 +92,14 @@ export default function AuthHeader({
       setIsFullPage(true);
     }
   }, [openSignal]);
+
+  useEffect(() => {
+    if (closeSignal > 0) {
+      setShowModal(false);
+      setConfirmEraseData(false);
+      setError(null);
+    }
+  }, [closeSignal]);
 
   useEffect(() => {
     onModalOpenChange?.(showModal);
@@ -324,6 +338,7 @@ export default function AuthHeader({
             password,
             displayName: data.user.user_metadata?.full_name,
             supabaseUid: data.user.id,
+            supabaseAccessToken: data.session?.access_token,
             forceSync: true,
           }),
         }).catch(() => {});
@@ -421,6 +436,7 @@ export default function AuthHeader({
               password,
               displayName: cleanName,
               supabaseUid: signInData.user.id,
+              supabaseAccessToken: signInData.session?.access_token,
               forceSync: true,
             }),
           }).catch(() => {});
@@ -508,6 +524,7 @@ export default function AuthHeader({
           password,
           displayName: cleanName,
           supabaseUid: data?.user?.id,
+          supabaseAccessToken: data?.session?.access_token,
           forceSync: true,
         }),
       }).catch(() => null);
@@ -731,13 +748,78 @@ export default function AuthHeader({
       if (typeof window !== 'undefined') {
         localStorage.removeItem('retail_calc_auth_user');
       }
+      await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
       await supabase.auth.signOut().catch(() => {});
       setUser(null);
       setShowModal(false);
       setIsFullPage(false);
+      setConfirmEraseData(false);
+      setPrivacyNotice(null);
       if (onUserChanged) onUserChanged(null);
     } catch (err: any) {
       console.warn('Sign out warning:', err);
+    }
+  };
+
+  const handleExportMyData = async () => {
+    try {
+      setActionLoading(true);
+      setPrivacyNotice(null);
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/privacy', {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : undefined,
+      });
+      if (!res.ok) {
+        setPrivacyNotice('Unable to export cloud archive right now.');
+        return;
+      }
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `calculator-max-privacy-export-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setPrivacyNotice('Encrypted privacy data archive exported.');
+    } catch {
+      setPrivacyNotice('Export failed.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleEraseMyData = async () => {
+    try {
+      setActionLoading(true);
+      setPrivacyNotice(null);
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/privacy', {
+        method: 'DELETE',
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : undefined,
+      });
+      if (res.ok) {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('retail_calc_auth_user');
+          if (user?.id) {
+            localStorage.removeItem(`retail-calc-history-${user.id}`);
+          }
+        }
+        await supabase.auth.signOut().catch(() => {});
+        setUser(null);
+        setConfirmEraseData(false);
+        setShowModal(false);
+        setIsFullPage(false);
+        if (onUserChanged) onUserChanged(null);
+      } else {
+        setPrivacyNotice('Could not complete cloud erasure.');
+      }
+    } catch {
+      setPrivacyNotice('Erasure request failed.');
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -976,6 +1058,69 @@ export default function AuthHeader({
                       {currencySlot}
                     </div>
                   )}
+
+                  {/* Privacy, Encryption & Compliance Controls */}
+                  <div className="w-full max-w-md bg-slate-50 border border-slate-200/80 rounded-2xl p-4 text-left space-y-3 mt-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                        <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Security & Data Privacy</span>
+                      </div>
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                        AES-256-GCM + TLS
+                      </span>
+                    </div>
+
+                    {privacyNotice && (
+                      <p className="text-[11px] font-medium text-blue-700 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
+                        {privacyNotice}
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleExportMyData}
+                        disabled={actionLoading}
+                        className="flex-1 min-w-[140px] py-2 px-3 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Export My Data</span>
+                      </button>
+
+                      {!confirmEraseData ? (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmEraseData(true)}
+                          disabled={actionLoading}
+                          className="flex-1 min-w-[140px] py-2 px-3 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Erase Cloud Data</span>
+                        </button>
+                      ) : (
+                        <div className="w-full flex items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={handleEraseMyData}
+                            disabled={actionLoading}
+                            className="flex-1 py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
+                          >
+                            Confirm Permanent Erase
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmEraseData(false)}
+                            disabled={actionLoading}
+                            className="py-2 px-3 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   {syncing && (
                     <div className="flex items-center justify-center gap-2 text-xs font-semibold text-blue-600 bg-blue-50 px-4 py-2 rounded-full animate-pulse mt-4">
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />

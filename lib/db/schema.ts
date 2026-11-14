@@ -8,6 +8,7 @@ export const users = pgTable('users', {
   displayName: text('display_name'),
   photoURL: text('photo_url'),
   passwordHash: text('password_hash'),
+  role: text('role').default('user').notNull(), // RBAC: 'user' | 'admin'
   updatedAt: timestamp('updated_at').defaultNow(),
   createdAt: timestamp('created_at').defaultNow(),
 });
@@ -15,12 +16,24 @@ export const users = pgTable('users', {
 export const calculations = pgTable('calculations', {
   id: serial('id').primaryKey(),
   userId: integer('user_id')
-    .references(() => users.id)
+    .references(() => users.id, { onDelete: 'cascade' })
     .notNull(),
   type: text('type').notNull(),
-  details: text('details').notNull(),
-  result: text('result').notNull(),
+  details: text('details').notNull(), // Stored encrypted at rest (AES-256-GCM)
+  result: text('result').notNull(), // Stored encrypted at rest (AES-256-GCM)
   createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const securityAuditLogs = pgTable('security_audit_logs', {
+  id: serial('id').primaryKey(),
+  userUid: text('user_uid'),
+  actorRole: text('actor_role').default('anonymous').notNull(),
+  action: text('action').notNull(),
+  resource: text('resource').notNull(),
+  status: text('status').notNull(), // 'success' | 'denied' | 'error'
+  ipAddress: text('ip_address'),
+  details: text('details'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
 export const usersRelations = relations(users, ({ many }) => ({

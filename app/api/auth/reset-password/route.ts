@@ -5,10 +5,17 @@ import { updateUserPassword } from '../../../../lib/db/users';
 import { upsertStoredUser } from '@/lib/emailAuthStore';
 import { getSupabaseConfig } from '@/utils/supabase/config';
 import { createClient } from '@supabase/supabase-js';
+import {
+  authenticateRequest,
+  checkRateLimit,
+  getClientIp,
+  verifyCsrfAndOrigin,
+} from '@/lib/security';
+import { validatePasswordInput } from '@/lib/validation';
+import { logSecurityEvent } from '@/lib/auditLog';
 
 export const dynamic = 'force-dynamic';
 
-// Securely hash password using scrypt with cryptographically random salt
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
   const derivedKey = crypto.scryptSync(password, salt, 64);
@@ -16,23 +23,32 @@ function hashPassword(password: string): string {
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const { newPassword, confirmPassword, token: bodyToken, email: bodyEmail, uid: bodyUid } = body;
+  const ip = getClientIp(req);
 
-    // 1. Password validation
-    if (!newPassword || typeof newPassword !== 'string') {
+  try {
+    const csrf = verifyCsrfAndOrigin(req);
+    if (!csrf.ok) {
+      return NextResponse.json({ error: 'Forbidden: Cross-origin request blocked.' }, { status: 403 });
+    }
+
+    const rate = checkRateLimit(`reset-pw:${ip}`, 10, 10 * 60_000);
+    if (!rate.allowed) {
       return NextResponse.json(
-        { error: 'New password is required.' },
-        { status: 400 }
+        { error: 'Too many password reset requests. Please try again later.' },
+        { status: 429 }
       );
     }
 
-    if (newPassword.length < 6) {
-      return NextResponse.json(
-        { error: 'Password must be at least 6 characters long.' },
-        { status: 400 }
-      );
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
+    }
+
+    const { newPassword, confirmPassword, token: bodyToken } = body as Record<string, unknown>;
+
+    const pwCheck = validatePasswordInput(newPassword);
+    if (!pwCheck.valid) {
+      return NextResponse.json({ error: pwCheck.error }, { status: 400 });
     }
 
     if (newPassword !== confirmPassword) {
@@ -42,30 +58,52 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Extract Auth Token from header or body
     const authHeader = req.headers.get('authorization');
     const token =
       authHeader && authHeader.startsWith('Bearer ')
-        ? authHeader.split('Bearer ')[1]
-        : bodyToken || '';
+        ? authHeader.split('Bearer ')[1]?.trim()
+        : typeof bodyToken === 'string'
+        ? bodyToken.trim()
+        : '';
 
-    let uid = bodyUid || '';
-    let email = bodyEmail || '';
+    let verifiedUid = '';
+    let verifiedEmail = '';
+    let actorRole: 'user' | 'admin' = 'user';
 
-    // Verify token if available
     if (token) {
-      try {
-        const decoded = await verifyOrDecodeToken(token);
-        if (decoded) {
-          uid = decoded.uid || uid;
-          email = decoded.email || email;
-        }
-      } catch (err) {
-        console.warn('Token verification note:', err);
+      const decoded = await verifyOrDecodeToken(token);
+      if (decoded?.uid) {
+        verifiedUid = decoded.uid;
+        verifiedEmail = decoded.email || '';
+        actorRole = decoded.role === 'admin' ? 'admin' : 'user';
       }
     }
 
-    // 3. Update in Supabase Auth if session token exists
+    if (!verifiedUid) {
+      const { actor } = await authenticateRequest(req);
+      if (actor) {
+        verifiedUid = actor.uid;
+        verifiedEmail = actor.email;
+        actorRole = actor.role;
+      }
+    }
+
+    if (!verifiedUid) {
+      await logSecurityEvent({
+        userUid: null,
+        actorRole: 'anonymous',
+        action: 'password_reset_unauthorized',
+        resource: 'api/auth/reset-password',
+        status: 'denied',
+        ipAddress: ip,
+        details: 'Rejected password reset without verified session or recovery token',
+      });
+      return NextResponse.json(
+        { error: 'Unauthorized: Please open the valid recovery link from your email or sign in first.' },
+        { status: 401 }
+      );
+    }
+
     if (token) {
       try {
         const { url, key } = getSupabaseConfig();
@@ -74,36 +112,38 @@ export async function POST(req: NextRequest) {
             auth: { persistSession: false },
             global: { headers: { Authorization: `Bearer ${token}` } },
           });
-          const { error: updateError } = await supabaseClient.auth.updateUser({
-            password: newPassword,
-          });
-          if (updateError) {
-            console.warn('Supabase updateUser warning:', updateError.message);
-          }
+          await supabaseClient.auth.updateUser({ password: newPassword as string });
         }
       } catch (err) {
         console.warn('Supabase auth update note:', err);
       }
     }
 
-    // 4. Hash password securely with cryptographically strong salt
-    const passwordHash = hashPassword(newPassword);
+    const passwordHash = hashPassword(newPassword as string);
+    const dbResult = await updateUserPassword(verifiedUid, passwordHash, verifiedEmail);
 
-    // 5. Update user database record in Cloud SQL / PostgreSQL and emailAuthStore
-    const targetUid = uid || undefined;
-    const dbResult = await updateUserPassword(targetUid || `recovery_${Date.now()}`, passwordHash, email);
-    if (email) {
+    if (verifiedEmail) {
       await upsertStoredUser({
-        email,
+        email: verifiedEmail,
         passwordHash,
-        uid: targetUid,
+        uid: verifiedUid,
       });
     }
+
+    await logSecurityEvent({
+      userUid: verifiedUid,
+      actorRole,
+      action: 'password_reset_success',
+      resource: 'api/auth/reset-password',
+      status: 'success',
+      ipAddress: ip,
+      details: 'Password updated securely via verified token',
+    });
 
     return NextResponse.json({
       success: true,
       message: 'Your password has been changed successfully. You can now log in.',
-      uid: targetUid || `recovery_${Date.now()}`,
+      uid: verifiedUid,
       databaseUpdated: !!dbResult,
     });
   } catch (error: any) {

@@ -38,9 +38,10 @@ interface NotesViewProps {
   currentUser: any;
   triggerVibration?: (type: 'success' | 'error' | 'click' | 'reset') => void;
   onFullScreenChange?: (isFullscreen: boolean) => void;
+  closeEditorSignal?: number;
 }
 
-export default function NotesView({ currentUser, onFullScreenChange }: NotesViewProps) {
+export default function NotesView({ currentUser, onFullScreenChange, closeEditorSignal = 0 }: NotesViewProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,6 +117,19 @@ export default function NotesView({ currentUser, onFullScreenChange }: NotesView
       onFullScreenChange?.(false);
     }
   }, [editingNote, onFullScreenChange]);
+
+  const handleSaveEditedNoteRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (closeEditorSignal > 0) {
+      if (confirmDeleteTarget) {
+        setConfirmDeleteTarget(null);
+      } else if (editingNote) {
+        handleSaveEditedNoteRef.current?.();
+      } else if (isEditorExpanded) {
+        setIsEditorExpanded(false);
+      }
+    }
+  }, [closeEditorSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load notes on mount or user change
   useEffect(() => {
@@ -456,6 +470,8 @@ export default function NotesView({ currentUser, onFullScreenChange }: NotesView
       setNotes((prev) => prev.map((n) => (n.id === noteToSave.id ? { ...n, syncStatus: res.syncStatus } : n)));
     }
   };
+
+  handleSaveEditedNoteRef.current = handleSaveEditedNote;
 
   // Distinct labels across all notes
   const allLabels = useMemo(() => {

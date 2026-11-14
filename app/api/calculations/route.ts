@@ -1,71 +1,80 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyOrDecodeToken } from '../../../lib/auth-helper';
-import { saveUserCalculation, getUserCalculations, deleteUserCalculation } from '../../../lib/db/users';
+import {
+  saveUserCalculation,
+  getUserCalculations,
+  deleteUserCalculation,
+} from '../../../lib/db/users';
+import { checkRateLimit, getClientIp, requireAuth } from '@/lib/security';
+import { validateCalculationPayload, validateResourceId } from '@/lib/validation';
+import { logSecurityEvent } from '@/lib/auditLog';
 
 export const dynamic = 'force-dynamic';
 
-async function resolveUserId(req: NextRequest): Promise<{ uid: string; token?: string } | null> {
-  const authHeader = req.headers.get('authorization');
-  const customUserId = req.headers.get('x-user-id');
-  let token: string | undefined = undefined;
-
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    token = authHeader.split('Bearer ')[1]?.trim();
-    if (token) {
-      const userToken = await verifyOrDecodeToken(token);
-      if (userToken?.uid) {
-        return { uid: userToken.uid, token };
-      }
-    }
-  }
-
-  if (customUserId && customUserId.trim()) {
-    return { uid: customUserId.trim(), token };
-  }
-
-  return null;
-}
-
 export async function GET(req: NextRequest) {
   try {
-    const authData = await resolveUserId(req);
-    if (!authData?.uid) {
-      return NextResponse.json({ error: 'Unauthorized: Missing user token or ID' }, { status: 401 });
+    const auth = await requireAuth(req, 'api/calculations');
+    if (!auth.ok) return auth.response;
+
+    const rate = checkRateLimit(`calc:get:${auth.actor.uid}`, 120, 60_000);
+    if (!rate.allowed) {
+      return NextResponse.json({ error: 'Rate limit exceeded.' }, { status: 429 });
     }
 
-    const calculations = await getUserCalculations(authData.uid, authData.token);
+    const calculations = await getUserCalculations(auth.actor.uid, auth.actor.token);
     return NextResponse.json({ calculations: calculations || [] });
   } catch (error: any) {
     console.error('Error fetching calculations:', error);
-    return NextResponse.json({ error: error?.message || 'Failed to fetch calculations' }, { status: 500 });
+    return NextResponse.json(
+      { error: error?.message || 'Failed to fetch calculations' },
+      { status: 500 }
+    );
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const authData = await resolveUserId(req);
-    if (!authData?.uid) {
-      return NextResponse.json({ error: 'Unauthorized: Missing user token or ID' }, { status: 401 });
+    const auth = await requireAuth(req, 'api/calculations');
+    if (!auth.ok) return auth.response;
+
+    const rate = checkRateLimit(`calc:post:${auth.actor.uid}`, 100, 60_000);
+    if (!rate.allowed) {
+      return NextResponse.json({ error: 'Rate limit exceeded.' }, { status: 429 });
     }
 
-    const { type, details, result } = await req.json();
-    if (!type || !details || !result) {
-      return NextResponse.json({ error: 'Missing calculation fields' }, { status: 400 });
+    const body = await req.json().catch(() => null);
+    const validated = validateCalculationPayload(body);
+    if (!validated.valid) {
+      return NextResponse.json({ error: validated.error }, { status: 400 });
     }
 
-    const saved = await saveUserCalculation(authData.uid, type, details, result, authData.token);
+    const { type, details, result } = validated.data;
+    const saved = await saveUserCalculation(
+      auth.actor.uid,
+      type,
+      details,
+      result,
+      auth.actor.token
+    );
     return NextResponse.json({ success: true, calculation: saved });
   } catch (error: any) {
     console.error('Error saving calculation:', error);
-    return NextResponse.json({ error: error?.message || 'Failed to save calculation' }, { status: 500 });
+    return NextResponse.json(
+      { error: error?.message || 'Failed to save calculation' },
+      { status: 500 }
+    );
   }
 }
 
 export async function DELETE(req: NextRequest) {
+  const ip = getClientIp(req);
+
   try {
-    const authData = await resolveUserId(req);
-    if (!authData?.uid) {
-      return NextResponse.json({ error: 'Unauthorized: Missing user token or ID' }, { status: 401 });
+    const auth = await requireAuth(req, 'api/calculations');
+    if (!auth.ok) return auth.response;
+
+    const rate = checkRateLimit(`calc:del:${auth.actor.uid}`, 60, 60_000);
+    if (!rate.allowed) {
+      return NextResponse.json({ error: 'Rate limit exceeded.' }, { status: 429 });
     }
 
     const url = new URL(req.url);
@@ -81,55 +90,51 @@ export async function DELETE(req: NextRequest) {
     let result: string | null = searchResult;
     let type: string | null = searchType;
 
-    // Check if body is provided
     try {
       const body = await req.json();
-      if (body) {
+      if (body && typeof body === 'object') {
         if (body.id !== undefined) id = body.id;
         if (body.all !== undefined) deleteAll = !!body.all;
-        if (body.details !== undefined) details = body.details;
-        if (body.result !== undefined) result = body.result;
-        if (body.type !== undefined) type = body.type;
+        if (body.details !== undefined) details = typeof body.details === 'string' ? body.details : null;
+        if (body.result !== undefined) result = typeof body.result === 'string' ? body.result : null;
+        if (body.type !== undefined) type = typeof body.type === 'string' ? body.type : null;
       }
     } catch {
-      // No JSON body, query params will be used
+      // Query params will be used
+    }
+
+    if (id !== null && id !== undefined && id !== '') {
+      const safeId = validateResourceId(id, 128);
+      if (!safeId) {
+        return NextResponse.json({ error: 'Invalid calculation identifier.' }, { status: 400 });
+      }
+      id = safeId;
     }
 
     if (!deleteAll && !id && (!details || !result)) {
       return NextResponse.json({ error: 'Missing calculation identifier to delete' }, { status: 400 });
     }
 
-    await deleteUserCalculation(authData.uid, id, details, result, type, deleteAll, authData.token);
+    await deleteUserCalculation(
+      auth.actor.uid,
+      id,
+      details,
+      result,
+      type,
+      deleteAll,
+      auth.actor.token
+    );
 
-    // Keep Supabase Auth user_metadata calculation_history in sync on the server
-    try {
-      const { getSupabaseConfig } = await import('../../../utils/supabase/config');
-      const { url: supabaseUrl, key: supabaseKey } = getSupabaseConfig();
-      if (supabaseUrl && supabaseKey) {
-        const { createClient } = await import('@supabase/supabase-js');
-        const supabase = createClient(supabaseUrl, supabaseKey, {
-          global: authData.token ? { headers: { Authorization: `Bearer ${authData.token}` } } : undefined,
-        });
-        const { data: { user } } = await supabase.auth.getUser(authData.token);
-        if (user && user.user_metadata?.calculation_history && Array.isArray(user.user_metadata.calculation_history)) {
-          const currentMeta: any[] = user.user_metadata.calculation_history;
-          const updatedMeta = deleteAll
-            ? []
-            : currentMeta.filter((item: any) => {
-                const matchId = id && (item.id === id || item.dbId?.toString() === id?.toString());
-                const matchContent = details && result && item.details === details && item.result === result;
-                return !matchId && !matchContent;
-              });
-
-          await supabase.auth.updateUser({
-            data: {
-              calculation_history: updatedMeta,
-            },
-          });
-        }
-      }
-    } catch (metaErr) {
-      console.warn('Server note on updating user metadata calculation_history on delete:', metaErr);
+    if (deleteAll) {
+      await logSecurityEvent({
+        userUid: auth.actor.uid,
+        actorRole: auth.actor.role,
+        action: 'calculations_clear_all',
+        resource: 'api/calculations',
+        status: 'success',
+        ipAddress: ip,
+        details: 'Cleared all calculation history entries for user',
+      });
     }
 
     return NextResponse.json({
@@ -138,8 +143,9 @@ export async function DELETE(req: NextRequest) {
     });
   } catch (error: any) {
     console.error('Error deleting calculation:', error);
-    return NextResponse.json({ error: error?.message || 'Failed to delete calculation' }, { status: 500 });
+    return NextResponse.json(
+      { error: error?.message || 'Failed to delete calculation' },
+      { status: 500 }
+    );
   }
 }
-
-

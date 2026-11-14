@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Search,
   X,
   CalendarDays,
   Calculator,
@@ -17,6 +16,9 @@ import {
   StickyNote,
   ListTodo,
   ChevronRight,
+  CheckSquare,
+  Square,
+  ExternalLink,
 } from 'lucide-react';
 import type { NoteItem } from '../lib/types/notes-tasks';
 
@@ -35,10 +37,11 @@ export type DashboardTargetTab =
 interface DashboardHomeProps {
   searchQuery: string;
   onSearchChange: (value: string) => void;
-  searchInputRef: React.RefObject<HTMLInputElement | null>;
   onSelectTool: (tab: DashboardTargetTab) => void;
   notes: NoteItem[];
   tasksCount: number;
+  closeNotePreviewSignal?: number;
+  onNotePreviewChange?: (isOpen: boolean) => void;
 }
 
 interface DashboardCardDef {
@@ -171,12 +174,29 @@ function getNoteSurfaceClass(color?: string): string {
 export default function DashboardHome({
   searchQuery,
   onSearchChange,
-  searchInputRef,
   onSelectTool,
   notes,
   tasksCount,
+  closeNotePreviewSignal = 0,
+  onNotePreviewChange,
 }: DashboardHomeProps) {
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  useEffect(() => {
+    if (closeNotePreviewSignal > 0) {
+      setSelectedNoteId(null);
+    }
+  }, [closeNotePreviewSignal]);
+
+  const selectedNote = useMemo(
+    () => (selectedNoteId ? notes.find((n) => n.id === selectedNoteId) || null : null),
+    [notes, selectedNoteId]
+  );
+
+  useEffect(() => {
+    onNotePreviewChange?.(Boolean(selectedNote));
+  }, [selectedNote, onNotePreviewChange]);
 
   const filteredCalculators = useMemo(() => {
     if (!normalizedQuery) return ALL_CALCULATORS_CARDS;
@@ -200,12 +220,14 @@ export default function DashboardHome({
 
   const filteredNotes = useMemo(() => {
     if (!normalizedQuery) return notes.slice(0, 4);
-    return notes.filter(
-      (n) =>
-        n.title.toLowerCase().includes(normalizedQuery) ||
-        n.content.toLowerCase().includes(normalizedQuery) ||
-        n.checklistItems.some((item) => item.text.toLowerCase().includes(normalizedQuery))
-    );
+    return notes
+      .filter(
+        (n) =>
+          n.title.toLowerCase().includes(normalizedQuery) ||
+          n.content.toLowerCase().includes(normalizedQuery) ||
+          n.checklistItems.some((item) => item.text.toLowerCase().includes(normalizedQuery))
+      )
+      .slice(0, 6);
   }, [notes, normalizedQuery]);
 
   const showMyNotesCard =
@@ -227,31 +249,7 @@ export default function DashboardHome({
     filteredNotes.length > 0;
 
   return (
-    <div className="w-full max-w-5xl mx-auto px-4 pt-3 pb-6 space-y-5 sm:px-6 sm:pt-4 sm:space-y-6">
-      {/* Full-Width Search Bar */}
-      <div className="relative w-full">
-        <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
-        <input
-          ref={searchInputRef}
-          type="search"
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search calculators, tools..."
-          aria-label="Search calculators, tools, and notes"
-          className="w-full min-h-[46px] bg-white/95 border border-slate-200/80 rounded-2xl pl-11 pr-10 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-400 shadow-[0_2px_12px_rgba(15,23,42,0.04)] focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
-        />
-        {searchQuery && (
-          <button
-            type="button"
-            onClick={() => onSearchChange('')}
-            className="absolute right-2 top-1/2 -translate-y-1/2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-            aria-label="Clear search"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-
+    <div className="w-full max-w-5xl mx-auto px-4 pt-4 pb-6 space-y-5 sm:px-6 sm:pt-5 sm:space-y-6">
       {!hasAnyMatches ? (
         <div className="bg-white/90 border border-slate-200/80 rounded-2xl p-8 text-center space-y-3 shadow-xs">
           <p className="text-sm font-semibold text-slate-700">
@@ -284,7 +282,7 @@ export default function DashboardHome({
                       key={card.id}
                       type="button"
                       onClick={() => onSelectTool(card.id)}
-                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-all duration-150 active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[116px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg}`}
+                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-all duration-150 active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[116px] min-w-0 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg}`}
                     >
                       <span className="flex items-center gap-2 mb-2.5">
                         <span
@@ -293,11 +291,11 @@ export default function DashboardHome({
                           <Icon className="w-4.5 h-4.5" />
                         </span>
                       </span>
-                      <span className="block min-w-0">
-                        <span className="block text-[13px] sm:text-sm font-bold text-slate-900 leading-snug">
+                      <span className="block min-w-0 w-full">
+                        <span className="block text-[13px] sm:text-sm font-bold text-slate-900 leading-snug break-words">
                           {card.title}
                         </span>
-                        <span className="block text-[11px] sm:text-xs text-slate-600 leading-snug mt-0.5 line-clamp-2">
+                        <span className="block text-[11px] sm:text-xs text-slate-600 leading-snug mt-0.5 line-clamp-2 break-words">
                           {card.subtitle}
                         </span>
                       </span>
@@ -326,7 +324,7 @@ export default function DashboardHome({
                       key={card.id}
                       type="button"
                       onClick={() => onSelectTool(card.id)}
-                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-all duration-150 active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[116px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg}`}
+                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-all duration-150 active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[116px] min-w-0 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg}`}
                     >
                       <span className="flex items-center gap-2 mb-2.5">
                         <span
@@ -340,11 +338,11 @@ export default function DashboardHome({
                           />
                         )}
                       </span>
-                      <span className="block min-w-0">
-                        <span className="block text-[13px] sm:text-sm font-bold text-slate-900 leading-snug">
+                      <span className="block min-w-0 w-full">
+                        <span className="block text-[13px] sm:text-sm font-bold text-slate-900 leading-snug break-words">
                           {card.title}
                         </span>
-                        <span className="block text-[11px] sm:text-xs text-slate-600 leading-snug mt-0.5 line-clamp-2">
+                        <span className="block text-[11px] sm:text-xs text-slate-600 leading-snug mt-0.5 line-clamp-2 break-words">
                           {card.subtitle}
                         </span>
                       </span>
@@ -355,40 +353,44 @@ export default function DashboardHome({
             </section>
           )}
 
-          {/* Section 3: NOTES MANAGER */}
+          {/* Section 3: NOTES MANAGER (Strictly Contained) */}
           {(showMyNotesCard || showTasksCard || filteredNotes.length > 0) && (
-            <section aria-labelledby="section-notes-manager" className="space-y-2.5">
-              <div className="flex items-center justify-between">
+            <section
+              aria-labelledby="section-notes-manager"
+              className="w-full max-w-full overflow-hidden rounded-2xl bg-white/80 border border-slate-200/80 shadow-[0_2px_12px_rgba(15,23,42,0.03)] p-3.5 sm:p-4 space-y-3"
+            >
+              <div className="flex items-center justify-between gap-2 min-w-0">
                 <h2
                   id="section-notes-manager"
-                  className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-slate-900"
+                  className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-slate-900 truncate"
                 >
                   Notes Manager
                 </h2>
                 <button
                   type="button"
                   onClick={() => onSelectTool('notes')}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 min-h-[36px] px-1 cursor-pointer"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 min-h-[36px] px-2 rounded-lg hover:bg-blue-50/70 transition-colors cursor-pointer shrink-0"
                 >
                   <span>Open Notes</span>
                   <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               </div>
 
-              <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory md:grid md:grid-cols-3 lg:grid-cols-4 md:overflow-visible md:pb-0">
+              {/* Strictly Contained Responsive Card Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3 w-full min-w-0 overflow-hidden">
                 {showMyNotesCard && (
                   <button
                     type="button"
                     onClick={() => onSelectTool('notes')}
-                    className="snap-start shrink-0 w-[156px] md:w-auto text-left rounded-2xl p-3.5 bg-white/95 hover:bg-slate-50 border border-slate-200/80 shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-all active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[92px]"
+                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 bg-slate-50/90 hover:bg-slate-100/90 border border-slate-200/80 shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[92px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   >
-                    <span className="flex items-center justify-between gap-2 mb-1.5 w-full">
+                    <span className="flex items-center justify-between gap-2 mb-1.5 w-full min-w-0">
                       <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
                         My Notes
                       </span>
                       <StickyNote className="w-4 h-4 text-amber-600 shrink-0" />
                     </span>
-                    <span className="block text-xs font-medium text-slate-500 tabular-nums">
+                    <span className="block text-xs font-medium text-slate-500 tabular-nums truncate">
                       {notes.length} {notes.length === 1 ? 'Item' : 'Items'}
                     </span>
                   </button>
@@ -398,20 +400,24 @@ export default function DashboardHome({
                   const previewText = note.isChecklist
                     ? `${note.checklistItems.filter((i) => i.completed).length}/${note.checklistItems.length} checked`
                     : note.content.trim() || 'Open note';
+                  const isExpanded = selectedNote?.id === note.id;
 
                   return (
                     <button
                       key={note.id}
                       type="button"
-                      onClick={() => onSelectTool('notes')}
-                      className={`snap-start shrink-0 w-[168px] md:w-auto text-left rounded-2xl p-3.5 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-all active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[92px] ${getNoteSurfaceClass(
-                        note.color
-                      )}`}
+                      aria-expanded={isExpanded}
+                      onClick={() =>
+                        setSelectedNoteId((prev) => (prev === note.id ? null : note.id))
+                      }
+                      className={`w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 border shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[92px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                        isExpanded ? 'ring-2 ring-blue-500 ring-offset-1' : ''
+                      } ${getNoteSurfaceClass(note.color)}`}
                     >
-                      <span className="block text-xs sm:text-sm font-bold text-slate-900 line-clamp-1">
+                      <span className="block text-xs sm:text-sm font-bold text-slate-900 truncate w-full">
                         {note.title || 'Untitled Note'}
                       </span>
-                      <span className="block text-[11px] text-slate-600 line-clamp-2 mt-1 leading-snug">
+                      <span className="block text-[11px] text-slate-600 line-clamp-2 break-words mt-1 leading-snug w-full">
                         {previewText}
                       </span>
                     </button>
@@ -422,20 +428,105 @@ export default function DashboardHome({
                   <button
                     type="button"
                     onClick={() => onSelectTool('tasks')}
-                    className="snap-start shrink-0 w-[156px] md:w-auto text-left rounded-2xl p-3.5 bg-[#eef2ff] hover:bg-[#e3e9ff] border border-[#d6defe] shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-all active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[92px]"
+                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 bg-[#eef2ff] hover:bg-[#e3e9ff] border border-[#d6defe] shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[92px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   >
-                    <span className="flex items-center justify-between gap-2 mb-1.5 w-full">
+                    <span className="flex items-center justify-between gap-2 mb-1.5 w-full min-w-0">
                       <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
                         Tasks
                       </span>
                       <ListTodo className="w-4 h-4 text-indigo-600 shrink-0" />
                     </span>
-                    <span className="block text-xs font-medium text-slate-600 tabular-nums">
+                    <span className="block text-xs font-medium text-slate-600 tabular-nums truncate">
                       {tasksCount} {tasksCount === 1 ? 'Task' : 'Tasks'}
                     </span>
                   </button>
                 )}
               </div>
+
+              {/* In-Section Contained Note Preview Drawer (prevents unexpected navigation out of section) */}
+              {selectedNote && (
+                <div
+                  role="region"
+                  aria-label="Selected note preview"
+                  className={`w-full min-w-0 overflow-hidden rounded-2xl border p-3.5 sm:p-4 space-y-2.5 ${getNoteSurfaceClass(
+                    selectedNote.color
+                  )}`}
+                >
+                  <div className="flex items-start justify-between gap-2 min-w-0">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-sm font-bold text-slate-900 break-words">
+                        {selectedNote.title || 'Untitled Note'}
+                      </h3>
+                      {selectedNote.labels.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {selectedNote.labels.slice(0, 4).map((label) => (
+                            <span
+                              key={label}
+                              className="inline-block text-[10px] font-semibold text-slate-700 bg-white/80 border border-slate-200/80 px-2 py-0.5 rounded-md truncate max-w-[140px]"
+                            >
+                              #{label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedNoteId(null)}
+                      className="min-w-[32px] min-h-[32px] rounded-lg bg-white/80 hover:bg-white text-slate-500 hover:text-slate-800 flex items-center justify-center border border-slate-200/70 transition-colors cursor-pointer shrink-0"
+                      aria-label="Close note preview"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {selectedNote.isChecklist && selectedNote.checklistItems.length > 0 ? (
+                    <ul className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                      {selectedNote.checklistItems.slice(0, 8).map((item) => (
+                        <li
+                          key={item.id}
+                          className="flex items-start gap-2 text-xs text-slate-700 min-w-0"
+                        >
+                          {item.completed ? (
+                            <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                          ) : (
+                            <Square className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                          )}
+                          <span
+                            className={`break-words min-w-0 ${
+                              item.completed ? 'line-through text-slate-400' : ''
+                            }`}
+                          >
+                            {item.text}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-slate-700 whitespace-pre-wrap break-words max-h-36 overflow-y-auto leading-relaxed">
+                      {selectedNote.content.trim() || 'This note has no body text yet.'}
+                    </p>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-900/10">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedNoteId(null)}
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 bg-white/80 hover:bg-white border border-slate-200/80 transition-colors cursor-pointer"
+                    >
+                      Collapse
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSelectTool('notes')}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      <span>Open in Notes</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </section>
           )}
         </>

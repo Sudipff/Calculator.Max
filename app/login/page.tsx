@@ -198,6 +198,7 @@ export default function LoginPage() {
             password,
             displayName: data.user.user_metadata?.full_name,
             supabaseUid: data.user.id,
+            supabaseAccessToken: data.session?.access_token,
             forceSync: true,
           }),
         }).catch(() => {});
@@ -284,6 +285,7 @@ export default function LoginPage() {
               password,
               displayName: cleanName,
               supabaseUid: signInData.user.id,
+              supabaseAccessToken: signInData.session?.access_token,
               forceSync: true,
             }),
           }).catch(() => {});
@@ -358,6 +360,7 @@ export default function LoginPage() {
           password,
           displayName: cleanName,
           supabaseUid: data?.user?.id,
+          supabaseAccessToken: data?.session?.access_token,
           forceSync: true,
         }),
       }).catch(() => null);
