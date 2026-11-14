@@ -17,10 +17,8 @@ import {
   AlertTriangle,
   RotateCcw,
   RotateCw,
-  Sparkles,
+  StickyNote,
   Check,
-  Calendar,
-  ChevronDown,
   ArrowLeft,
   CheckCircle2,
 } from 'lucide-react';
@@ -41,6 +39,63 @@ interface NotesViewProps {
   closeEditorSignal?: number;
 }
 
+function getCompactNoteSurface(colorId: string): { bg: string; border: string } {
+  switch (colorId) {
+    case 'mint':
+    case 'sage':
+      return { bg: '#e6f7ec', border: '#ccead6' };
+    case 'coral':
+    case 'blossom':
+    case 'peach':
+      return { bg: '#fdebe6', border: '#f6d5cc' };
+    case 'sky':
+    case 'dusk':
+      return { bg: '#eaf3ff', border: '#d2e2fb' };
+    case 'lavender':
+      return { bg: '#f2ebff', border: '#e1d3fb' };
+    case 'sand':
+      return { bg: '#fbf2d4', border: '#efe1b3' };
+    case 'clay':
+    case 'charcoal':
+      return { bg: '#f1f5f9', border: '#cbd5e1' };
+    default:
+      return { bg: '#ffffff', border: '#e2e8f0' };
+  }
+}
+
+const TAG_COLOR_PALETTES = [
+  'bg-[#b9ecc7] text-[#14532d]', // Soft green (Food / Store)
+  'bg-[#f5bdb7] text-[#7f1d1d]', // Soft coral (Shopping)
+  'bg-[#bae1f7] text-[#0c4a6e]', // Soft blue (Work / Finance)
+  'bg-[#dfcdf7] text-[#581c87]', // Soft lavender (Personal / Vendors)
+  'bg-[#f5df8c] text-[#713f12]', // Soft amber (Math / Ideas)
+  'bg-[#baeae2] text-[#134e4a]', // Soft teal
+];
+
+function getTagColorClass(label: string): string {
+  const lower = label.trim().toLowerCase();
+  if (lower.includes('food') || lower.includes('grocery') || lower.includes('store')) {
+    return TAG_COLOR_PALETTES[0];
+  }
+  if (lower.includes('shop') || lower.includes('gift') || lower.includes('b-day')) {
+    return TAG_COLOR_PALETTES[1];
+  }
+  if (lower.includes('work') || lower.includes('finan') || lower.includes('calc') || lower.includes('unit')) {
+    return TAG_COLOR_PALETTES[2];
+  }
+  if (lower.includes('personal') || lower.includes('goal') || lower.includes('vendor')) {
+    return TAG_COLOR_PALETTES[3];
+  }
+  if (lower.includes('math') || lower.includes('idea') || lower.includes('formula')) {
+    return TAG_COLOR_PALETTES[4];
+  }
+  let hash = 0;
+  for (let i = 0; i < lower.length; i++) {
+    hash = (hash * 31 + lower.charCodeAt(i)) >>> 0;
+  }
+  return TAG_COLOR_PALETTES[hash % TAG_COLOR_PALETTES.length];
+}
+
 export default function NotesView({ currentUser, onFullScreenChange, closeEditorSignal = 0 }: NotesViewProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [notes, setNotes] = useState<NoteItem[]>([]);
@@ -49,6 +104,7 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
+  const [onlyPinned, setOnlyPinned] = useState(false);
 
   // Batch Selection State (Activated by Long-Press)
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
@@ -59,7 +115,7 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
   >(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Quick Creator states
+  // Quick Creator Modal / Sheet states
   const [isEditorExpanded, setIsEditorExpanded] = useState(false);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -146,26 +202,6 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
       isSubscribed = false;
     };
   }, [currentUser]);
-
-  // Click outside quick creator to collapse/save
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (editorRef.current && !editorRef.current.contains(e.target as Node)) {
-        if (title.trim() || content.trim() || checklistItems.length > 0) {
-          handleCreateNote();
-        } else {
-          resetEditor();
-        }
-      }
-    }
-
-    if (isEditorExpanded) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isEditorExpanded, title, content, checklistItems, color, isPinned, isChecklist, labels, reminderAt, isEmergency]);
 
   // Active reminder listener
   useEffect(() => {
@@ -376,21 +412,6 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
     }
   };
 
-  const handleUpdateNoteColor = async (id: string, newColor: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    const updated = notes.map((n) =>
-      n.id === id ? { ...n, color: newColor, updatedAt: new Date().toISOString() } : n
-    );
-    setNotes(updated);
-    saveLocalNotes(updated, currentUser?.id);
-
-    const target = updated.find((n) => n.id === id);
-    if (target && currentUser?.id) {
-      const res = await upsertNoteToSupabase(target, currentUser.id);
-      setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, syncStatus: res.syncStatus } : n)));
-    }
-  };
-
   const handleBatchUpdateColor = async (newColor: string) => {
     if (selectedNoteIds.length === 0) return;
     const nowIso = new Date().toISOString();
@@ -405,26 +426,6 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
       if (target && currentUser?.id) {
         upsertNoteToSupabase(target, currentUser.id);
       }
-    }
-  };
-
-  const handleToggleChecklistItem = async (noteId: string, itemId: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    const updated = notes.map((n) => {
-      if (n.id === noteId) {
-        const items = n.checklistItems.map((ci) => (ci.id === itemId ? { ...ci, completed: !ci.completed } : ci));
-        return { ...n, checklistItems: items, updatedAt: new Date().toISOString() };
-      }
-      return n;
-    });
-
-    setNotes(updated);
-    saveLocalNotes(updated, currentUser?.id);
-
-    const target = updated.find((n) => n.id === noteId);
-    if (target && currentUser?.id) {
-      const res = await upsertNoteToSupabase(target, currentUser.id);
-      setNotes((prev) => prev.map((n) => (n.id === noteId ? { ...n, syncStatus: res.syncStatus } : n)));
     }
   };
 
@@ -480,51 +481,43 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
     return Array.from(set);
   }, [notes]);
 
-  // Filter notes
+  // Filter & sort notes (Pinned first for unified compact multi-column grid)
   const filteredNotes = useMemo(() => {
-    return notes.filter((n) => {
-      const matchSearch =
-        searchQuery === '' ||
-        n.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        n.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        n.checklistItems.some((ci) => ci.text.toLowerCase().includes(searchQuery.toLowerCase()));
+    const q = searchQuery.trim().toLowerCase();
+    return notes
+      .filter((n) => {
+        const matchPinned = onlyPinned ? n.isPinned : true;
+        const matchSearch =
+          q === '' ||
+          n.title.toLowerCase().includes(q) ||
+          n.content.toLowerCase().includes(q) ||
+          n.labels.some((lbl) => lbl.toLowerCase().includes(q)) ||
+          n.checklistItems.some((ci) => ci.text.toLowerCase().includes(q));
+        const matchLabel = selectedLabel === null || n.labels.includes(selectedLabel);
+        return matchPinned && matchSearch && matchLabel;
+      })
+      .sort((a, b) => {
+        if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      });
+  }, [notes, searchQuery, selectedLabel, onlyPinned]);
 
-      const matchLabel = selectedLabel === null || n.labels.includes(selectedLabel);
-
-      return matchSearch && matchLabel;
-    });
-  }, [notes, searchQuery, selectedLabel]);
-
-  const pinnedNotes = useMemo(() => filteredNotes.filter((n) => n.isPinned), [filteredNotes]);
-  const otherNotes = useMemo(() => filteredNotes.filter((n) => !n.isPinned), [filteredNotes]);
-
-  const activeColorTheme = NOTE_COLORS.find((c) => c.id === color) || NOTE_COLORS[0];
   const editingColorTheme = editingNote
     ? NOTE_COLORS.find((c) => c.id === editingNote.color) || NOTE_COLORS[0]
     : NOTE_COLORS[0];
 
   return (
-    <div className="space-y-5 sm:space-y-6">
-      {/* Header Bar with Distinct Round Refresh Button Positioned Above Search */}
-      <div className="bg-white p-4 sm:p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-3 sm:space-y-4">
-        {/* Top Header Row: Title & Top-Right Round Refresh Button */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2.5 truncate">
-              <span className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs shrink-0">
-                <Sparkles className="w-4 h-4" />
-              </span>
-              <span className="truncate">Notes Manager</span>
-            </h2>
-            <p className="text-xs text-slate-500 mt-1 line-clamp-1 sm:line-clamp-none">
-              Google Keep-style full-page notes, entire card colors &amp; long-press batch selection.
-            </p>
-          </div>
+    <div className="w-full max-w-full min-w-0 overflow-x-clip space-y-4 sm:space-y-5 pb-16">
+      {/* Compact Header, Search & Filter Controls matching Calculator Max Notes Manager */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase truncate">
+            Notes Manager
+          </h2>
 
-          {/* Distinct Round Refresh Button Positioned at Top Right Above Search Option */}
           <div className="flex items-center gap-2 shrink-0">
             {refreshNotice && (
-              <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 animate-in fade-in">
+              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
                 <Check className="w-3 h-3 text-emerald-600" />
                 <span>{refreshNotice}</span>
               </span>
@@ -534,40 +527,88 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
               id="notes-realtime-refresh-btn"
               onClick={handleManualRefresh}
               disabled={isRefreshing}
-              className="w-10 h-10 rounded-full bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 text-slate-700 hover:text-amber-700 flex items-center justify-center shadow-xs transition-all cursor-pointer active:scale-90 disabled:opacity-50"
-              title="Refresh notes data in real-time (no page reload)"
+              className="w-9 h-9 rounded-full bg-white/90 hover:bg-amber-50 border border-slate-200/80 hover:border-amber-300 text-slate-600 hover:text-amber-700 flex items-center justify-center shadow-2xs transition-all cursor-pointer active:scale-90 disabled:opacity-50"
+              title="Refresh notes data in real-time"
+              aria-label="Refresh notes"
             >
               <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-amber-600' : ''}`} />
             </button>
           </div>
         </div>
 
-        {/* Search Bar (Positioned Below the Refresh Button) */}
-        <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search notes & checklists..."
-              className="w-full bg-slate-50 border border-slate-200 text-slate-800 font-medium text-xs rounded-2xl py-2.5 pl-10 pr-8 focus:outline-none focus:ring-2 focus:ring-amber-200 transition-all"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+        {/* Full-Width Search Bar */}
+        <div className="relative w-full">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search your notes..."
+            aria-label="Search your notes"
+            className="w-full min-h-[42px] bg-white/95 border border-slate-200/90 text-slate-900 font-medium text-xs sm:text-sm rounded-2xl py-2 pl-10 pr-9 shadow-[0_1px_4px_rgba(15,23,42,0.03)] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 cursor-pointer"
+              aria-label="Clear notes search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Interactive Filter Pills: All Notes, Pinned, + Labels */}
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedLabel(null);
+              setOnlyPinned(false);
+            }}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+              selectedLabel === null && !onlyPinned
+                ? 'bg-slate-300/90 text-slate-900 font-bold shadow-2xs'
+                : 'bg-white/90 text-slate-700 hover:bg-slate-100 border border-slate-200/80'
+            }`}
+          >
+            All Notes
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setOnlyPinned((prev) => !prev)}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1.5 ${
+              onlyPinned
+                ? 'bg-slate-900 text-white shadow-2xs'
+                : 'bg-white/90 text-slate-700 hover:bg-slate-100 border border-slate-200/80'
+            }`}
+          >
+            <Pin className={`w-3 h-3 ${onlyPinned ? 'fill-white text-white' : 'text-slate-700 fill-slate-700'}`} />
+            <span>Pinned</span>
+          </button>
+
+          {allLabels.map((lbl) => (
+            <button
+              key={lbl}
+              type="button"
+              onClick={() => setSelectedLabel(selectedLabel === lbl ? null : lbl)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                selectedLabel === lbl
+                  ? 'bg-slate-900 text-white shadow-2xs'
+                  : 'bg-white/90 text-slate-700 hover:bg-slate-100 border border-slate-200/80'
+              }`}
+            >
+              {lbl}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Floating or Sticky Batch Action Bar when items are selected via Long-Press */}
       {selectedNoteIds.length > 0 && (
-        <div className="sticky top-3 z-30 bg-slate-900 text-white p-3 sm:p-4 rounded-3xl shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-200 border border-slate-700">
+        <div className="sticky top-14 z-30 bg-slate-900 text-white p-3 sm:p-4 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 border border-slate-700">
           <div className="flex items-center gap-2.5">
             <span className="w-7 h-7 rounded-xl bg-amber-500 text-white flex items-center justify-center text-xs font-black">
               {selectedNoteIds.length}
@@ -586,8 +627,7 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
               {selectedNoteIds.length === filteredNotes.length ? 'Deselect All' : 'Select All'}
             </button>
 
-            {/* Quick Batch Color Selection Circles */}
-            <div className="hidden sm:flex items-center gap-1 bg-slate-800/90 px-2.5 py-1 rounded-xl border border-slate-700 shadow-inner">
+            <div className="hidden sm:flex items-center gap-1 bg-slate-800/90 px-2.5 py-1 rounded-xl border border-slate-700">
               <span className="text-[10px] font-bold text-slate-300 mr-0.5">Color:</span>
               {NOTE_COLORS.slice(0, 6).map((c) => (
                 <button
@@ -623,100 +663,71 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
         </div>
       )}
 
-      {/* Label Filter Pills */}
-      {allLabels.length > 0 && (
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-          <button
-            type="button"
-            onClick={() => setSelectedLabel(null)}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer ${
-              selectedLabel === null
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-            }`}
-          >
-            All Notes ({notes.length})
-          </button>
-          {allLabels.map((lbl) => (
-            <button
-              key={lbl}
-              type="button"
-              onClick={() => setSelectedLabel(selectedLabel === lbl ? null : lbl)}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-                selectedLabel === lbl
-                  ? 'bg-amber-500 text-white shadow-xs'
-                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-              }`}
-            >
-              <Tag className="w-3 h-3" />
-              <span>{lbl}</span>
-            </button>
-          ))}
+      {/* Compact Multi-Column Notes Grid */}
+      {loading ? (
+        <div className="py-12 text-center text-slate-400 text-sm font-semibold flex items-center justify-center gap-2">
+          <RotateCcw className="w-4 h-4 animate-spin text-amber-500" />
+          <span>Loading your notes...</span>
+        </div>
+      ) : filteredNotes.length === 0 ? (
+        <div className="py-14 text-center max-w-sm mx-auto space-y-3 bg-white/80 rounded-2xl border border-slate-200/70 p-6">
+          <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200/60">
+            <StickyNote className="w-6 h-6" />
+          </div>
+          <h3 className="text-sm font-bold text-slate-800">
+            {searchQuery || selectedLabel || onlyPinned ? 'No matching notes found' : 'No notes yet'}
+          </h3>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            {searchQuery || selectedLabel || onlyPinned
+              ? 'Try clearing your search or filter selection.'
+              : 'Tap the + button below to capture formulas, shopping lists, or quick notes.'}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3.5 w-full min-w-0">
+          {filteredNotes.map((note) => renderNoteCard(note))}
         </div>
       )}
 
-      {/* Note Creator Box with Rich Background Color */}
-      <div
-        ref={editorRef}
-        style={{
-          backgroundColor: activeColorTheme.hex,
-          borderColor: activeColorTheme.borderHex,
-        }}
-        className="max-w-2xl mx-auto rounded-3xl transition-colors duration-200 shadow-md border-2"
-      >
-        {!isEditorExpanded ? (
+      {/* Quick Create Note Sheet / Modal triggered by Floating + FAB */}
+      {isEditorExpanded && isMounted && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[99990] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/50 backdrop-blur-xs"
+          onClick={() => {
+            if (title.trim() || content.trim() || checklistItems.length > 0) {
+              handleCreateNote();
+            } else {
+              resetEditor();
+            }
+          }}
+        >
           <div
-            onClick={() => setIsEditorExpanded(true)}
-            className="flex items-center justify-between p-3.5 sm:p-4 cursor-text"
+            ref={editorRef}
+            data-note-card="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: getCompactNoteSurface(color).bg,
+              borderColor: getCompactNoteSurface(color).border,
+            }}
+            className="w-full max-w-xl rounded-t-3xl sm:rounded-3xl transition-colors duration-200 shadow-2xl border p-4 sm:p-5 space-y-3.5 max-h-[88dvh] overflow-y-auto"
           >
-            <span className="text-sm font-semibold text-slate-700 pl-2">
-              Take a note...
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsChecklist(true);
-                  setIsEditorExpanded(true);
-                }}
-                className="p-2 rounded-xl text-slate-700 hover:text-slate-950 hover:bg-black/5 transition-colors cursor-pointer"
-                title="New checklist"
-              >
-                <CheckSquare className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsEditorExpanded(true);
-                  setShowColorPicker(true);
-                }}
-                className="p-2 rounded-xl text-slate-700 hover:text-slate-950 hover:bg-black/5 transition-colors cursor-pointer"
-                title="Color palette"
-              >
-                <Palette className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="p-4 sm:p-5 space-y-3.5">
             {/* Title & Pin Toggle */}
             <div className="flex items-center justify-between gap-2">
               <input
                 type="text"
+                autoFocus
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Title"
+                placeholder="Note title"
                 className="w-full bg-transparent font-extrabold text-base text-slate-900 placeholder:text-slate-500 focus:outline-none"
               />
               <button
                 type="button"
                 onClick={() => setIsPinned(!isPinned)}
-                className={`p-2 rounded-xl transition-all cursor-pointer shadow-xs ${
+                className={`p-2 rounded-xl transition-all cursor-pointer shadow-2xs shrink-0 ${
                   isPinned
-                    ? 'text-white bg-amber-500 ring-2 ring-amber-300 scale-105'
-                    : 'text-slate-800 bg-white border-2 border-slate-300 hover:bg-slate-50 hover:text-amber-600'
+                    ? 'text-white bg-slate-900 ring-2 ring-slate-300'
+                    : 'text-slate-700 bg-white/90 border border-slate-300 hover:text-amber-600'
                 }`}
                 title={isPinned ? 'Unpin note' : 'Pin note to top'}
               >
@@ -729,8 +740,8 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
               <textarea
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                placeholder="Take a note..."
-                rows={3}
+                placeholder="Write a concise note, formula, or reminder..."
+                rows={4}
                 className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none resize-none leading-relaxed"
               />
             ) : (
@@ -754,14 +765,13 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
                     <button
                       type="button"
                       onClick={() => handleRemoveChecklistItemFromEditor(item.id)}
-                      className="text-slate-500 hover:text-rose-600 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="text-slate-500 hover:text-rose-600 p-1 cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 ))}
 
-                {/* Add new checklist item line */}
                 <div className="flex items-center gap-2 pt-1">
                   <Plus className="w-4 h-4 text-slate-600" />
                   <input
@@ -788,19 +798,19 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
               </div>
             )}
 
-            {/* Labels Chips in Editor */}
+            {/* Color-coded Labels Chips in Editor */}
             {labels.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 pt-1">
                 {labels.map((lbl) => (
                   <span
                     key={lbl}
-                    className="inline-flex items-center gap-1 bg-black/10 text-slate-800 text-[11px] font-bold px-2 py-0.5 rounded-md"
+                    className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full ${getTagColorClass(lbl)}`}
                   >
-                    #{lbl}
+                    {lbl}
                     <button
                       type="button"
                       onClick={() => setLabels(labels.filter((l) => l !== lbl))}
-                      className="hover:text-rose-600 ml-0.5 cursor-pointer"
+                      className="hover:opacity-75 ml-0.5 cursor-pointer"
                     >
                       <X className="w-3 h-3" />
                     </button>
@@ -830,11 +840,11 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
               </div>
             )}
 
-            {/* Palette Selector Dropdown */}
+            {/* Palette Selector */}
             {showColorPicker && (
               <div className="pt-2 border-t border-black/10 flex flex-wrap gap-2 items-center">
-                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider mr-1">Card Color:</span>
-                {NOTE_COLORS.map((c) => (
+                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider mr-1">Color:</span>
+                {NOTE_COLORS.slice(0, 9).map((c) => (
                   <button
                     key={c.id}
                     type="button"
@@ -842,9 +852,9 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
                       setColor(c.id);
                       setShowColorPicker(false);
                     }}
-                    style={{ backgroundColor: c.hex }}
+                    style={{ backgroundColor: getCompactNoteSurface(c.id).bg }}
                     className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
-                      color === c.id ? 'border-slate-900 scale-110 shadow-md ring-2 ring-slate-400' : 'border-slate-400'
+                      color === c.id ? 'border-slate-900 scale-110 shadow-sm' : 'border-slate-300'
                     }`}
                     title={c.name}
                   >
@@ -854,7 +864,7 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
               </div>
             )}
 
-            {/* Tag Input Dropdown */}
+            {/* Tag Input */}
             {showTagInput && (
               <div className="flex items-center gap-2 pt-2 border-t border-black/10">
                 <Tag className="w-3.5 h-3.5 text-slate-600" />
@@ -868,20 +878,20 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
                       handleAddTagToEditor();
                     }
                   }}
-                  placeholder="Enter tag name (e.g. Work, Store, Budget)"
+                  placeholder="Enter tag (e.g. Food, Work, Personal, Math)"
                   className="text-xs bg-transparent border-b border-slate-400 focus:border-blue-600 focus:outline-none flex-1 py-1 text-slate-900 placeholder:text-slate-500"
                 />
                 <button
                   type="button"
                   onClick={handleAddTagToEditor}
-                  className="text-xs font-bold bg-blue-600 text-white px-2.5 py-1 rounded-lg cursor-pointer"
+                  className="text-xs font-bold bg-slate-900 text-white px-2.5 py-1 rounded-lg cursor-pointer"
                 >
                   Add Tag
                 </button>
               </div>
             )}
 
-            {/* Reminder Date Picker Dropdown */}
+            {/* Reminder Picker */}
             {showReminderPicker && (
               <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-md space-y-2.5 text-xs">
                 <div className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -914,7 +924,7 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
                       requestNotificationPermission();
                       setShowReminderPicker(false);
                     }}
-                    className="px-3 py-1 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 cursor-pointer"
+                    className="px-3 py-1 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800 cursor-pointer"
                   >
                     Done
                   </button>
@@ -979,63 +989,27 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
               </div>
             </div>
           </div>
-        )}
-      </div>
+        </div>,
+        document.body
+      )}
 
-      {/* Notes Grid */}
-      {loading ? (
-        <div className="py-12 text-center text-slate-400 text-sm font-semibold flex items-center justify-center gap-2">
-          <RotateCcw className="w-4 h-4 animate-spin text-amber-500" />
-          <span>Loading your notes...</span>
-        </div>
-      ) : filteredNotes.length === 0 ? (
-        <div className="py-16 text-center max-w-sm mx-auto space-y-3">
-          <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200/60 shadow-xs">
-            <Sparkles className="w-7 h-7" />
-          </div>
-          <h3 className="text-base font-bold text-slate-800">
-            {searchQuery || selectedLabel ? 'No matching notes found' : 'No notes yet'}
-          </h3>
-          <p className="text-xs text-slate-500 leading-relaxed">
-            {searchQuery || selectedLabel
-              ? 'Try adjusting your search query or label filter.'
-              : 'Keep track of retail thoughts, supplier terms, and daily checklists.'}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-8">
-          {/* Pinned Notes Section */}
-          {pinnedNotes.length > 0 && (
-            <div className="space-y-3">
-              <div className="text-[11px] font-black uppercase tracking-widest text-slate-600 px-1 flex items-center gap-1.5">
-                <Pin className="w-3.5 h-3.5 text-amber-600 fill-amber-500" />
-                <span>Pinned ({pinnedNotes.length})</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {pinnedNotes.map((note) => renderNoteCard(note))}
-              </div>
-            </div>
-          )}
-
-          {/* Other Notes Section */}
-          {otherNotes.length > 0 && (
-            <div className="space-y-3">
-              {pinnedNotes.length > 0 && (
-                <div className="text-[11px] font-black uppercase tracking-widest text-slate-600 px-1">
-                  <span>Others ({otherNotes.length})</span>
-                </div>
-              )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {otherNotes.map((note) => renderNoteCard(note))}
-              </div>
-            </div>
-          )}
-        </div>
+      {/* Floating + Action Button (Bottom Right above Bottom Nav) */}
+      {!editingNote && !isEditorExpanded && selectedNoteIds.length === 0 && (
+        <button
+          type="button"
+          onClick={() => setIsEditorExpanded(true)}
+          aria-label="Create new note"
+          title="New Note"
+          className="fixed bottom-20 right-4 sm:right-6 z-30 w-13 h-13 rounded-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white shadow-[0_8px_24px_rgba(15,23,42,0.28)] flex items-center justify-center transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
       )}
 
       {/* FULL-PAGE VIEW (Portaled to document.body to cover the entire screen, hide all headers, prevent background scroll, and optimize for mobile) */}
       {editingNote && isMounted && typeof document !== 'undefined' && createPortal(
         <div
+          data-note-card="true"
           style={{ backgroundColor: editingColorTheme.hex }}
           className="fixed inset-0 z-[99999] w-screen h-[100dvh] flex flex-col overscroll-none select-text touch-manipulation"
         >
@@ -1480,13 +1454,26 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
   );
 
   function renderNoteCard(note: NoteItem) {
-    const colorTheme = NOTE_COLORS.find((c) => c.id === note.color) || NOTE_COLORS[0];
+    const surface = getCompactNoteSurface(note.color);
     const isOverdue = note.reminderAt && new Date(note.reminderAt) < new Date();
     const isSelected = selectedNoteIds.includes(note.id);
 
+    const previewText = note.isChecklist
+      ? note.checklistItems.length > 0
+        ? note.checklistItems
+            .slice(0, 3)
+            .map((ci) => `${ci.completed ? '✓' : '○'} ${ci.text}`)
+            .join(', ')
+        : 'Empty checklist'
+      : note.content.trim() || 'Tap to add details...';
+
+    const primaryLabel = note.labels[0] || null;
+    const extraLabelsCount = note.labels.length > 1 ? note.labels.length - 1 : 0;
+
     return (
-      <div
+      <article
         key={note.id}
+        data-note-card="true"
         onTouchStart={(e) => handleStartLongPress(note.id, e.touches[0]?.clientX, e.touches[0]?.clientY)}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleCancelLongPress}
@@ -1505,201 +1492,108 @@ export default function NotesView({ currentUser, onFullScreenChange, closeEditor
           }
         }}
         style={{
-          backgroundColor: colorTheme.hex,
-          borderColor: isSelected ? '#2563eb' : colorTheme.borderHex,
+          backgroundColor: surface.bg,
+          borderColor: isSelected ? '#2563eb' : surface.border,
         }}
-        className={`group relative rounded-3xl p-4 sm:p-5 border-2 transition-all duration-200 hover:shadow-xl hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between select-none ${
-          isSelected ? 'ring-3 ring-blue-500 shadow-lg scale-[1.01]' : ''
+        className={`group relative rounded-2xl p-3 sm:p-3.5 border transition-all duration-150 hover:shadow-md hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between min-h-[126px] sm:min-h-[138px] shadow-[0_2px_8px_rgba(15,23,42,0.04)] select-none overflow-hidden ${
+          isSelected ? 'ring-2 ring-blue-500 shadow-md scale-[1.01]' : ''
         }`}
       >
-        <div>
-          {/* Header with Batch Checkbox (if active), Title, Sync Indicator & High Visibility Pin */}
-          <div className="flex items-start justify-between gap-2 mb-2.5">
-            <div className="flex items-start gap-2 min-w-0 flex-1">
-              {/* Batch Selection Checkbox shown when in selection mode */}
+        {/* Top Section: Title + Concise Body Preview */}
+        <div className="min-w-0">
+          <div className="flex items-start justify-between gap-1.5">
+            <div className="flex items-start gap-1.5 min-w-0 flex-1">
               {selectedNoteIds.length > 0 && (
                 <button
                   type="button"
                   onClick={(e) => handleToggleSelectNote(note.id, e)}
-                  className={`mt-0.5 p-0.5 rounded-lg transition-transform hover:scale-110 cursor-pointer shrink-0 ${
+                  className={`mt-0.5 rounded-md transition-transform hover:scale-110 cursor-pointer shrink-0 ${
                     isSelected ? 'text-blue-600' : 'text-slate-500 hover:text-slate-700'
                   }`}
-                  title={isSelected ? 'Deselect note' : 'Select note'}
+                  aria-label={isSelected ? 'Deselect note' : 'Select note'}
                 >
                   {isSelected ? (
-                    <CheckCircle2 className="w-5 h-5 fill-blue-600 text-white" />
+                    <CheckCircle2 className="w-4 h-4 fill-blue-600 text-white" />
                   ) : (
-                    <Square className="w-5 h-5 bg-white/90 rounded-md" />
+                    <Square className="w-4 h-4 bg-white/90 rounded-sm" />
                   )}
                 </button>
               )}
 
-              <h4 className="font-black text-slate-950 text-sm sm:text-base tracking-tight leading-snug line-clamp-2">
+              <h4 className="font-bold text-slate-900 text-[13px] sm:text-sm tracking-tight leading-snug line-clamp-2 break-words">
                 {note.title || 'Untitled Note'}
               </h4>
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
-              {/* Visual Sync Indicator Next to Pin */}
-              {note.syncStatus === 'synced' ? (
-                <span
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs select-none"
-                  title="Synced to cloud database"
-                >
-                  <Check className="w-3 h-3 text-emerald-600 stroke-[3]" />
-                  <span className="hidden sm:inline">Synced</span>
-                </span>
-              ) : (
-                <span
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-300 shadow-2xs select-none"
-                  title={currentUser?.id ? "Local copy (sync pending)" : "Local storage only"}
-                >
-                  <X className="w-3 h-3 text-rose-600 stroke-[3]" />
-                  <span className="hidden sm:inline">Unsynced</span>
-                </span>
-              )}
-
-              {/* High Visibility Pin Button: Bold amber when pinned, solid white/dark border when unpinned */}
-              <button
-                type="button"
-                onClick={(e) => handleTogglePin(note.id, e)}
-                className={`p-1.5 sm:p-2 rounded-xl transition-all shrink-0 cursor-pointer shadow-xs flex items-center justify-center ${
-                  note.isPinned
-                    ? 'bg-amber-500 text-white ring-2 ring-amber-300 hover:bg-amber-600 scale-105'
-                    : 'bg-white text-slate-900 border-2 border-slate-300 hover:border-amber-500 hover:text-amber-700 hover:bg-amber-50'
+            {note.reminderAt && (
+              <span
+                className={`shrink-0 mt-0.5 ${
+                  note.isEmergency
+                    ? 'text-rose-600'
+                    : isOverdue
+                    ? 'text-amber-600'
+                    : 'text-blue-600'
                 }`}
-                title={note.isPinned ? 'Unpin note' : 'Pin note to top'}
+                title={`Reminder: ${new Date(note.reminderAt).toLocaleString([], {
+                  dateStyle: 'short',
+                  timeStyle: 'short',
+                })}`}
               >
-                <Pin className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${note.isPinned ? 'rotate-45 fill-white' : ''}`} />
-              </button>
-            </div>
-          </div>
-
-          {/* Body Content */}
-          {!note.isChecklist ? (
-            <p className="text-xs sm:text-sm text-slate-900 leading-relaxed whitespace-pre-wrap line-clamp-6 mb-3 font-medium">
-              {note.content}
-            </p>
-          ) : (
-            <div className="space-y-1.5 mb-3">
-              {note.checklistItems.slice(0, 5).map((ci) => (
-                <div
-                  key={ci.id}
-                  onClick={(e) => handleToggleChecklistItem(note.id, ci.id, e)}
-                  className="flex items-center gap-2 cursor-pointer select-none"
-                >
-                  <button type="button" className="text-slate-600 hover:text-blue-700 shrink-0">
-                    {ci.completed ? (
-                      <CheckSquare className="w-3.5 h-3.5 text-blue-700" />
-                    ) : (
-                      <Square className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                  <span
-                    className={`text-xs sm:text-sm truncate ${
-                      ci.completed ? 'line-through text-slate-500' : 'text-slate-950 font-semibold'
-                    }`}
-                  >
-                    {ci.text}
-                  </span>
-                </div>
-              ))}
-              {note.checklistItems.length > 5 && (
-                <div className="text-[10px] font-bold text-slate-600 pl-5">
-                  +{note.checklistItems.length - 5} more items...
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Labels */}
-          {note.labels.length > 0 && (
-            <div className="flex flex-wrap gap-1 mb-2">
-              {note.labels.map((lbl) => (
-                <span
-                  key={lbl}
-                  className="text-[10px] font-extrabold bg-black/10 text-slate-900 px-2 py-0.5 rounded-md"
-                >
-                  #{lbl}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Footer info: Reminders, Quick Color Swatches & Delete Safeguard Prompt */}
-        <div className="pt-2 border-t border-black/10 space-y-2">
-          {note.reminderAt && (
-            <div
-              className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-lg ${
-                note.isEmergency
-                  ? 'bg-rose-100 text-rose-900 border border-rose-300'
-                  : isOverdue
-                  ? 'bg-amber-100 text-amber-900'
-                  : 'bg-blue-100 text-blue-900'
-              }`}
-            >
-              <Bell className="w-3 h-3" />
-              <span>
-                {new Date(note.reminderAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                <Bell className="w-3.5 h-3.5" />
               </span>
-              {note.isEmergency && <span className="text-[9px] uppercase tracking-wider font-black">EMERGENCY</span>}
-            </div>
-          )}
-
-          <div className="flex items-center justify-between text-slate-600 text-[10px] font-semibold">
-            <span>
-              {new Date(note.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-            </span>
-
-            {/* Color Selection Circles and Delete Icon: Fully visible and high-contrast */}
-            <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-              {/* Color Selection Circles */}
-              <div
-                className={`transition-all flex items-center gap-1 bg-white/95 backdrop-blur-md px-2 py-1 rounded-full border ${
-                  isSelected
-                    ? 'opacity-100 border-blue-500 ring-2 ring-blue-300/80 shadow-md scale-105'
-                    : 'opacity-90 group-hover:opacity-100 border-black/15 shadow-2xs'
-                }`}
-                title="Change card background color"
-              >
-                {NOTE_COLORS.slice(0, 6).map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={(e) => handleUpdateNoteColor(note.id, c.id, e)}
-                    style={{ backgroundColor: c.hex }}
-                    className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-125 cursor-pointer flex items-center justify-center shrink-0 shadow-2xs ${
-                      note.color === c.id
-                        ? 'border-slate-950 scale-110 ring-2 ring-slate-400'
-                        : 'border-white/80 hover:border-slate-800'
-                    }`}
-                    title={c.name}
-                  >
-                    {note.color === c.id && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-950" />
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              {/* Delete Icon with Confirmation Safeguard */}
-              <button
-                type="button"
-                onClick={(e) => promptDeleteSingle(note, e)}
-                className={`p-1.5 rounded-full border transition-all cursor-pointer active:scale-95 flex items-center justify-center shrink-0 ${
-                  isSelected
-                    ? 'opacity-100 bg-rose-600 border-rose-600 text-white hover:bg-rose-700 ring-2 ring-rose-300 shadow-md scale-105'
-                    : 'opacity-90 group-hover:opacity-100 bg-white/95 border-slate-200 text-rose-600 hover:bg-rose-600 hover:text-white hover:border-rose-600 shadow-2xs'
-                }`}
-                title="Delete note permanently"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            )}
           </div>
+
+          <p className="mt-1.5 text-[11px] sm:text-xs text-slate-600 leading-relaxed line-clamp-3 break-words font-normal">
+            {previewText}
+          </p>
         </div>
-      </div>
+
+        {/* Footer Row: Color-Coded Tag Pill + Single-Tap Pin Status */}
+        <div className="pt-2.5 mt-auto flex items-center justify-between gap-1.5 min-w-0">
+          <div className="flex items-center gap-1 min-w-0">
+            {primaryLabel ? (
+              <span
+                className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-bold truncate max-w-[100px] sm:max-w-[120px] ${getTagColorClass(
+                  primaryLabel
+                )}`}
+              >
+                {primaryLabel}
+              </span>
+            ) : (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-semibold bg-slate-900/10 text-slate-700 truncate">
+                {note.isChecklist ? 'Checklist' : 'Note'}
+              </span>
+            )}
+
+            {extraLabelsCount > 0 && (
+              <span className="text-[10px] font-bold text-slate-500 shrink-0">
+                +{extraLabelsCount}
+              </span>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={(e) => handleTogglePin(note.id, e)}
+            aria-label={note.isPinned ? 'Unpin note' : 'Pin note'}
+            title={note.isPinned ? 'Unpin note' : 'Pin note'}
+            className={`w-7 h-7 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer active:scale-90 ${
+              note.isPinned
+                ? 'text-slate-900 hover:bg-black/5'
+                : 'text-slate-400 hover:text-slate-700 hover:bg-black/5'
+            }`}
+          >
+            <Pin
+              className={`w-3.5 h-3.5 rotate-45 transition-transform ${
+                note.isPinned
+                  ? 'fill-slate-900 text-slate-900'
+                  : 'fill-slate-300/75 text-slate-400'
+              }`}
+            />
+          </button>
+        </div>
+      </article>
     );
   }
 }

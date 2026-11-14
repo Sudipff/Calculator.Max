@@ -125,14 +125,76 @@ html[data-theme='dark'] .min-h-\[100dvh\] {
 html[data-theme='dark'] header,
 html[data-theme='dark'] nav {
   background-color: rgba(15, 23, 42, 0.92) !important;
-  border-color: rgba(51, 65, 85, 0.7) !important;
+  border-color: rgba(51, 65, 85, 0.75) !important;
 }
 
-html[data-theme='dark'] header h1 button span,
-html[data-theme='dark'] h2,
-html[data-theme='dark'] h3,
-html[data-theme='dark'] h4 {
-  color: #f1f5f9;
+html[data-theme='dark'] .bg-white,
+html[data-theme='dark'] .bg-white\/95,
+html[data-theme='dark'] .bg-white\/90,
+html[data-theme='dark'] .bg-white\/85,
+html[data-theme='dark'] .bg-white\/80 {
+  background-color: #1e293b !important;
+  border-color: #334155 !important;
 }
+
+html[data-theme='dark'] .bg-slate-50,
+html[data-theme='dark'] .bg-slate-50\/90,
+html[data-theme='dark'] .bg-slate-50\/80,
+html[data-theme='dark'] .bg-slate-50\/70,
+html[data-theme='dark'] .bg-slate-50\/60 {
+  background-color: #0f172a !important;
+  border-color: #334155 !important;
+}
+
+html[data-theme='dark'] .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+html[data-theme='dark'] .border-slate-100,
+html[data-theme='dark'] .border-slate-200,
+html[data-theme='dark'] .border-slate-200\/80,
+html[data-theme='dark'] .border-slate-200\/70 {
+  border-color: #334155 !important;
+}
+
+html[data-theme='dark'] .text-slate-900,
+html[data-theme='dark'] .text-slate-800,
+html[data-theme='dark'] .text-slate-700,
+html[data-theme='dark'] header h1 button span {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme='dark'] .text-slate-600,
+html[data-theme='dark'] .text-slate-500 {
+  color: #cbd5e1 !important;
+}
+
+/* Preserve dark high-contrast typography inside pastel dashboard tiles & note cards */
+html[data-theme='dark'] [class*="bg-[#"] .text-slate-900,
+html[data-theme='dark'] [class*="bg-[#"] .text-slate-800,
+html[data-theme='dark'] [data-note-card="true"] .text-slate-950,
+html[data-theme='dark'] [data-note-card="true"] .text-slate-900,
+html[data-theme='dark'] [data-note-card="true"] .text-slate-800 {
+  color: #0f172a !important;
+}
+
+html[data-theme='dark'] [class*="bg-[#"] .text-slate-600,
+html[data-theme='dark'] [class*="bg-[#"] .text-slate-500,
+html[data-theme='dark'] [data-note-card="true"] .text-slate-700,
+html[data-theme='dark'] [data-note-card="true"] .text-slate-600,
+html[data-theme='dark'] [data-note-card="true"] .text-slate-500 {
+  color: #334155 !important;
+}
+
+html[data-theme='dark'] input,
+html[data-theme='dark'] textarea,
+html[data-theme='dark'] select {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: #334155 !important;
+}
+
+html[data-theme='dark'] input::placeholder,
+html[data-theme='dark'] textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
 
 

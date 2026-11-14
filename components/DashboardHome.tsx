@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
-  X,
   CalendarDays,
   Calculator,
   Wallet,
@@ -16,9 +15,6 @@ import {
   StickyNote,
   ListTodo,
   ChevronRight,
-  CheckSquare,
-  Square,
-  ExternalLink,
 } from 'lucide-react';
 import type { NoteItem } from '../lib/types/notes-tasks';
 
@@ -40,8 +36,6 @@ interface DashboardHomeProps {
   onSelectTool: (tab: DashboardTargetTab) => void;
   notes: NoteItem[];
   tasksCount: number;
-  closeNotePreviewSignal?: number;
-  onNotePreviewChange?: (isOpen: boolean) => void;
 }
 
 interface DashboardCardDef {
@@ -147,56 +141,14 @@ const QUICK_TOOLS_CARDS: DashboardCardDef[] = [
   },
 ];
 
-function getNoteSurfaceClass(color?: string): string {
-  switch (color) {
-    case 'mint':
-    case 'sage':
-      return 'bg-[#e9faef] hover:bg-[#dcf5e5] border-[#d0eedb]';
-    case 'sand':
-    case 'peach':
-    case 'yellow':
-      return 'bg-[#fff3e2] hover:bg-[#ffe9cc] border-[#f7dec0]';
-    case 'sky':
-    case 'blue':
-    case 'fog':
-      return 'bg-[#eaf3ff] hover:bg-[#deebff] border-[#d2e2fb]';
-    case 'rose':
-    case 'blossom':
-      return 'bg-[#ffedf2] hover:bg-[#ffe1ea] border-[#f9d4df]';
-    case 'lavender':
-    case 'purple':
-      return 'bg-[#f4edff] hover:bg-[#eae0ff] border-[#e1d2fa]';
-    default:
-      return 'bg-[#f8fafc] hover:bg-[#f1f5f9] border-slate-200/80';
-  }
-}
-
 export default function DashboardHome({
   searchQuery,
   onSearchChange,
   onSelectTool,
   notes,
   tasksCount,
-  closeNotePreviewSignal = 0,
-  onNotePreviewChange,
 }: DashboardHomeProps) {
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const normalizedQuery = searchQuery.trim().toLowerCase();
-
-  useEffect(() => {
-    if (closeNotePreviewSignal > 0) {
-      setSelectedNoteId(null);
-    }
-  }, [closeNotePreviewSignal]);
-
-  const selectedNote = useMemo(
-    () => (selectedNoteId ? notes.find((n) => n.id === selectedNoteId) || null : null),
-    [notes, selectedNoteId]
-  );
-
-  useEffect(() => {
-    onNotePreviewChange?.(Boolean(selectedNote));
-  }, [selectedNote, onNotePreviewChange]);
 
   const filteredCalculators = useMemo(() => {
     if (!normalizedQuery) return ALL_CALCULATORS_CARDS;
@@ -218,18 +170,6 @@ export default function DashboardHome({
     );
   }, [normalizedQuery]);
 
-  const filteredNotes = useMemo(() => {
-    if (!normalizedQuery) return notes.slice(0, 4);
-    return notes
-      .filter(
-        (n) =>
-          n.title.toLowerCase().includes(normalizedQuery) ||
-          n.content.toLowerCase().includes(normalizedQuery) ||
-          n.checklistItems.some((item) => item.text.toLowerCase().includes(normalizedQuery))
-      )
-      .slice(0, 6);
-  }, [notes, normalizedQuery]);
-
   const showMyNotesCard =
     !normalizedQuery ||
     'my notes'.includes(normalizedQuery) ||
@@ -245,8 +185,7 @@ export default function DashboardHome({
     filteredCalculators.length > 0 ||
     filteredQuickTools.length > 0 ||
     showMyNotesCard ||
-    showTasksCard ||
-    filteredNotes.length > 0;
+    showTasksCard;
 
   return (
     <div className="w-full max-w-5xl mx-auto px-4 pt-4 pb-6 space-y-5 sm:px-6 sm:pt-5 sm:space-y-6">
@@ -353,8 +292,8 @@ export default function DashboardHome({
             </section>
           )}
 
-          {/* Section 3: NOTES MANAGER (Strictly Contained) */}
-          {(showMyNotesCard || showTasksCard || filteredNotes.length > 0) && (
+          {/* Section 3: NOTES MANAGER (Strictly Contained Entry — Individual Notes Live Inside Notes Manager View) */}
+          {(showMyNotesCard || showTasksCard) && (
             <section
               aria-labelledby="section-notes-manager"
               className="w-full max-w-full overflow-hidden rounded-2xl bg-white/80 border border-slate-200/80 shadow-[0_2px_12px_rgba(15,23,42,0.03)] p-3.5 sm:p-4 space-y-3"
@@ -376,13 +315,12 @@ export default function DashboardHome({
                 </button>
               </div>
 
-              {/* Strictly Contained Responsive Card Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3 w-full min-w-0 overflow-hidden">
+              <div className="grid grid-cols-2 gap-2.5 sm:gap-3 w-full min-w-0 overflow-hidden">
                 {showMyNotesCard && (
                   <button
                     type="button"
                     onClick={() => onSelectTool('notes')}
-                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 bg-slate-50/90 hover:bg-slate-100/90 border border-slate-200/80 shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[92px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 sm:p-4 bg-slate-50/90 hover:bg-slate-100/90 border border-slate-200/80 shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[96px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   >
                     <span className="flex items-center justify-between gap-2 mb-1.5 w-full min-w-0">
                       <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
@@ -396,39 +334,11 @@ export default function DashboardHome({
                   </button>
                 )}
 
-                {filteredNotes.map((note) => {
-                  const previewText = note.isChecklist
-                    ? `${note.checklistItems.filter((i) => i.completed).length}/${note.checklistItems.length} checked`
-                    : note.content.trim() || 'Open note';
-                  const isExpanded = selectedNote?.id === note.id;
-
-                  return (
-                    <button
-                      key={note.id}
-                      type="button"
-                      aria-expanded={isExpanded}
-                      onClick={() =>
-                        setSelectedNoteId((prev) => (prev === note.id ? null : note.id))
-                      }
-                      className={`w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 border shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[92px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                        isExpanded ? 'ring-2 ring-blue-500 ring-offset-1' : ''
-                      } ${getNoteSurfaceClass(note.color)}`}
-                    >
-                      <span className="block text-xs sm:text-sm font-bold text-slate-900 truncate w-full">
-                        {note.title || 'Untitled Note'}
-                      </span>
-                      <span className="block text-[11px] text-slate-600 line-clamp-2 break-words mt-1 leading-snug w-full">
-                        {previewText}
-                      </span>
-                    </button>
-                  );
-                })}
-
                 {showTasksCard && (
                   <button
                     type="button"
                     onClick={() => onSelectTool('tasks')}
-                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 bg-[#eef2ff] hover:bg-[#e3e9ff] border border-[#d6defe] shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[92px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 sm:p-4 bg-[#eef2ff] hover:bg-[#e3e9ff] border border-[#d6defe] shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[96px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   >
                     <span className="flex items-center justify-between gap-2 mb-1.5 w-full min-w-0">
                       <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
@@ -442,91 +352,6 @@ export default function DashboardHome({
                   </button>
                 )}
               </div>
-
-              {/* In-Section Contained Note Preview Drawer (prevents unexpected navigation out of section) */}
-              {selectedNote && (
-                <div
-                  role="region"
-                  aria-label="Selected note preview"
-                  className={`w-full min-w-0 overflow-hidden rounded-2xl border p-3.5 sm:p-4 space-y-2.5 ${getNoteSurfaceClass(
-                    selectedNote.color
-                  )}`}
-                >
-                  <div className="flex items-start justify-between gap-2 min-w-0">
-                    <div className="min-w-0 flex-1">
-                      <h3 className="text-sm font-bold text-slate-900 break-words">
-                        {selectedNote.title || 'Untitled Note'}
-                      </h3>
-                      {selectedNote.labels.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {selectedNote.labels.slice(0, 4).map((label) => (
-                            <span
-                              key={label}
-                              className="inline-block text-[10px] font-semibold text-slate-700 bg-white/80 border border-slate-200/80 px-2 py-0.5 rounded-md truncate max-w-[140px]"
-                            >
-                              #{label}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedNoteId(null)}
-                      className="min-w-[32px] min-h-[32px] rounded-lg bg-white/80 hover:bg-white text-slate-500 hover:text-slate-800 flex items-center justify-center border border-slate-200/70 transition-colors cursor-pointer shrink-0"
-                      aria-label="Close note preview"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  {selectedNote.isChecklist && selectedNote.checklistItems.length > 0 ? (
-                    <ul className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                      {selectedNote.checklistItems.slice(0, 8).map((item) => (
-                        <li
-                          key={item.id}
-                          className="flex items-start gap-2 text-xs text-slate-700 min-w-0"
-                        >
-                          {item.completed ? (
-                            <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                          ) : (
-                            <Square className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
-                          )}
-                          <span
-                            className={`break-words min-w-0 ${
-                              item.completed ? 'line-through text-slate-400' : ''
-                            }`}
-                          >
-                            {item.text}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-xs text-slate-700 whitespace-pre-wrap break-words max-h-36 overflow-y-auto leading-relaxed">
-                      {selectedNote.content.trim() || 'This note has no body text yet.'}
-                    </p>
-                  )}
-
-                  <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-900/10">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedNoteId(null)}
-                      className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 bg-white/80 hover:bg-white border border-slate-200/80 transition-colors cursor-pointer"
-                    >
-                      Collapse
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onSelectTool('notes')}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 transition-colors cursor-pointer"
-                    >
-                      <span>Open in Notes</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </button>
-                  </div>
-                </div>
-              )}
             </section>
           )}
         </>

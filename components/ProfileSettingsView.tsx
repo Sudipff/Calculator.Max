@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   User,
   ShieldCheck,
@@ -28,6 +28,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
+import type { HistoryItem } from '../lib/historyStorage';
 
 export interface CurrencyOption {
   symbol: string;
@@ -37,15 +38,25 @@ export interface CurrencyOption {
   flag: string;
 }
 
+export interface BackupPayload {
+  calculations?: HistoryItem[];
+  notes?: any[];
+  tasks?: any[];
+}
+
 interface ProfileSettingsViewProps {
   currentUser: any;
   currency: string;
   currencies: CurrencyOption[];
   onCurrencyChange: (symbol: string) => void;
+  unitSystem?: 'metric' | 'imperial';
+  onUnitSystemChange?: (sys: 'metric' | 'imperial') => void;
   onOpenAuthModal: (mode?: 'signin' | 'update_password') => void;
   onSignOut: () => Promise<void> | void;
   onSyncHistory: () => Promise<void> | void;
   onExportCalculations: () => void;
+  onBuildLocalBackup?: () => BackupPayload;
+  onRestoreBackup?: (payload: BackupPayload) => number;
   onUserUpdated?: (user: any) => void;
   calculationsCount: number;
 }
@@ -57,10 +68,14 @@ export default function ProfileSettingsView({
   currency,
   currencies,
   onCurrencyChange,
+  unitSystem: controlledUnitSystem,
+  onUnitSystemChange,
   onOpenAuthModal,
   onSignOut,
   onSyncHistory,
   onExportCalculations,
+  onBuildLocalBackup,
+  onRestoreBackup,
   onUserUpdated,
   calculationsCount,
 }: ProfileSettingsViewProps) {
@@ -74,9 +89,10 @@ export default function ProfileSettingsView({
 
   // Preferences persisted to localStorage
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>('light');
-  const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
+  const [localUnitSystem, setLocalUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const [notifyUpdates, setNotifyUpdates] = useState(true);
   const [notifyGoals, setNotifyGoals] = useState(true);
+  const unitSystem = controlledUnitSystem ?? localUnitSystem;
 
   // Sync & backup status
   const [isSyncing, setIsSyncing] = useState(false);
@@ -84,6 +100,7 @@ export default function ProfileSettingsView({
   const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
   const [privacyLoading, setPrivacyLoading] = useState(false);
   const [confirmEraseData, setConfirmEraseData] = useState(false);
+  const restoreInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const initialName =
@@ -104,7 +121,7 @@ export default function ProfileSettingsView({
     }
     const savedUnits = localStorage.getItem('calculator-max-unit-system');
     if (savedUnits === 'metric' || savedUnits === 'imperial') {
-      setUnitSystem(savedUnits);
+      setLocalUnitSystem(savedUnits);
     }
     const savedAppUpdates = localStorage.getItem('calculator-max-notify-updates');
     if (savedAppUpdates !== null) {
@@ -127,10 +144,11 @@ export default function ProfileSettingsView({
 
   const toggleUnitSystem = () => {
     const next = unitSystem === 'metric' ? 'imperial' : 'metric';
-    setUnitSystem(next);
+    setLocalUnitSystem(next);
     if (typeof window !== 'undefined') {
       localStorage.setItem('calculator-max-unit-system', next);
     }
+    onUnitSystemChange?.(next);
   };
 
   const toggleNotifyUpdates = () => {
@@ -208,28 +226,39 @@ export default function ProfileSettingsView({
   };
 
   const handleExportPrivacyArchive = async () => {
-    if (!currentUser) {
-      onOpenAuthModal('signin');
-      return;
-    }
     setPrivacyLoading(true);
     setPrivacyNotice(null);
     try {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const res = await fetch('/api/privacy', {
-        headers: session?.access_token
-          ? { Authorization: `Bearer ${session.access_token}` }
-          : undefined,
-      });
-      if (!res.ok) {
-        setPrivacyNotice('Sign in cleanly to download your encrypted cloud archive.');
+      let archiveData: any = null;
+      if (currentUser) {
+        const supabase = createClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const res = await fetch('/api/privacy', {
+          headers: session?.access_token
+            ? { Authorization: `Bearer ${session.access_token}` }
+            : undefined,
+        });
+        if (res.ok) {
+          archiveData = await res.json();
+        }
+      }
+
+      if (!archiveData && onBuildLocalBackup) {
+        archiveData = {
+          source: 'local-workspace',
+          exportedAt: new Date().toISOString(),
+          ...onBuildLocalBackup(),
+        };
+      }
+
+      if (!archiveData) {
+        setPrivacyNotice('Sign in or add calculations first to export a backup archive.');
         return;
       }
-      const data = await res.json();
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+
+      const blob = new Blob([JSON.stringify(archiveData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -238,9 +267,60 @@ export default function ProfileSettingsView({
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      setPrivacyNotice('Encrypted backup archive downloaded.');
+      setPrivacyNotice(
+        currentUser ? 'Encrypted cloud backup archive downloaded.' : 'Local backup archive downloaded.'
+      );
     } catch {
       setPrivacyNotice('Backup export failed. Please try again.');
+    } finally {
+      setPrivacyLoading(false);
+    }
+  };
+
+  const handleRestoreBackupFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setPrivacyNotice('Backup file exceeds 5 MB limit.');
+      return;
+    }
+    setPrivacyLoading(true);
+    setPrivacyNotice(null);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object') {
+        setPrivacyNotice('Invalid backup format.');
+        return;
+      }
+      const payload: BackupPayload = {
+        calculations: Array.isArray(parsed.calculations)
+          ? parsed.calculations
+          : Array.isArray(parsed.data?.calculations)
+          ? parsed.data.calculations
+          : Array.isArray(parsed)
+          ? parsed
+          : undefined,
+        notes: Array.isArray(parsed.notes)
+          ? parsed.notes
+          : Array.isArray(parsed.data?.notes)
+          ? parsed.data.notes
+          : undefined,
+        tasks: Array.isArray(parsed.tasks)
+          ? parsed.tasks
+          : Array.isArray(parsed.data?.tasks)
+          ? parsed.data.tasks
+          : undefined,
+      };
+      const restoredCount = onRestoreBackup ? onRestoreBackup(payload) : 0;
+      if (restoredCount > 0) {
+        setPrivacyNotice(`Restored ${restoredCount} items from backup.`);
+      } else {
+        setPrivacyNotice('No valid calculations, notes, or tasks found in backup file.');
+      }
+    } catch {
+      setPrivacyNotice('Could not read JSON backup file. Ensure it is valid JSON.');
     } finally {
       setPrivacyLoading(false);
     }
@@ -784,11 +864,32 @@ export default function ProfileSettingsView({
                     type="button"
                     onClick={handleExportPrivacyArchive}
                     disabled={privacyLoading}
-                    className="flex-1 min-w-[150px] py-2 px-3 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    className="flex-1 min-w-[140px] py-2 px-3 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
                     <Download className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Download Cloud Archive (JSON)</span>
+                    <span>{currentUser ? 'Download Archive (JSON)' : 'Backup JSON'}</span>
                   </button>
+
+                  {onRestoreBackup && (
+                    <>
+                      <input
+                        ref={restoreInputRef}
+                        type="file"
+                        accept=".json,application/json"
+                        onChange={handleRestoreBackupFile}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => restoreInputRef.current?.click()}
+                        disabled={privacyLoading}
+                        className="flex-1 min-w-[140px] py-2 px-3 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Restore Backup (JSON)</span>
+                      </button>
+                    </>
+                  )}
 
                   {currentUser && !confirmEraseData && (
                     <button
@@ -875,27 +976,27 @@ export default function ProfileSettingsView({
 
           <div className="pt-2 border-t border-slate-100 space-y-2.5">
             <a
-              href="https://www.instagram.com/"
+              href="https://www.instagram.com/sudipdebnath416?rpxt=MWUzbTA1ZW43a2w4Ng=="
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl bg-slate-50/90 hover:bg-pink-50/70 border border-slate-200/70 hover:border-pink-200 transition-colors group"
+              className="relative z-10 flex items-center justify-between gap-3 px-3.5 py-2.5 min-h-[44px] rounded-xl bg-slate-50/90 hover:bg-pink-50/70 border border-slate-200/70 hover:border-pink-200 transition-colors cursor-pointer group"
             >
               <span className="flex items-center gap-3 min-w-0">
                 <span className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 via-pink-500 to-purple-600 text-white flex items-center justify-center shrink-0">
                   <Instagram className="w-4 h-4" />
                 </span>
                 <span className="text-xs sm:text-sm font-semibold text-blue-600 group-hover:text-pink-700 underline decoration-blue-300 underline-offset-2 truncate">
-                  Follow @CalculatorMaxApp on Instagram
+                  Follow @sudipdebnath416 on Instagram
                 </span>
               </span>
               <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             </a>
 
             <a
-              href="https://www.facebook.com/"
+              href="https://www.facebook.com/share/1CSqc7Rdfu/"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl bg-slate-50/90 hover:bg-blue-50/80 border border-slate-200/70 hover:border-blue-200 transition-colors group"
+              className="relative z-10 flex items-center justify-between gap-3 px-3.5 py-2.5 min-h-[44px] rounded-xl bg-slate-50/90 hover:bg-blue-50/80 border border-slate-200/70 hover:border-blue-200 transition-colors cursor-pointer group"
             >
               <span className="flex items-center gap-3 min-w-0">
                 <span className="w-8 h-8 rounded-lg bg-[#1877F2] text-white flex items-center justify-center shrink-0">

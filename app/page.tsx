@@ -49,7 +49,7 @@ import CurrencyExchange from '../components/CurrencyExchange';
 import NotesView from '../components/NotesManager/NotesView';
 import TasksView from '../components/NotesManager/TasksView';
 import HistoryPreviewModal from '../components/HistoryPreviewModal';
-import ProfileSettingsView from '../components/ProfileSettingsView';
+import ProfileSettingsView, { type BackupPayload } from '../components/ProfileSettingsView';
 import { createClient } from '@/utils/supabase/client';
 import {
   getCalculationHistory,
@@ -60,7 +60,7 @@ import {
   parseSavedAmountFromText,
   HistoryItem,
 } from '../lib/historyStorage';
-import { getLocalNotes, getLocalTasks } from '../lib/notesTasksStorage';
+import { getLocalNotes, getLocalTasks, saveLocalNotes, saveLocalTasks } from '../lib/notesTasksStorage';
 import type { NoteItem } from '../lib/types/notes-tasks';
 import { exportAllHistoryPDF, exportSingleItemPDF } from '../lib/pdfExport';
 import { sanitizeCsvCell } from '../lib/validation';
@@ -318,14 +318,13 @@ const CALCULATOR_TOOLS_INFO: ToolInfoItem[] = [
 
 export default function RetailCalc() {
   const [currency, setCurrency] = useState('₹');
+  const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const [isClient, setIsClient] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [direction, setDirection] = useState<number>(1);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [profileCloseSignal, setProfileCloseSignal] = useState(0);
   const [noteEditorCloseSignal, setNoteEditorCloseSignal] = useState(0);
-  const [dashboardNoteCloseSignal, setDashboardNoteCloseSignal] = useState(0);
-  const [isDashboardNotePreviewOpen, setIsDashboardNotePreviewOpen] = useState(false);
   const [exitPromptVisible, setExitPromptVisible] = useState(false);
   const [isNoteFullScreen, setIsNoteFullScreen] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
@@ -637,6 +636,19 @@ export default function RetailCalc() {
     const savedCurrency = localStorage.getItem('retail-calc-currency');
     if (savedCurrency) setCurrency(savedCurrency);
 
+    const savedTheme = localStorage.getItem('calculator-max-theme');
+    if (savedTheme === 'dark' || savedTheme === 'light') {
+      document.documentElement.dataset.theme = savedTheme;
+    }
+
+    const savedUnitSys = localStorage.getItem('calculator-max-unit-system');
+    if (savedUnitSys === 'metric' || savedUnitSys === 'imperial') {
+      setUnitSystem(savedUnitSys);
+      if (savedUnitSys === 'imperial') {
+        setUnitType('lb_to_kg');
+      }
+    }
+
     // Initial check for local user or history
     if (typeof window !== 'undefined') {
       const local = localStorage.getItem('retail_calc_auth_user');
@@ -747,10 +759,6 @@ export default function RetailCalc() {
       setNoteEditorCloseSignal((n) => n + 1);
       return true;
     }
-    if (activeTab === 'home' && isDashboardNotePreviewOpen) {
-      setDashboardNoteCloseSignal((n) => n + 1);
-      return true;
-    }
     if (activeTab === 'home' && dashboardSearch.trim() !== '') {
       setDashboardSearch('');
       return true;
@@ -777,7 +785,6 @@ export default function RetailCalc() {
     dashboardSearch,
     deleteConfirmTarget,
     isAuthModalOpen,
-    isDashboardNotePreviewOpen,
     isNoteFullScreen,
     previewHistoryItem,
   ]);
@@ -793,15 +800,13 @@ export default function RetailCalc() {
       previewHistoryItem ||
       deleteConfirmTarget ||
       isAuthModalOpen ||
-      isNoteFullScreen ||
-      isDashboardNotePreviewOpen
+      isNoteFullScreen
     ) {
       pushHistoryGuard('overlay');
     }
   }, [
     deleteConfirmTarget,
     isAuthModalOpen,
-    isDashboardNotePreviewOpen,
     isNoteFullScreen,
     previewHistoryItem,
     pushHistoryGuard,
@@ -1215,16 +1220,28 @@ export default function RetailCalc() {
 
     if (!priceKgInvalid && !budgetInvalid) {
       triggerVibration('success');
-      const grams = (bdgt / priceKg) * 1000;
-      setQuantityGrams(grams);
+      if (unitSystem === 'imperial') {
+        const ounces = (bdgt / priceKg) * 16;
+        setQuantityGrams(ounces);
+        const formattedQty =
+          ounces >= 16 ? `${(ounces / 16).toFixed(2)} lb` : `${ounces.toFixed(1)} oz`;
+        saveHistoryItem(
+          'Weight',
+          `Price Rate: ${currency}${priceKg.toFixed(2)} / lb | Shopping Budget: ${currency}${bdgt.toFixed(2)}`,
+          `Calculated Purchase Quantity: ${formattedQty}`
+        );
+      } else {
+        const grams = (bdgt / priceKg) * 1000;
+        setQuantityGrams(grams);
 
-      const formattedQty =
-        grams >= 1000 ? `${(grams / 1000).toFixed(2)} kg` : `${grams.toFixed(0)} grams`;
-      saveHistoryItem(
-        'Weight',
-        `Price Rate: ${currency}${priceKg.toFixed(2)} / kg | Shopping Budget: ${currency}${bdgt.toFixed(2)}`,
-        `Calculated Purchase Quantity: ${formattedQty}`
-      );
+        const formattedQty =
+          grams >= 1000 ? `${(grams / 1000).toFixed(2)} kg` : `${grams.toFixed(0)} grams`;
+        saveHistoryItem(
+          'Weight',
+          `Price Rate: ${currency}${priceKg.toFixed(2)} / kg | Shopping Budget: ${currency}${bdgt.toFixed(2)}`,
+          `Calculated Purchase Quantity: ${formattedQty}`
+        );
+      }
     } else {
       triggerVibration('error');
     }
@@ -1255,6 +1272,30 @@ export default function RetailCalc() {
         case 'l_to_ml':
           res = `${(input * 1000).toFixed(0)} ml`;
           details = `Input Amount: ${input} Liters | Conversion Type: Liters to Milliliters (L -> ml)`;
+          break;
+        case 'lb_to_kg':
+          res = `${(input * 0.45359237).toFixed(3)} kg`;
+          details = `Input Amount: ${input} lb | Conversion Type: Pounds to Kilograms (lb -> kg)`;
+          break;
+        case 'kg_to_lb':
+          res = `${(input * 2.20462262).toFixed(3)} lb`;
+          details = `Input Amount: ${input} kg | Conversion Type: Kilograms to Pounds (kg -> lb)`;
+          break;
+        case 'oz_to_g':
+          res = `${(input * 28.3495231).toFixed(2)} g`;
+          details = `Input Amount: ${input} oz | Conversion Type: Ounces to Grams (oz -> g)`;
+          break;
+        case 'ft_to_m':
+          res = `${(input * 0.3048).toFixed(3)} m`;
+          details = `Input Amount: ${input} ft | Conversion Type: Feet to Meters (ft -> m)`;
+          break;
+        case 'm_to_ft':
+          res = `${(input * 3.2808399).toFixed(3)} ft`;
+          details = `Input Amount: ${input} m | Conversion Type: Meters to Feet (m -> ft)`;
+          break;
+        case 'floz_to_ml':
+          res = `${(input * 29.5735296).toFixed(2)} mL`;
+          details = `Input Amount: ${input} fl oz | Conversion Type: Fluid Ounces to Milliliters (fl oz -> mL)`;
           break;
       }
       setUnitResult(res);
@@ -1637,7 +1678,9 @@ export default function RetailCalc() {
           </div>
           <div>
             <h2 className="font-bold text-lg text-slate-800 leading-tight">Price by Weight</h2>
-            <p className="text-xs text-slate-500">Calculate quantity based on price per kg and budget</p>
+            <p className="text-xs text-slate-500">
+              Calculate quantity based on price per {unitSystem === 'imperial' ? 'lb' : 'kg'} and budget
+            </p>
           </div>
         </div>
       </div>
@@ -1646,7 +1689,7 @@ export default function RetailCalc() {
         <div className="flex gap-4">
           <div className="flex-1">
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex justify-between items-center">
-              <span>Price per Kg</span>
+              <span>Price per {unitSystem === 'imperial' ? 'Lb' : 'Kg'}</span>
               {weightPriceErr && (
                 <span className="text-red-500 text-[10px] lowercase font-semibold flex items-center gap-1">
                   <AlertCircle className="w-3 h-3" /> invalid
@@ -1750,7 +1793,11 @@ export default function RetailCalc() {
                     You Receive
                   </p>
                   <p className="text-2xl font-black text-orange-600">
-                    {quantityGrams >= 1000
+                    {unitSystem === 'imperial'
+                      ? quantityGrams >= 16
+                        ? `${(quantityGrams / 16).toFixed(2)} lb`
+                        : `${quantityGrams.toFixed(1)} oz`
+                      : quantityGrams >= 1000
                       ? `${(quantityGrams / 1000).toFixed(2)} kg`
                       : `${quantityGrams.toFixed(0)} g`}
                   </p>
@@ -1825,6 +1872,12 @@ export default function RetailCalc() {
               <option value="kg_to_g">Kg to Grams</option>
               <option value="ml_to_l">mL to Liters</option>
               <option value="l_to_ml">Liters to mL</option>
+              <option value="lb_to_kg">Pounds (lb) to Kg</option>
+              <option value="kg_to_lb">Kg to Pounds (lb)</option>
+              <option value="oz_to_g">Ounces (oz) to Grams</option>
+              <option value="ft_to_m">Feet (ft) to Meters (m)</option>
+              <option value="m_to_ft">Meters (m) to Feet (ft)</option>
+              <option value="floz_to_ml">Fluid Oz to mL</option>
             </select>
           </div>
         </div>
@@ -2076,8 +2129,6 @@ export default function RetailCalc() {
                   onSelectTool={(toolTab) => handleTabChange(toolTab)}
                   notes={dashboardNotes}
                   tasksCount={dashboardTasksCount}
-                  closeNotePreviewSignal={dashboardNoteCloseSignal}
-                  onNotePreviewChange={setIsDashboardNotePreviewOpen}
                 />
               )}
 
@@ -2510,6 +2561,14 @@ export default function RetailCalc() {
                       setCurrency(sym);
                       triggerVibration('click');
                     }}
+                    unitSystem={unitSystem}
+                    onUnitSystemChange={(sys) => {
+                      setUnitSystem(sys);
+                      setUnitType(sys === 'imperial' ? 'lb_to_kg' : 'g_to_kg');
+                      setQuantityGrams(null);
+                      setUnitResult(null);
+                      triggerVibration('click');
+                    }}
                     onOpenAuthModal={(mode = 'signin') => {
                       setRequestedAuthTab(mode);
                       setProfileOpenSignal((n) => n + 1);
@@ -2519,6 +2578,63 @@ export default function RetailCalc() {
                     }}
                     onSyncHistory={handleSyncFromCloudSql}
                     onExportCalculations={exportHistoryCSV}
+                    onBuildLocalBackup={() => ({
+                      calculations: history,
+                      notes: getLocalNotes(currentUser?.id),
+                      tasks: getLocalTasks(currentUser?.id),
+                    })}
+                    onRestoreBackup={(payload: BackupPayload) => {
+                      let count = 0;
+                      const uid = currentUser?.id;
+                      if (Array.isArray(payload.calculations) && payload.calculations.length > 0) {
+                        const validCalcs = payload.calculations
+                          .filter((c) => c && typeof c.type === 'string' && typeof c.result === 'string')
+                          .map((c) => ({
+                            id: c.id ? String(c.id) : `restored-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                            type: c.type,
+                            details: typeof c.details === 'string' ? c.details : '',
+                            result: c.result,
+                            timestamp: c.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                            createdAt: c.createdAt || new Date().toISOString(),
+                            syncStatus: 'local' as const,
+                            dbId: c.dbId || null,
+                            savedAmount: c.savedAmount,
+                          }));
+                        if (validCalcs.length > 0) {
+                          const merged = [...validCalcs, ...history]
+                            .filter((item, idx, arr) => arr.findIndex((x) => x.id === item.id) === idx)
+                            .slice(0, 50);
+                          setHistory(merged);
+                          setCalculationHistory(merged, uid);
+                          count += validCalcs.length;
+                        }
+                      }
+                      if (Array.isArray(payload.notes) && payload.notes.length > 0) {
+                        const existingNotes = getLocalNotes(uid);
+                        const validNotes = payload.notes.filter((n) => n && typeof n.id === 'string');
+                        if (validNotes.length > 0) {
+                          const mergedNotes = [...validNotes, ...existingNotes].filter(
+                            (n, idx, arr) => arr.findIndex((x) => x.id === n.id) === idx
+                          );
+                          saveLocalNotes(mergedNotes, uid);
+                          setDashboardNotes(mergedNotes);
+                          count += validNotes.length;
+                        }
+                      }
+                      if (Array.isArray(payload.tasks) && payload.tasks.length > 0) {
+                        const existingTasks = getLocalTasks(uid);
+                        const validTasks = payload.tasks.filter((t) => t && typeof t.id === 'string');
+                        if (validTasks.length > 0) {
+                          const mergedTasks = [...validTasks, ...existingTasks].filter(
+                            (t, idx, arr) => arr.findIndex((x) => x.id === t.id) === idx
+                          );
+                          saveLocalTasks(mergedTasks, uid);
+                          setDashboardTasksCount(mergedTasks.length);
+                          count += validTasks.length;
+                        }
+                      }
+                      return count;
+                    }}
                     onUserUpdated={(updatedUser) => setCurrentUser(updatedUser)}
                     calculationsCount={history.length}
                   />
