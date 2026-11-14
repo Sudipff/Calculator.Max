@@ -24,6 +24,8 @@ import {
   Coins,
   CalendarDays,
   AlertCircle,
+  Cloud,
+  CloudOff,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { HistoryItem, parseSavedAmountFromText } from '../lib/historyStorage';
@@ -814,11 +816,11 @@ export default function HistoryView({
                         )}
                       </div>
 
-                      {/* Quiet Optional Metadata Line (Savings or Retry if sync error) */}
-                      {(itemSavings > 0 || item.syncStatus === 'error') && (
-                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 text-[11px]">
+                      {/* Card Footer: Savings Information (left) & Cloud Sync Status Indicator (bottom right) */}
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 text-[11px]">
+                        <div className="min-w-0 flex items-center gap-1.5">
                           {itemSavings > 0 ? (
-                            <span className="font-semibold text-emerald-700 tabular-nums">
+                            <span className="font-semibold text-emerald-700 tabular-nums truncate">
                               Saved {currency}
                               {itemSavings.toLocaleString(undefined, {
                                 minimumFractionDigits: 0,
@@ -826,24 +828,58 @@ export default function HistoryView({
                               })}
                             </span>
                           ) : (
-                            <span />
+                            <span className="text-slate-400 font-medium truncate text-[10px]">
+                              {visual.label}
+                            </span>
                           )}
+                        </div>
 
-                          {item.syncStatus === 'error' && currentUser && (
+                        {/* Visual Status Indicator at bottom right displaying cloud sync state */}
+                        <div className="shrink-0 flex items-center">
+                          {item.syncStatus === 'synced' ? (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/80 shadow-2xs"
+                              title="Synced to cloud database"
+                            >
+                              <Cloud className="w-3 h-3 text-emerald-600" />
+                              <span>Cloud Synced</span>
+                            </span>
+                          ) : item.syncStatus === 'syncing' ? (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200/80 shadow-2xs"
+                              title="Syncing to cloud database..."
+                            >
+                              <RefreshCw className="w-3 h-3 text-blue-600 animate-spin" />
+                              <span>Syncing...</span>
+                            </span>
+                          ) : item.syncStatus === 'error' && currentUser ? (
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 onRetrySyncItem(item);
                               }}
-                              className="inline-flex items-center gap-1 font-bold text-rose-600 hover:text-rose-700 cursor-pointer"
+                              className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200 hover:bg-rose-100 transition-colors cursor-pointer shadow-2xs"
+                              title="Cloud sync failed. Tap to retry."
                             >
-                              <AlertCircle className="w-3 h-3" />
-                              <span>Retry sync</span>
+                              <AlertCircle className="w-3 h-3 text-rose-600" />
+                              <span>Sync Error · Retry</span>
                             </button>
+                          ) : (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200/80 shadow-2xs"
+                              title={
+                                currentUser
+                                  ? 'Saved locally (queued for cloud sync on reconnect)'
+                                  : 'Saved locally on device'
+                              }
+                            >
+                              <CloudOff className="w-3 h-3 text-amber-600" />
+                              <span>Saved Locally</span>
+                            </span>
                           )}
                         </div>
-                      )}
+                      </div>
                     </motion.article>
                   );
                 })}

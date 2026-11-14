@@ -57,6 +57,9 @@ import {
   setCalculationHistory,
   toggleCalculationHistoryFavorite,
   parseSavedAmountFromText,
+  enqueueCalculationOfflineSync,
+  clearCalculationOfflineOp,
+  syncSingleCalculationToCloud,
   HistoryItem,
 } from '../lib/historyStorage';
 import { getLocalNotes, getLocalTasks, saveLocalNotes, saveLocalTasks } from '../lib/notesTasksStorage';
@@ -642,6 +645,22 @@ export default function RetailCalc() {
     };
   }, [currentUser?.id]);
 
+  // Reactive listener for background offline calculation sync completions
+  useEffect(() => {
+    const handleHistorySyncUpdated = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      const targetUid = currentUser?.id;
+      if (!detail?.userId || detail.userId === targetUid) {
+        const fresh = getCalculationHistory(targetUid);
+        setHistory(fresh);
+      }
+    };
+    window.addEventListener('calcmax:history-sync-updated', handleHistorySyncUpdated);
+    return () => {
+      window.removeEventListener('calcmax:history-sync-updated', handleHistorySyncUpdated);
+    };
+  }, [currentUser?.id]);
+
   useEffect(() => {
     setIsClient(true);
     const savedCurrency = localStorage.getItem('retail-calc-currency');
@@ -1135,7 +1154,12 @@ export default function RetailCalc() {
       savedAmount = parseSavedAmountFromText(type, details, result);
     }
 
-    const initialStatus: 'syncing' | 'local' = currentUser ? 'syncing' : 'local';
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    const initialStatus: 'syncing' | 'local' = currentUser
+      ? isOnline
+        ? 'syncing'
+        : 'local'
+      : 'local';
 
     const initialItem: HistoryItem = {
       id: tempId,
@@ -1149,73 +1173,45 @@ export default function RetailCalc() {
       savedAmount,
     };
 
+    // Always immediately save locally first
     const updatedHistory = saveCalculationHistory(initialItem, userId);
     setHistory(updatedHistory);
 
     if (currentUser) {
-      let finalDbId: string | number | null = null;
-      let finalStatus: 'synced' | 'error' = 'error';
-
-      // 1. Direct Supabase insert via client
-      try {
-        const supabase = createClient();
-        const { data, error } = await supabase
-          .from('calculations')
-          .insert({
-            user_id: currentUser.id,
-            type,
-            details,
-            result,
-          })
-          .select()
-          .single();
-
-        if (!error && data?.id) {
-          finalDbId = data.id;
-          finalStatus = 'synced';
-        }
-      } catch (sErr) {
-        console.warn('Direct client calculation save notice:', sErr);
+      if (!isOnline) {
+        // Enqueue into offline sync outbox queue for automatic sync when connected
+        enqueueCalculationOfflineSync(
+          {
+            opKey: `upsert_calculation:${tempId}`,
+            type: 'upsert_calculation',
+            item: initialItem,
+          },
+          userId
+        );
+        return;
       }
 
-      // 2. Fallback / Server sync via /api/calculations endpoint
-      if (finalStatus !== 'synced') {
-        try {
-          const supabase = createClient();
-          const { data: { session } } = await supabase.auth.getSession();
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-            'x-user-id': currentUser.id,
-          };
-          if (session?.access_token) {
-            headers['Authorization'] = `Bearer ${session.access_token}`;
-          }
+      // Online: Attempt cloud database synchronization
+      const res = await syncSingleCalculationToCloud(initialItem, currentUser.id);
+      const finalStatus: 'synced' | 'local' | 'error' = res.success
+        ? 'synced'
+        : navigator.onLine
+        ? 'error'
+        : 'local';
+      const finalDbId = res.success ? res.dbId || `cloud-${Date.now()}` : null;
 
-          const res = await fetch('/api/calculations', {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ type, details, result }),
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            if (data.calculation?.id) {
-              finalDbId = data.calculation.id;
-              finalStatus = 'synced';
-            }
-          }
-        } catch (err) {
-          console.warn('Failed to sync calculation via server endpoint:', err);
-        }
+      if (!res.success) {
+        enqueueCalculationOfflineSync(
+          {
+            opKey: `upsert_calculation:${tempId}`,
+            type: 'upsert_calculation',
+            item: { ...initialItem, syncStatus: finalStatus },
+          },
+          userId
+        );
       }
 
-      // If network was unavailable or server completed with local ID fallback
-      if (finalStatus !== 'synced') {
-        finalDbId = `id-${Date.now().toString().slice(-6)}`;
-        finalStatus = 'synced';
-      }
-
-      // Update state and storage with final DB ID and status
+      // Update state and storage with authoritative DB ID and status
       setHistory((prev) => {
         const syncedList = prev.map((item) =>
           item.id === tempId
@@ -1244,82 +1240,38 @@ export default function RetailCalc() {
       prev.map((i) => (i.id === itemToSync.id ? { ...i, syncStatus: 'syncing' } : i))
     );
 
-    let finalDbId: string | number | null = itemToSync.dbId || null;
-    let finalStatus: 'synced' | 'error' = 'error';
+    const res = await syncSingleCalculationToCloud(itemToSync, currentUser.id);
+    const finalStatus: 'synced' | 'error' | 'local' = res.success
+      ? 'synced'
+      : navigator.onLine
+      ? 'error'
+      : 'local';
+    const finalDbId = res.success ? res.dbId || itemToSync.dbId || `cloud-${Date.now()}` : itemToSync.dbId;
 
-    // 1. Direct Supabase insert/upsert
-    try {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from('calculations')
-        .insert({
-          user_id: currentUser.id,
-          type: itemToSync.type,
-          details: itemToSync.details,
-          result: itemToSync.result,
-        })
-        .select()
-        .single();
-
-      if (!error && data?.id) {
-        finalDbId = data.id;
-        finalStatus = 'synced';
-      }
-    } catch (sErr) {
-      console.warn('Retry direct Supabase notice:', sErr);
-    }
-
-    // 2. Server API sync
-    if (finalStatus !== 'synced') {
-      try {
-        const supabase = createClient();
-        const { data: { session } } = await supabase.auth.getSession();
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-          'x-user-id': currentUser.id,
-        };
-        if (session?.access_token) {
-          headers['Authorization'] = `Bearer ${session.access_token}`;
-        }
-
-        const res = await fetch('/api/calculations', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            type: itemToSync.type,
-            details: itemToSync.details,
-            result: itemToSync.result,
-          }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.calculation?.id) {
-            finalDbId = data.calculation.id;
-            finalStatus = 'synced';
-          }
-        }
-      } catch (err) {
-        console.warn('Retry sync error:', err);
-      }
-    }
-
-    if (finalStatus !== 'synced') {
-      finalDbId = itemToSync.dbId || `id-${Date.now().toString().slice(-6)}`;
-      finalStatus = 'synced';
+    if (res.success) {
+      clearCalculationOfflineOp(`upsert_calculation:${itemToSync.id}`, currentUser.id);
+      triggerVibration('success');
+    } else {
+      enqueueCalculationOfflineSync(
+        {
+          opKey: `upsert_calculation:${itemToSync.id}`,
+          type: 'upsert_calculation',
+          item: { ...itemToSync, syncStatus: finalStatus },
+        },
+        currentUser.id
+      );
+      triggerVibration('error');
     }
 
     setHistory((prev) => {
       const updated = prev.map((i) =>
         i.id === itemToSync.id
-          ? { ...i, dbId: finalDbId || i.dbId, syncStatus: finalStatus }
+          ? { ...i, dbId: finalDbId, syncStatus: finalStatus }
           : i
       );
       setCalculationHistory(updated, currentUser?.id);
       return updated;
     });
-
-    triggerVibration('success');
   };
 
   // Quick Tools field error state trackers
@@ -1559,51 +1511,76 @@ export default function RetailCalc() {
       setHistory(updated);
 
       if (currentUser) {
-        // 1. Direct Supabase deletion using active client session
-        try {
-          const supabase = createClient();
-          if (itemToDelete.dbId) {
-            const numId = parseInt(itemToDelete.dbId.toString(), 10);
-            if (!isNaN(numId)) {
-              await supabase.from('calculations').delete().eq('user_id', currentUser.id).eq('id', numId);
-            }
-            await supabase.from('calculations').delete().eq('user_id', currentUser.id).eq('id', itemToDelete.dbId);
-          }
-          if (itemToDelete.details && itemToDelete.result) {
-            await supabase
-              .from('calculations')
-              .delete()
-              .eq('user_id', currentUser.id)
-              .eq('details', itemToDelete.details)
-              .eq('result', itemToDelete.result);
-          }
-        } catch (sErr) {
-          console.warn('Direct client deletion notice:', sErr);
-        }
-
-        // 2. Delete from database via API (matches ID, and fallback details/result/type)
-        try {
-          const supabase = createClient();
-          const { data: { session } } = await supabase.auth.getSession();
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-            'x-user-id': currentUser.id,
-          };
-          if (session?.access_token) {
-            headers['Authorization'] = `Bearer ${session.access_token}`;
-          }
-          await fetch('/api/calculations', {
-            method: 'DELETE',
-            headers,
-            body: JSON.stringify({
-              id: itemToDelete.dbId || itemToDelete.id,
+        const delOpKey = `delete_calculation:${itemToDelete.dbId || itemToDelete.id}`;
+        enqueueCalculationOfflineSync(
+          {
+            opKey: delOpKey,
+            type: 'delete_calculation',
+            deletePayload: {
+              id: itemToDelete.id,
+              dbId: itemToDelete.dbId,
               details: itemToDelete.details,
               result: itemToDelete.result,
               type: itemToDelete.type,
-            }),
-          });
-        } catch (err) {
-          console.warn('Note on deleting calculation from cloud database:', err);
+            },
+          },
+          currentUser.id
+        );
+
+        if (navigator.onLine) {
+          let directDeleted = false;
+          // 1. Direct Supabase deletion using active client session
+          try {
+            const supabase = createClient();
+            if (itemToDelete.dbId) {
+              const numId = parseInt(itemToDelete.dbId.toString(), 10);
+              if (!isNaN(numId)) {
+                await supabase.from('calculations').delete().eq('user_id', currentUser.id).eq('id', numId);
+              }
+              await supabase.from('calculations').delete().eq('user_id', currentUser.id).eq('id', itemToDelete.dbId);
+            }
+            if (itemToDelete.details && itemToDelete.result) {
+              await supabase
+                .from('calculations')
+                .delete()
+                .eq('user_id', currentUser.id)
+                .eq('details', itemToDelete.details)
+                .eq('result', itemToDelete.result);
+            }
+            directDeleted = true;
+          } catch (sErr) {
+            console.warn('Direct client deletion notice:', sErr);
+          }
+
+          // 2. Delete from database via API (matches ID, and fallback details/result/type)
+          try {
+            const supabase = createClient();
+            const { data: { session } } = await supabase.auth.getSession();
+            const headers: Record<string, string> = {
+              'Content-Type': 'application/json',
+              'x-user-id': currentUser.id,
+            };
+            if (session?.access_token) {
+              headers['Authorization'] = `Bearer ${session.access_token}`;
+            }
+            await fetch('/api/calculations', {
+              method: 'DELETE',
+              headers,
+              body: JSON.stringify({
+                id: itemToDelete.dbId || itemToDelete.id,
+                details: itemToDelete.details,
+                result: itemToDelete.result,
+                type: itemToDelete.type,
+              }),
+            });
+            directDeleted = true;
+          } catch (err) {
+            console.warn('Note on deleting calculation from cloud database:', err);
+          }
+
+          if (directDeleted) {
+            clearCalculationOfflineOp(delOpKey, currentUser.id);
+          }
         }
 
         // 3. Clear user metadata calculation_history array on Supabase Auth
@@ -1647,30 +1624,51 @@ export default function RetailCalc() {
       setHistory(clearCalculationHistory(userId));
 
       if (currentUser) {
-        // 1. Direct Supabase deletion for all records of user
-        try {
-          const supabase = createClient();
-          await supabase.from('calculations').delete().eq('user_id', currentUser.id);
-        } catch (sErr) {
-          console.warn('Direct client clear notice:', sErr);
-        }
+        enqueueCalculationOfflineSync(
+          {
+            opKey: 'delete_calculation:all',
+            type: 'delete_calculation',
+            deletePayload: {
+              id: 'all',
+              all: true,
+            },
+          },
+          currentUser.id
+        );
 
-        // 2. Delete all records from database via API
-        try {
-          const supabase = createClient();
-          const { data: { session } } = await supabase.auth.getSession();
-          const headers: Record<string, string> = {
-            'x-user-id': currentUser.id,
-          };
-          if (session?.access_token) {
-            headers['Authorization'] = `Bearer ${session.access_token}`;
+        if (navigator.onLine) {
+          let directCleared = false;
+          // 1. Direct Supabase deletion for all records of user
+          try {
+            const supabase = createClient();
+            await supabase.from('calculations').delete().eq('user_id', currentUser.id);
+            directCleared = true;
+          } catch (sErr) {
+            console.warn('Direct client clear notice:', sErr);
           }
-          await fetch('/api/calculations?all=true', {
-            method: 'DELETE',
-            headers,
-          });
-        } catch (err) {
-          console.warn('Note on clearing calculations in database:', err);
+
+          // 2. Delete all records from database via API
+          try {
+            const supabase = createClient();
+            const { data: { session } } = await supabase.auth.getSession();
+            const headers: Record<string, string> = {
+              'x-user-id': currentUser.id,
+            };
+            if (session?.access_token) {
+              headers['Authorization'] = `Bearer ${session.access_token}`;
+            }
+            await fetch('/api/calculations?all=true', {
+              method: 'DELETE',
+              headers,
+            });
+            directCleared = true;
+          } catch (err) {
+            console.warn('Note on clearing calculations in database:', err);
+          }
+
+          if (directCleared) {
+            clearCalculationOfflineOp('delete_calculation:all', currentUser.id);
+          }
         }
 
         // 3. Clear user metadata calculation_history array on Supabase Auth

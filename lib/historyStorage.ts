@@ -1,3 +1,5 @@
+import { createClient } from '@/utils/supabase/client';
+
 export interface CalculationDetails {
   id?: string;
   type: 'Discount' | 'Weight' | 'Unit' | 'EMI' | 'Wishlist' | 'Currency' | 'Age' | 'Calculator' | string;
@@ -24,7 +26,26 @@ export interface HistoryItem {
   isFavorite?: boolean;
 }
 
+export type CalculationOfflineSyncOpType = 'upsert_calculation' | 'delete_calculation';
+
+export interface CalculationOfflineSyncOp {
+  opKey: string;
+  type: CalculationOfflineSyncOpType;
+  item?: HistoryItem;
+  deletePayload?: {
+    id: string;
+    dbId?: string | number | null;
+    details?: string;
+    result?: string;
+    type?: string;
+    all?: boolean;
+  };
+  updatedAt: string;
+}
+
 const BASE_STORAGE_KEY = 'retail-calc-history';
+const CALC_SYNC_OUTBOX_PREFIX = 'retailcalc_history_sync_outbox_';
+const inFlightCalcSyncByUser = new Map<string, Promise<{ syncedCount: number; pendingCount: number }>>();
 
 export function getStorageKey(userId?: string | null): string {
   if (userId && typeof userId === 'string' && userId.trim()) {
@@ -268,5 +289,273 @@ export function parseSavedAmountFromText(type?: string, details?: string, result
   }
   return 0;
 }
+
+// ----------------- OFFLINE SYNC OUTBOX & AUTOMATIC CLOUD SYNC -----------------
+
+function emitHistorySyncEvent(userId?: string | null, syncedCount = 0, pendingCount = 0) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent('calcmax:history-sync-updated', {
+      detail: { userId: userId || null, syncedCount, pendingCount },
+    })
+  );
+}
+
+function triggerCalculationBackgroundSync() {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.ready
+    .then((reg) => {
+      const syncMgr = (reg as unknown as { sync?: { register: (tag: string) => Promise<void> } }).sync;
+      if (syncMgr && typeof syncMgr.register === 'function') {
+        return syncMgr.register('calcmax-offline-sync').catch(() => {});
+      }
+    })
+    .catch(() => {});
+}
+
+export function getCalculationOfflineSyncQueue(userId?: string | null): CalculationOfflineSyncOp[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const key = `${CALC_SYNC_OUTBOX_PREFIX}${userId || 'local_guest'}`;
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveCalculationOfflineSyncQueue(
+  queue: CalculationOfflineSyncOp[],
+  userId?: string | null
+): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = `${CALC_SYNC_OUTBOX_PREFIX}${userId || 'local_guest'}`;
+    localStorage.setItem(key, JSON.stringify(queue));
+  } catch {
+    // Ignore quota notices
+  }
+}
+
+export function getPendingCalculationSyncCount(userId?: string | null): number {
+  const queue = getCalculationOfflineSyncQueue(userId);
+  const localHistory = getCalculationHistory(userId);
+  const unsyncedItems = localHistory.filter(
+    (item) => item.syncStatus === 'local' || item.syncStatus === 'error'
+  );
+
+  const keys = new Set<string>(queue.map((q) => q.opKey));
+  unsyncedItems.forEach((item) => keys.add(`upsert_calculation:${item.id}`));
+  return keys.size;
+}
+
+export function enqueueCalculationOfflineSync(
+  op: Omit<CalculationOfflineSyncOp, 'updatedAt'>,
+  userId?: string | null
+): void {
+  if (typeof window === 'undefined' || !userId) return;
+  const existing = getCalculationOfflineSyncQueue(userId);
+  const fullOp: CalculationOfflineSyncOp = {
+    ...op,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Coalesce operations cleanly (e.g. deletion removes earlier pending upsert for same item)
+  let nextQueue = existing.filter((existingOp) => existingOp.opKey !== fullOp.opKey);
+  if (fullOp.type === 'delete_calculation') {
+    const targetId = fullOp.deletePayload?.id || fullOp.deletePayload?.dbId?.toString();
+    if (targetId) {
+      nextQueue = nextQueue.filter(
+        (existingOp) =>
+          existingOp.opKey !== `upsert_calculation:${targetId}` &&
+          existingOp.item?.id !== targetId &&
+          existingOp.item?.dbId?.toString() !== targetId
+      );
+    }
+  }
+
+  nextQueue.push(fullOp);
+  saveCalculationOfflineSyncQueue(nextQueue, userId);
+  triggerCalculationBackgroundSync();
+  emitHistorySyncEvent(userId, 0, nextQueue.length);
+}
+
+export function clearCalculationOfflineOp(opKey: string, userId?: string | null): void {
+  if (typeof window === 'undefined' || !userId) return;
+  const existing = getCalculationOfflineSyncQueue(userId);
+  const next = existing.filter((op) => op.opKey !== opKey);
+  if (next.length !== existing.length) {
+    saveCalculationOfflineSyncQueue(next, userId);
+    emitHistorySyncEvent(userId, 0, next.length);
+  }
+}
+
+/**
+ * Attempts to sync an individual calculation item to the cloud database (Supabase direct + API route fallback).
+ */
+export async function syncSingleCalculationToCloud(
+  item: HistoryItem,
+  userId: string
+): Promise<{ success: boolean; dbId?: string | number | null }> {
+  // 1. Direct Supabase insert
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('calculations')
+      .insert({
+        user_id: userId,
+        type: item.type,
+        details: item.details,
+        result: item.result,
+      })
+      .select('id')
+      .single();
+
+    if (!error && data?.id) {
+      return { success: true, dbId: data.id };
+    }
+  } catch (err) {
+    // Continue to server API fallback
+  }
+
+  // 2. Server API route fallback
+  try {
+    const supabase = createClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-user-id': userId,
+    };
+    if (session?.access_token) {
+      headers['Authorization'] = `Bearer ${session.access_token}`;
+    }
+
+    const res = await fetch('/api/calculations', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        type: item.type,
+        details: item.details,
+        result: item.result,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.calculation?.id) {
+        return { success: true, dbId: data.calculation.id };
+      }
+      return { success: true, dbId: `cloud-${Date.now()}` };
+    }
+  } catch (err) {
+    // Network or server unreachable
+  }
+
+  return { success: false, dbId: null };
+}
+
+/**
+ * Flushes all pending calculation operations and unsynced local history items to the cloud database.
+ * Thread-safe and debounced via user-keyed in-flight promise map.
+ */
+export async function flushOfflineCalculationsQueue(
+  userId?: string | null
+): Promise<{ syncedCount: number; pendingCount: number }> {
+  if (!userId || typeof window === 'undefined') {
+    return { syncedCount: 0, pendingCount: getPendingCalculationSyncCount(userId) };
+  }
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return { syncedCount: 0, pendingCount: getPendingCalculationSyncCount(userId) };
+  }
+
+  if (inFlightCalcSyncByUser.has(userId)) {
+    return inFlightCalcSyncByUser.get(userId)!;
+  }
+
+  const syncPromise = (async () => {
+    let syncedCount = 0;
+    const queue = getCalculationOfflineSyncQueue(userId);
+    const localHistory = getCalculationHistory(userId);
+
+    // 1. Process pending offline deletions first
+    const deleteOps = queue.filter((op) => op.type === 'delete_calculation');
+    for (const delOp of deleteOps) {
+      const payload = delOp.deletePayload;
+      if (!payload) {
+        clearCalculationOfflineOp(delOp.opKey, userId);
+        continue;
+      }
+      try {
+        const supabase = createClient();
+        if (payload.all) {
+          await supabase.from('calculations').delete().eq('user_id', userId);
+        } else if (payload.dbId) {
+          await supabase.from('calculations').delete().eq('user_id', userId).eq('id', payload.dbId);
+        } else if (payload.details && payload.result) {
+          await supabase
+            .from('calculations')
+            .delete()
+            .eq('user_id', userId)
+            .eq('details', payload.details)
+            .eq('result', payload.result);
+        }
+        clearCalculationOfflineOp(delOp.opKey, userId);
+      } catch {
+        // Retain in queue if delete failed due to network
+      }
+    }
+
+    // 2. Identify all local calculation items that require cloud sync
+    const itemsNeedingSync = localHistory.filter(
+      (item) => item.syncStatus === 'local' || item.syncStatus === 'error' || !item.dbId
+    );
+
+    let hasLocalUpdates = false;
+    const updatedHistory = [...localHistory];
+
+    for (const item of itemsNeedingSync) {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) break;
+
+      const res = await syncSingleCalculationToCloud(item, userId);
+      const targetIdx = updatedHistory.findIndex((h) => h.id === item.id);
+
+      if (res.success && targetIdx !== -1) {
+        updatedHistory[targetIdx] = {
+          ...updatedHistory[targetIdx],
+          dbId: res.dbId || updatedHistory[targetIdx].dbId || `cloud-${Date.now()}`,
+          syncStatus: 'synced',
+        };
+        clearCalculationOfflineOp(`upsert_calculation:${item.id}`, userId);
+        syncedCount++;
+        hasLocalUpdates = true;
+      } else if (!res.success && targetIdx !== -1) {
+        updatedHistory[targetIdx] = {
+          ...updatedHistory[targetIdx],
+          syncStatus: navigator.onLine ? 'error' : 'local',
+        };
+        hasLocalUpdates = true;
+      }
+    }
+
+    if (hasLocalUpdates) {
+      setCalculationHistory(updatedHistory, userId);
+    }
+
+    const remainingPending = getPendingCalculationSyncCount(userId);
+    emitHistorySyncEvent(userId, syncedCount, remainingPending);
+
+    return { syncedCount, pendingCount: remainingPending };
+  })().finally(() => {
+    inFlightCalcSyncByUser.delete(userId);
+  });
+
+  inFlightCalcSyncByUser.set(userId, syncPromise);
+  return syncPromise;
+}
+
 
 
