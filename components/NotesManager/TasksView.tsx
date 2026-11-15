@@ -51,6 +51,7 @@ import {
   requestNotificationPermission,
 } from '@/lib/reminderService';
 import { useTheme } from '@/components/ThemeProvider';
+import { OfflineWifiIndicator } from '@/components/PwaRuntime';
 
 interface TasksViewProps {
   currentUser: any;
@@ -232,6 +233,19 @@ export default function TasksView({
       onFullScreenChange?.(false);
     }
   }, [detailTask, onFullScreenChange]);
+
+  // Lock background scroll while partial overlay for creating new tasks is open without hiding main layout
+  useEffect(() => {
+    if (!isCreateModalOpen) return;
+    const originalBodyOverflow = document.body.style.overflow;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = originalBodyOverflow;
+      document.documentElement.style.overflow = originalHtmlOverflow;
+    };
+  }, [isCreateModalOpen]);
 
   const hasOpenSubOverlay = Boolean(
     detailTaskId || isCreateModalOpen || showNewListModal || confirmDeleteTarget || selectedTaskIds.length > 0
@@ -875,6 +889,7 @@ export default function TasksView({
           </h2>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            <OfflineWifiIndicator />
             <motion.button
               type="button"
               whileTap={{ scale: 0.92 }}
@@ -1227,18 +1242,28 @@ export default function TasksView({
           document.body
         )}
 
-      {/* Quick Create Task Modal / Sheet */}
-      {isCreateModalOpen && isMounted && typeof document !== 'undefined' && createPortal(
-        <div
-          className="fixed inset-0 z-[99990] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/50 backdrop-blur-xs"
-          onClick={resetCreateModal}
-        >
-          <form
-            data-task-card="true"
-            onClick={(e) => e.stopPropagation()}
-            onSubmit={handleCreateTask}
-            className="w-full max-w-lg bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 p-4 sm:p-6 space-y-4 max-h-[88dvh] overflow-y-auto"
-          >
+      {/* Quick Create Task Partial Overlay Modal / Sheet */}
+      {isMounted && typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {isCreateModalOpen && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="fixed inset-0 z-[99990] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/50 backdrop-blur-xs"
+              onClick={resetCreateModal}
+            >
+              <motion.form
+                initial={{ opacity: 0, y: 28, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 24, scale: 0.98 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                data-task-card="true"
+                onClick={(e) => e.stopPropagation()}
+                onSubmit={handleCreateTask}
+                className="w-full max-w-lg bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 p-4 sm:p-6 space-y-4 max-h-[85dvh] overflow-y-auto overscroll-contain pb-[max(1.25rem,env(safe-area-inset-bottom))]"
+              >
             <div className="flex items-center justify-between">
               <h3 className="text-base font-black text-slate-900">New Task</h3>
               <button
@@ -1328,8 +1353,10 @@ export default function TasksView({
                 Add Task
               </button>
             </div>
-          </form>
-        </div>,
+              </motion.form>
+            </motion.div>
+          )}
+        </AnimatePresence>,
         document.body
       )}
 

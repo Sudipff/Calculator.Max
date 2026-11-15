@@ -26,7 +26,7 @@ import {
   User,
   ChevronRight,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { NoteItem, NOTE_COLORS } from '@/lib/types/notes-tasks';
 import {
   fetchNotes,
@@ -41,6 +41,7 @@ import {
   requestNotificationPermission,
 } from '@/lib/reminderService';
 import { useTheme } from '@/components/ThemeProvider';
+import { OfflineWifiIndicator } from '@/components/PwaRuntime';
 
 interface NotesViewProps {
   currentUser: any;
@@ -207,10 +208,10 @@ export default function NotesView({
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [showThreeDotMenu, showManagerMenu]);
 
-  // Layout Optimization: Prevent Background Scrolling and Hide Main Header when Note Editing View is active
+  // Layout Optimization: Hide Main Header only for full-screen existing note view; lock scroll for any active editor/overlay
   useEffect(() => {
     if (editingNote) {
-      onFullScreenChange?.(true);
+      onFullScreenChange?.(!isNewDraft);
       const originalBodyOverflow = document.body.style.overflow;
       const originalHtmlOverflow = document.documentElement.style.overflow;
       const originalBodyOverscroll = document.body.style.overscrollBehavior;
@@ -231,7 +232,7 @@ export default function NotesView({
     } else {
       onFullScreenChange?.(false);
     }
-  }, [editingNote, onFullScreenChange]);
+  }, [editingNote, isNewDraft, onFullScreenChange]);
 
   const hasOpenSubOverlay = Boolean(editingNote || confirmDeleteTarget || selectedNoteIds.length > 0);
   useEffect(() => {
@@ -653,6 +654,9 @@ export default function NotesView({
         return matchPinned && matchSearch && matchLabel;
       })
       .sort((a, b) => {
+        if (a.isPinned !== b.isPinned) {
+          return a.isPinned ? -1 : 1;
+        }
         const timeA = Math.max(
           new Date(a.createdAt || 0).getTime() || 0,
           new Date(a.updatedAt || 0).getTime() || 0
@@ -692,6 +696,7 @@ export default function NotesView({
           </h2>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            <OfflineWifiIndicator />
             <motion.button
               type="button"
               whileTap={{ scale: 0.92 }}
@@ -952,9 +957,16 @@ export default function NotesView({
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3.5 w-full min-w-0">
-          {filteredNotes.map((note) => renderNoteCard(note))}
-        </div>
+        <LayoutGroup id="notes-grid">
+          <motion.div
+            layout
+            className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3.5 w-full min-w-0 items-stretch"
+          >
+            <AnimatePresence mode="popLayout" initial={false}>
+              {filteredNotes.map((note) => renderNoteCard(note))}
+            </AnimatePresence>
+          </motion.div>
+        </LayoutGroup>
       )}
 
       {/* Pinned Bottom Status Pill + Large Fixed Floating + Action Button (Portaled to body so parent transforms never unpin it) */}
@@ -1005,8 +1017,388 @@ export default function NotesView({
           document.body
         )}
 
-      {/* NOTE EDITING VIEW (Clean Unified Full-Page Workspace) */}
-      {editingNote && isMounted && typeof document !== 'undefined' && createPortal(
+      {/* QUICK CREATE NEW NOTE PARTIAL OVERLAY (Matches New Task partial overlay) */}
+      {isMounted && typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {editingNote && isNewDraft && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="fixed inset-0 z-[99990] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/50 backdrop-blur-xs"
+              onClick={handleCloseEditor}
+            >
+              <motion.div
+                initial={{ opacity: 0, y: 28, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 24, scale: 0.98 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                data-note-card="true"
+                data-note-color={editingNote.color || 'default'}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  backgroundColor: isDark
+                    ? '#1e293b'
+                    : getCompactNoteSurface(editingNote.color, false).bg,
+                }}
+                className="w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 p-4 sm:p-6 space-y-3.5 max-h-[85dvh] overflow-y-auto overscroll-contain pb-[max(1.25rem,env(safe-area-inset-bottom))]"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-base font-black text-slate-900">New Note</h3>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateEditingNote((prev) => ({ ...prev, isPinned: !prev.isPinned }))
+                      }
+                      aria-label={editingNote.isPinned ? 'Unpin note' : 'Pin note'}
+                      title={editingNote.isPinned ? 'Unpin note' : 'Pin note'}
+                      className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+                        editingNote.isPinned
+                          ? 'bg-slate-900 text-white border-slate-900'
+                          : 'bg-white/80 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <Pin
+                        className={`w-4 h-4 rotate-45 ${
+                          editingNote.isPinned ? 'fill-white text-white' : ''
+                        }`}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateEditingNote((prev) => ({ ...prev, isChecklist: !prev.isChecklist }))
+                      }
+                      aria-label={editingNote.isChecklist ? 'Switch to text note' : 'Switch to checklist'}
+                      title={editingNote.isChecklist ? 'Switch to text note' : 'Switch to checklist'}
+                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold border flex items-center gap-1 cursor-pointer transition-colors ${
+                        editingNote.isChecklist
+                          ? 'bg-slate-900 text-white border-slate-900'
+                          : 'bg-white/80 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <CheckSquare className="w-3.5 h-3.5" />
+                      <span>{editingNote.isChecklist ? 'Checklist' : 'List'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCloseEditor}
+                      className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+                      aria-label="Close new note modal"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={editingNote.title}
+                    onChange={(e) =>
+                      updateEditingNote((prev) => ({ ...prev, title: e.target.value }))
+                    }
+                    placeholder="Note title..."
+                    className="w-full bg-white/85 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                  />
+
+                  {!editingNote.isChecklist ? (
+                    <textarea
+                      value={editingNote.content}
+                      onChange={(e) =>
+                        updateEditingNote((prev) => ({ ...prev, content: e.target.value }))
+                      }
+                      placeholder="Start writing your note..."
+                      rows={4}
+                      className="w-full bg-white/85 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 resize-none leading-relaxed"
+                    />
+                  ) : (
+                    <div className="bg-white/90 rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+                      {editingNote.checklistItems.map((ci) => (
+                        <div key={ci.id} className="flex items-center gap-2 px-3 py-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateEditingNote((prev) => ({
+                                ...prev,
+                                checklistItems: prev.checklistItems.map((item) =>
+                                  item.id === ci.id
+                                    ? { ...item, completed: !item.completed }
+                                    : item
+                                ),
+                              }))
+                            }
+                            className="p-1 text-slate-600 hover:text-blue-600 cursor-pointer shrink-0"
+                            aria-label={ci.completed ? 'Mark incomplete' : 'Mark complete'}
+                          >
+                            {ci.completed ? (
+                              <CheckSquare className="w-4 h-4 text-blue-600" />
+                            ) : (
+                              <Square className="w-4 h-4" />
+                            )}
+                          </button>
+                          <input
+                            type="text"
+                            value={ci.text}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              updateEditingNote((prev) => ({
+                                ...prev,
+                                checklistItems: prev.checklistItems.map((item) =>
+                                  item.id === ci.id ? { ...item, text: val } : item
+                                ),
+                              }));
+                            }}
+                            className={`flex-1 min-w-0 bg-transparent text-xs sm:text-sm focus:outline-none ${
+                              ci.completed ? 'line-through text-slate-400' : 'text-slate-900 font-medium'
+                            }`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateEditingNote((prev) => ({
+                                ...prev,
+                                checklistItems: prev.checklistItems.filter((item) => item.id !== ci.id),
+                              }))
+                            }
+                            className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer shrink-0"
+                            aria-label="Remove checklist item"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-2 px-3 py-2 bg-slate-50/70">
+                        <Plus className="w-4 h-4 text-slate-400 shrink-0" />
+                        <input
+                          type="text"
+                          value={checklistDraftItem}
+                          onChange={(e) => setChecklistDraftItem(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddChecklistItemToEditor();
+                            }
+                          }}
+                          placeholder="Add list item..."
+                          className="flex-1 min-w-0 bg-transparent text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none py-1"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddChecklistItemToEditor}
+                          disabled={!checklistDraftItem.trim()}
+                          className="px-2.5 py-1 rounded-lg bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold cursor-pointer shrink-0"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Color Swatches & Quick Tag / Reminder Toggles */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                    <div className="flex items-center gap-1.5">
+                      {NOTE_COLORS.slice(0, 6).map((c) => {
+                        const swatchSurface = getCompactNoteSurface(c.id);
+                        const active = editingNote.color === c.id;
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() =>
+                              updateEditingNote((prev) => ({ ...prev, color: c.id }))
+                            }
+                            style={{ backgroundColor: swatchSurface.bg }}
+                            className={`w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
+                              active ? 'border-slate-900 scale-105' : 'border-slate-300/90'
+                            }`}
+                            title={c.name}
+                            aria-label={`Set color ${c.name}`}
+                          >
+                            {active && <Check className="w-3 h-3 text-slate-900 stroke-[3]" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setShowFullPageTagInput((prev) => !prev)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1 cursor-pointer ${
+                          showFullPageTagInput || editingNote.labels.length > 0
+                            ? 'bg-slate-900 text-white border-slate-900'
+                            : 'bg-white/85 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <Tag className="w-3 h-3" />
+                        <span>
+                          {editingNote.labels.length > 0
+                            ? `Tags (${editingNote.labels.length})`
+                            : 'Tag'}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const perm = await requestNotificationPermission(currentUser?.id);
+                          setNotificationPerm(perm);
+                          setShowFullPageReminder((prev) => !prev);
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1 cursor-pointer ${
+                          showFullPageReminder || editingNote.reminderAt
+                            ? 'bg-slate-900 text-white border-slate-900'
+                            : 'bg-white/85 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <Bell className="w-3 h-3" />
+                        <span>{editingNote.reminderAt ? 'Reminder Set' : 'Remind'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Active Labels Pills */}
+                  {editingNote.labels.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {editingNote.labels.map((lbl) => (
+                        <span
+                          key={lbl}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold ${getTagColorClass(
+                            lbl
+                          )}`}
+                        >
+                          <span>{lbl}</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateEditingNote((prev) => ({
+                                ...prev,
+                                labels: prev.labels.filter((l) => l !== lbl),
+                              }))
+                            }
+                            aria-label={`Remove tag ${lbl}`}
+                            className="hover:opacity-70 cursor-pointer"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {showFullPageTagInput && (
+                    <div className="space-y-2 p-2.5 bg-white/85 rounded-xl border border-slate-200">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={fullPageNewTag}
+                          onChange={(e) => setFullPageNewTag(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddTagInEditor();
+                            }
+                          }}
+                          placeholder="Add tag (Work, Math, Personal)..."
+                          className="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleAddTagInEditor()}
+                          disabled={!fullPageNewTag.trim()}
+                          className="px-3 py-1.5 bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold rounded-lg cursor-pointer shrink-0"
+                        >
+                          Add
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {['Work', 'Personal', 'Shopping', 'Food', 'Math']
+                          .filter((preset) => !editingNote.labels.includes(preset))
+                          .map((preset) => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => handleAddTagInEditor(preset)}
+                              className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-semibold cursor-pointer"
+                            >
+                              + {preset}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {showFullPageReminder && (
+                    <div className="p-2.5 bg-white/85 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center gap-2">
+                      <input
+                        type="datetime-local"
+                        value={editingNote.reminderAt ? editingNote.reminderAt.substring(0, 16) : ''}
+                        onChange={async (e) => {
+                          const perm = await requestNotificationPermission(currentUser?.id);
+                          setNotificationPerm(perm);
+                          updateEditingNote((prev) => ({
+                            ...prev,
+                            reminderAt: e.target.value ? new Date(e.target.value).toISOString() : null,
+                          }));
+                        }}
+                        className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-900 focus:outline-none"
+                      />
+                      <label className="flex items-center gap-1.5 text-[11px] font-semibold text-rose-700 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={!!editingNote.isEmergency}
+                          onChange={(e) =>
+                            updateEditingNote((prev) => ({ ...prev, isEmergency: e.target.checked }))
+                          }
+                          className="rounded text-rose-600"
+                        />
+                        <span>Emergency Alarm</span>
+                      </label>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-black/10">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingNote(null);
+                      setIsNewDraft(false);
+                      setShowThreeDotMenu(false);
+                    }}
+                    className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-black/5 rounded-xl cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void persistNoteInEditor(true)}
+                    disabled={
+                      !editingNote.title.trim() &&
+                      !editingNote.content.trim() &&
+                      editingNote.checklistItems.length === 0 &&
+                      editingNote.labels.length === 0 &&
+                      !editingNote.reminderAt
+                    }
+                    className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl shadow-xs cursor-pointer transition-all flex items-center gap-1.5"
+                  >
+                    <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>Save Note</span>
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
+
+      {/* NOTE EDITING VIEW FOR EXISTING NOTES (Clean Unified Full-Page Workspace) */}
+      {editingNote && !isNewDraft && isMounted && typeof document !== 'undefined' && createPortal(
         <div
           data-note-card="true"
           data-note-editor="true"
@@ -1595,8 +1987,18 @@ export default function NotesView({
     const extraLabelsCount = note.labels.length > 1 ? note.labels.length - 1 : 0;
 
     return (
-      <article
+      <motion.article
         key={note.id}
+        layout
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: isSelected ? 1.01 : 1 }}
+        exit={{ opacity: 0, scale: 0.92 }}
+        whileHover={selectedNoteIds.length === 0 ? { y: -2 } : undefined}
+        transition={{
+          layout: { type: 'spring', stiffness: 400, damping: 32, mass: 0.85 },
+          opacity: { duration: 0.18 },
+          scale: { duration: 0.18 },
+        }}
         data-note-card="true"
         data-note-color={note.color || 'default'}
         onTouchStart={(e) => handleStartLongPress(note.id, e.touches[0]?.clientX, e.touches[0]?.clientY)}
@@ -1619,9 +2021,10 @@ export default function NotesView({
         style={{
           backgroundColor: surface.bg,
           borderColor: isSelected ? '#3b82f6' : surface.border,
+          borderRadius: 16,
         }}
-        className={`group relative rounded-2xl p-3 sm:p-3.5 border transition-all duration-150 hover:shadow-md hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between min-h-[126px] sm:min-h-[138px] shadow-[0_2px_8px_rgba(15,23,42,0.04)] select-none overflow-hidden ${
-          isSelected ? 'ring-2 ring-blue-500 shadow-md scale-[1.01]' : ''
+        className={`group relative h-full rounded-2xl p-3 sm:p-3.5 border transition-shadow duration-150 hover:shadow-md cursor-pointer flex flex-col justify-between min-h-[132px] sm:min-h-[144px] shadow-[0_2px_8px_rgba(15,23,42,0.04)] select-none overflow-hidden ${
+          isSelected ? 'ring-2 ring-blue-500 shadow-md' : ''
         }`}
       >
         {/* Top Section: Title + Concise Body Preview */}
@@ -1728,7 +2131,7 @@ export default function NotesView({
             </button>
           </div>
         </div>
-      </article>
+      </motion.article>
     );
   }
 }

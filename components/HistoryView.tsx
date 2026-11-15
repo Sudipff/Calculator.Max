@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { HistoryItem, parseSavedAmountFromText } from '../lib/historyStorage';
+import { OfflineWifiIndicator } from '@/components/PwaRuntime';
 
 export type HistoryCategoryFilter =
   | 'all'
@@ -537,6 +538,7 @@ export default function HistoryView({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            <OfflineWifiIndicator />
             <motion.button
               type="button"
               whileTap={{ scale: 0.92 }}

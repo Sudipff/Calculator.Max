@@ -41,6 +41,25 @@ export function useOnlineStatus(): boolean {
   return isOnline;
 }
 
+export function OfflineWifiIndicator() {
+  const isOnline = useOnlineStatus();
+
+  if (isOnline) return null;
+
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      aria-label="Offline — no internet connection"
+      title="Offline — Saved locally"
+      data-testid="offline-wifi-indicator"
+      className="w-8 h-8 rounded-full bg-rose-50 border border-rose-200/90 text-red-500 flex items-center justify-center shadow-2xs shrink-0"
+    >
+      <WifiOff className="w-4 h-4 stroke-[2.25]" />
+    </span>
+  );
+}
+
 function readCachedUserId(): string | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -358,21 +377,6 @@ export default function PwaRuntime() {
               <span>Enable Alerts</span>
             </button>
           </div>
-        </div>
-      )}
-
-      {!isOnline && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-20 sm:bottom-4 left-4 z-50 flex items-center gap-2 rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-bold text-white shadow-lg border border-amber-500"
-        >
-          <WifiOff className="w-3.5 h-3.5 shrink-0" />
-          <span>
-            {pendingCount > 0
-              ? `Offline Mode — ${pendingCount} change${pendingCount === 1 ? '' : 's'} queued`
-              : 'Offline Mode — Saved locally'}
-          </span>
         </div>
       )}
 

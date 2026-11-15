@@ -39,6 +39,7 @@ import {
   sendServiceWorkerPushNotification,
 } from '../lib/reminderService';
 import { flushOfflineSyncQueue, getPendingSyncCount } from '../lib/notesTasksStorage';
+import { OfflineWifiIndicator } from './PwaRuntime';
 import SubscriptionView, { type SubscriptionPlanId } from './SubscriptionView';
 
 export interface CurrencyOption {
@@ -590,25 +591,28 @@ export default function ProfileSettingsView({
         <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-slate-700">
           Profile Settings
         </span>
-        {currentUser ? (
-          <button
-            type="button"
-            onClick={onSignOut}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 min-h-[36px] rounded-xl bg-white/90 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200/80 hover:border-rose-200 text-xs font-bold transition-colors cursor-pointer"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Sign Out</span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onOpenAuthModal('signin')}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 min-h-[36px] rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer"
-          >
-            <LogIn className="w-3.5 h-3.5" />
-            <span>Sign In</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          <OfflineWifiIndicator />
+          {currentUser ? (
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 min-h-[36px] rounded-xl bg-white/90 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200/80 hover:border-rose-200 text-xs font-bold transition-colors cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign Out</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onOpenAuthModal('signin')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 min-h-[36px] rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>Sign In</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* User Identity Card: Avatar, Name, Email, Member Status */}

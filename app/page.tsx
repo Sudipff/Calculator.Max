@@ -41,6 +41,7 @@ import ScientificCalculator from '../components/ScientificCalculator';
 import CalculatorErrorBoundary from '../components/CalculatorErrorBoundary';
 import AuthHeader from '../components/AuthHeader';
 import PWAInstallButton from '../components/PWAInstallButton';
+import { OfflineWifiIndicator } from '../components/PwaRuntime';
 import DashboardHome from '../components/DashboardHome';
 import CurrencyExchange from '../components/CurrencyExchange';
 import NotesView from '../components/NotesManager/NotesView';
@@ -2273,9 +2274,10 @@ export default function RetailCalc() {
                 </button>
               </h1>
 
-              {/* Right: Install App (when available) + Profile Avatar */}
+              {/* Right: Install App (when available) + Offline Wi-Fi Indicator + Profile Avatar */}
               <div className="flex items-center gap-1.5 shrink-0">
                 <PWAInstallButton compact />
+                <OfflineWifiIndicator />
                 <motion.button
                   type="button"
                   whileTap={{ scale: 0.92 }}
