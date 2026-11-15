@@ -1,4 +1,4 @@
-# Retail Calculator
+# Calculator Max
 
 A modern, full-featured retail and financial calculator web application built with Next.js 15 (App Router), React 19, Tailwind CSS, Supabase Authentication, and Gemini AI.
 
