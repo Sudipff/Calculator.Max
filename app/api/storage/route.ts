@@ -3,10 +3,14 @@ import { requireAuth } from '@/lib/security';
 import { getUserCalculations } from '@/lib/db/users';
 import { getSupabaseConfig } from '@/utils/supabase/config';
 import { createClient } from '@supabase/supabase-js';
+import {
+  SubscriptionPlanId,
+  TEN_MB_LIMIT_BYTES,
+  getPlanLimitBytes,
+  isValidPlanId,
+} from '@/lib/subscriptionPlans';
 
 export const dynamic = 'force-dynamic';
-
-const TEN_MB_BYTES = 10 * 1024 * 1024; // 10,485,760 bytes
 
 function getUtf8ByteLength(payload: unknown): number {
   try {
@@ -30,7 +34,8 @@ export async function GET(req: NextRequest) {
   let calculationsCount = 0;
   let notesCount = 0;
   let tasksCount = 0;
-  let planId = 'pro';
+  let planId: SubscriptionPlanId = 'starter';
+  let limitBytes = TEN_MB_LIMIT_BYTES;
   let countryRegion = 'India';
   let rpcSucceeded = false;
 
@@ -48,7 +53,13 @@ export async function GET(req: NextRequest) {
         calculationsBytes = Number(rpcData.calculations_bytes) || 0;
         notesBytes = Number(rpcData.notes_bytes) || 0;
         tasksBytes = Number(rpcData.tasks_bytes) || 0;
-        if (rpcData.plan_id) planId = String(rpcData.plan_id);
+        if (isValidPlanId(rpcData.plan_id)) {
+          planId = rpcData.plan_id;
+          limitBytes = Math.max(
+            Number(rpcData.limit_bytes) || 0,
+            getPlanLimitBytes(planId)
+          );
+        }
         if (rpcData.country_region) countryRegion = String(rpcData.country_region);
       }
 
@@ -78,8 +89,12 @@ export async function GET(req: NextRequest) {
           (listRows.length > 0 ? getUtf8ByteLength(listRows) : 0);
       }
 
-      if (subRes.data?.plan_id) {
-        planId = String(subRes.data.plan_id);
+      if (subRes.data && isValidPlanId(subRes.data.plan_id)) {
+        planId = subRes.data.plan_id;
+        limitBytes = Math.max(
+          Number(subRes.data.storage_limit_bytes) || 0,
+          getPlanLimitBytes(planId)
+        );
       }
       if (subRes.data?.country_region) {
         countryRegion = String(subRes.data.country_region);
@@ -106,7 +121,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(
     {
       usedBytes,
-      limitBytes: TEN_MB_BYTES,
+      limitBytes,
       breakdown: {
         calculationsBytes,
         notesBytes,
@@ -136,9 +151,22 @@ export async function POST(req: NextRequest) {
   const token = auth.actor.token;
   const body = await req.json().catch(() => ({}));
 
-  const allowedPlans = ['starter', 'pro', 'team', 'enterprise'];
-  const nextPlan = allowedPlans.includes(body.planId) ? body.planId : 'pro';
-  const nextCountry = typeof body.countryRegion === 'string' ? body.countryRegion.slice(0, 80) : undefined;
+  const nextPlan: SubscriptionPlanId = isValidPlanId(body.planId) ? body.planId : 'starter';
+  const nextCountry =
+    typeof body.countryRegion === 'string' ? body.countryRegion.slice(0, 80) : undefined;
+
+  // Upgrades to paid plans (pro, team, enterprise) require processing through /api/payments/checkout.
+  if (nextPlan !== 'starter') {
+    return NextResponse.json(
+      {
+        error: 'Payment gateway processing is required to upgrade to a paid plan.',
+        requiresPayment: true,
+      },
+      { status: 402 }
+    );
+  }
+
+  const nextLimitBytes = getPlanLimitBytes(nextPlan);
 
   try {
     const { url, key } = getSupabaseConfig();
@@ -150,7 +178,8 @@ export async function POST(req: NextRequest) {
       const payload: Record<string, unknown> = {
         user_id: uid,
         plan_id: nextPlan,
-        storage_limit_bytes: TEN_MB_BYTES,
+        storage_limit_bytes: nextLimitBytes,
+        status: 'active',
         updated_at: new Date().toISOString(),
       };
       if (nextCountry) {
@@ -167,7 +196,7 @@ export async function POST(req: NextRequest) {
     ok: true,
     planId: nextPlan,
     countryRegion: nextCountry,
-    limitBytes: TEN_MB_BYTES,
+    limitBytes: nextLimitBytes,
     syncedAt: new Date().toISOString(),
   });
 }

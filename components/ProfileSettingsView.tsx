@@ -39,6 +39,15 @@ import {
   sendServiceWorkerPushNotification,
 } from '../lib/reminderService';
 import { flushOfflineSyncQueue, getPendingSyncCount } from '../lib/notesTasksStorage';
+import {
+  TEN_MB_LIMIT_BYTES,
+  formatStorageLimitLabel,
+  getCachedStorageSnapshot,
+  getPlanDisplayName,
+  getPlanLimitBytes,
+  getSavedPlanId,
+} from '../lib/subscriptionPlans';
+import { fetchAndCacheStorageSnapshot } from '../lib/storageSyncClient';
 import { OfflineWifiIndicator } from './PwaRuntime';
 import SubscriptionView, { type SubscriptionPlanId } from './SubscriptionView';
 
@@ -73,6 +82,7 @@ interface ProfileSettingsViewProps {
   calculationsCount: number;
   onSubOverlayChange?: (hasOverlay: boolean) => void;
   closeSubViewSignal?: number;
+  refreshSignal?: number;
 }
 
 type ExpandedAccountPanel = 'profile_info' | 'security' | 'subscriptions' | null;
@@ -94,14 +104,14 @@ export default function ProfileSettingsView({
   calculationsCount,
   onSubOverlayChange,
   closeSubViewSignal = 0,
+  refreshSignal = 0,
 }: ProfileSettingsViewProps) {
   const [expandedAccount, setExpandedAccount] = useState<ExpandedAccountPanel>(null);
   const [showSubscriptionView, setShowSubscriptionView] = useState(false);
   const [showBackupSettingsView, setShowBackupSettingsView] = useState(false);
   const [closeBackupSignal, setCloseBackupSignal] = useState(0);
-  const [activePlanLabel, setActivePlanLabel] = useState<SubscriptionPlanId>(
-    currentUser ? 'pro' : 'starter'
-  );
+  const [activePlanLabel, setActivePlanLabel] = useState<SubscriptionPlanId>('starter');
+  const [activeLimitBytes, setActiveLimitBytes] = useState<number>(TEN_MB_LIMIT_BYTES);
   const [showBackupPanel, setShowBackupPanel] = useState(false);
 
   // User profile editing state
@@ -194,6 +204,24 @@ export default function ProfileSettingsView({
           : 'Synced just now'
         : 'Local device only'
     );
+
+    const syncLocalPlanState = () => {
+      const snap = getCachedStorageSnapshot(currentUser?.id);
+      const nextPlan = snap?.planId || getSavedPlanId(currentUser?.id) || 'starter';
+      const nextLimit = snap?.limitBytes || getPlanLimitBytes(nextPlan);
+      setActivePlanLabel(nextPlan);
+      setActiveLimitBytes(nextLimit);
+    };
+
+    syncLocalPlanState();
+
+    const handleStorageUpdated = () => {
+      syncLocalPlanState();
+    };
+    window.addEventListener('calcmax:storage-updated', handleStorageUpdated);
+    return () => {
+      window.removeEventListener('calcmax:storage-updated', handleStorageUpdated);
+    };
   }, [currentUser]);
 
   useEffect(() => {
@@ -399,6 +427,9 @@ export default function ProfileSettingsView({
     try {
       const queueRes = await flushOfflineSyncQueue(currentUser.id);
       await onSyncHistory();
+      const snap = await fetchAndCacheStorageSnapshot(currentUser.id);
+      setActivePlanLabel(snap.planId);
+      setActiveLimitBytes(snap.limitBytes);
       setPendingSyncCount(queueRes.pendingCount);
       setLastSyncedText(
         queueRes.pendingCount > 0
@@ -556,9 +587,10 @@ export default function ProfileSettingsView({
   const createdYear = currentUser?.created_at
     ? new Date(currentUser.created_at).getFullYear()
     : 2026;
+  const planDisplayName = getPlanDisplayName(activePlanLabel);
   const memberStatusLabel = currentUser
-    ? `Pro Member · Since ${isNaN(createdYear) ? 2026 : createdYear}`
-    : 'Guest Mode · Free Plan';
+    ? `${planDisplayName} Member · Since ${isNaN(createdYear) ? 2026 : createdYear}`
+    : `${planDisplayName} · Free Plan`;
 
   const activeCurrencyObj =
     currencies.find((c) => c.symbol === currency) || currencies[0];
@@ -575,11 +607,13 @@ export default function ProfileSettingsView({
           setShowSubscriptionView(false);
         }}
         onOpenAuthModal={onOpenAuthModal}
-        onStorageSynced={(_used, _limit, planId) => {
+        onStorageSynced={(_used, limit, planId) => {
           setActivePlanLabel(planId);
+          setActiveLimitBytes(limit);
         }}
         onBackupViewChange={(isOpen) => setShowBackupSettingsView(isOpen)}
         closeBackupSignal={closeBackupSignal}
+        refreshSignal={refreshSignal}
       />
     );
   }
@@ -821,15 +855,15 @@ export default function ProfileSettingsView({
                     Subscriptions
                   </span>
                   <span className="block text-[11px] text-slate-500 truncate">
-                    10MB Cloud Storage Limit · Plans &amp; Usage
+                    {formatStorageLimitLabel(activeLimitBytes)} Cloud Storage Limit · Plans &amp; Usage
                   </span>
                 </div>
               </div>
               <div className="flex items-center gap-1.5 text-xs font-semibold shrink-0">
-                <span className={currentUser ? 'text-emerald-600 uppercase' : 'text-slate-500 uppercase'}>
+                <span className={activePlanLabel === 'starter' ? 'text-slate-600 uppercase' : 'text-emerald-600 uppercase'}>
                   {activePlanLabel === 'starter'
                     ? 'Starter · Free'
-                    : `${activePlanLabel} · Active`}
+                    : `${planDisplayName} · Active`}
                 </span>
                 <ChevronRight className="w-4 h-4 text-slate-400" />
               </div>

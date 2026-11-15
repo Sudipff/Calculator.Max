@@ -146,7 +146,7 @@ BEGIN
   v_limit := COALESCE((v_usage->>'limit_bytes')::BIGINT, 10485760);
 
   IF v_used + pg_column_size(NEW.*) > v_limit THEN
-    RAISE EXCEPTION 'Cloud storage quota exceeded (10MB per-user limit reached). Upgrade your subscription plan or free up space.';
+    RAISE EXCEPTION 'Cloud storage quota exceeded. Upgrade your subscription plan or free up space.';
   END IF;
 
   RETURN NEW;
@@ -176,3 +176,37 @@ BEGIN
       FOR EACH ROW EXECUTE FUNCTION public.enforce_user_10mb_storage_quota();
   END IF;
 END $$;
+
+-- 5. Payment Transactions Audit Table (Records completed payment gateway upgrades)
+CREATE TABLE IF NOT EXISTS public.payment_transactions (
+  transaction_id TEXT PRIMARY KEY,
+  receipt_number TEXT NOT NULL,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  plan_id TEXT NOT NULL CHECK (plan_id IN ('pro', 'team', 'enterprise')),
+  amount_cents BIGINT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  payment_method TEXT NOT NULL CHECK (payment_method IN ('card', 'upi', 'netbanking')),
+  payment_last4 TEXT,
+  storage_limit_bytes BIGINT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'succeeded' CHECK (status IN ('pending', 'succeeded', 'failed', 'refunded')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_transactions_user
+  ON public.payment_transactions(user_id, created_at DESC);
+
+ALTER TABLE public.payment_transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.payment_transactions FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view their own payment transactions" ON public.payment_transactions;
+CREATE POLICY "Users can view their own payment transactions"
+  ON public.payment_transactions FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert their own payment transactions" ON public.payment_transactions;
+CREATE POLICY "Users can insert their own payment transactions"
+  ON public.payment_transactions FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+

@@ -64,6 +64,8 @@ import {
   HistoryItem,
 } from '../lib/historyStorage';
 import { getLocalNotes, getLocalTasks, saveLocalNotes, saveLocalTasks } from '../lib/notesTasksStorage';
+import { hasCompletedInitialCloudSync } from '../lib/subscriptionPlans';
+import { fetchAndCacheStorageSnapshot } from '../lib/storageSyncClient';
 import { getBackupPermissions } from '../lib/backupPermissions';
 import type { NoteItem } from '../lib/types/notes-tasks';
 import { exportAllHistoryPDF, exportSingleItemPDF } from '../lib/pdfExport';
@@ -339,6 +341,7 @@ export default function RetailCalc() {
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
   const [notesRefreshSignal, setNotesRefreshSignal] = useState(0);
   const [tasksRefreshSignal, setTasksRefreshSignal] = useState(0);
+  const [profileRefreshSignal, setProfileRefreshSignal] = useState(0);
   const [pullDistance, setPullDistance] = useState(0);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const [pullRefreshNotice, setPullRefreshNotice] = useState<string | null>(null);
@@ -566,6 +569,13 @@ export default function RetailCalc() {
       console.warn('Supabase auth recovery listener notice:', err);
     }
   }, []);
+
+  // Initial App Launch Cloud Storage & Subscription Sync (runs once on launch, not on navigating to Subscription)
+  useEffect(() => {
+    if (!isClient) return;
+    if (hasCompletedInitialCloudSync() && !currentUser?.id) return;
+    void fetchAndCacheStorageSnapshot(currentUser?.id);
+  }, [isClient, currentUser?.id]);
 
   // Realtime subscription for calculation history changes across devices and sessions
   useEffect(() => {
@@ -1034,6 +1044,12 @@ export default function RetailCalc() {
           await loadUserHistory(currentUser);
         }
         setPullRefreshNotice('Dashboard refreshed');
+      } else if (targetTab === 'profile') {
+        setProfileRefreshSignal((n) => n + 1);
+        if (currentUser?.id) {
+          await loadUserHistory(currentUser);
+        }
+        setPullRefreshNotice('Cloud storage synced');
       } else {
         if (currentUser?.id) {
           await loadUserHistory(currentUser);
@@ -2675,6 +2691,7 @@ export default function RetailCalc() {
                     calculationsCount={history.length}
                     onSubOverlayChange={(hasOverlay) => setIsManagerSubOverlayOpen(hasOverlay)}
                     closeSubViewSignal={noteEditorCloseSignal}
+                    refreshSignal={profileRefreshSignal}
                   />
                 </section>
               )}

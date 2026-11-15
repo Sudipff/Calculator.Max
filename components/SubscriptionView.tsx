@@ -1,144 +1,62 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
+  AlertCircle,
   ArrowLeft,
   ArrowRight,
+  Building2,
   Check,
+  CheckCircle2,
   Cloud,
+  CreditCard,
   HardDrive,
+  Lock,
   RefreshCw,
   Settings,
+  ShieldCheck,
+  Smartphone,
+  Sparkles,
   User,
+  X,
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { createClient } from '@/utils/supabase/client';
-import { getCalculationHistory } from '@/lib/historyStorage';
-import { getLocalNotes, getLocalTasks, getLocalTaskLists } from '@/lib/notesTasksStorage';
 import { useTheme } from '@/components/ThemeProvider';
+import {
+  SUBSCRIPTION_PLANS,
+  SubscriptionPlanId,
+  SubscriptionPlanSpec,
+  TEN_MB_LIMIT_BYTES,
+  formatStorageLimitLabel,
+  formatUsedStorageShort,
+  getPlanDisplayName,
+  getPlanLimitBytes,
+  saveCachedStorageSnapshot,
+} from '@/lib/subscriptionPlans';
+import {
+  buildLocalStorageSnapshot,
+  fetchAndCacheStorageSnapshot,
+} from '@/lib/storageSyncClient';
 import type { CurrencyOption } from './ProfileSettingsView';
 import BackupSettingsView from './BackupSettingsView';
 
-export type SubscriptionPlanId = 'starter' | 'pro' | 'team' | 'enterprise';
+export type { SubscriptionPlanId };
+export { SUBSCRIPTION_PLANS };
 
-export interface SubscriptionPlanSpec {
-  id: SubscriptionPlanId;
-  title: string;
-  subtitle?: string;
-  price: string;
-  period: string;
-  storageQuotaLabel: string;
-  features: string[];
-  headerBgLight: string;
-  headerBgDark: string;
-  headerTextClass: string;
-  bodyBgLight: string;
-  bodyBgDark: string;
-  borderLight: string;
-  borderDark: string;
-  rank: number;
-}
+type GatewayMethod = 'card' | 'upi' | 'netbanking';
 
-export const SUBSCRIPTION_PLANS: SubscriptionPlanSpec[] = [
-  {
-    id: 'starter',
-    title: 'STARTER',
-    subtitle: 'Free',
-    price: '$0',
-    period: '/mo',
-    storageQuotaLabel: '10 MB Storage',
-    features: ['10 MB Storage', 'Basic Features', '1 User Support'],
-    headerBgLight: '#3a9d64',
-    headerBgDark: '#1b5e3a',
-    headerTextClass: 'text-white',
-    bodyBgLight: '#c4eed3',
-    bodyBgDark: '#112e22',
-    borderLight: '#96dfb0',
-    borderDark: '#1f573d',
-    rank: 0,
-  },
-  {
-    id: 'pro',
-    title: 'PRO',
-    price: '$9.99',
-    period: '/mo',
-    storageQuotaLabel: '10 GB Storage',
-    features: ['10 GB Storage', 'Priority Support', '5 Users Support', 'API Access'],
-    headerBgLight: '#75afea',
-    headerBgDark: '#1e4e8c',
-    headerTextClass: 'text-slate-950 dark:text-white',
-    bodyBgLight: '#d3e7fb',
-    bodyBgDark: '#132742',
-    borderLight: '#a9cef5',
-    borderDark: '#264b7d',
-    rank: 1,
-  },
-  {
-    id: 'team',
-    title: 'TEAM',
-    subtitle: 'Popular',
-    price: '$24.99',
-    period: '/mo',
-    storageQuotaLabel: '50 GB Storage',
-    features: [
-      '50 GB Storage',
-      'Premium Support',
-      '15 Users Support',
-      'Advanced Features',
-      'API Access',
-    ],
-    headerBgLight: '#b996eb',
-    headerBgDark: '#4c2882',
-    headerTextClass: 'text-slate-950 dark:text-white',
-    bodyBgLight: '#eadcfb',
-    bodyBgDark: '#23183b',
-    borderLight: '#cfb4f5',
-    borderDark: '#493278',
-    rank: 2,
-  },
-  {
-    id: 'enterprise',
-    title: 'ENTERPRISE',
-    price: '$49.99',
-    period: '/mo',
-    storageQuotaLabel: 'Unmatched 1 TB Storage',
-    features: [
-      'Unmatched 1 TB Storage',
-      'Dedicated Account Manager',
-      'Unlimited Users Support',
-      'Full Custom API Access',
-      '24/7 Premium Phone Support',
-    ],
-    headerBgLight: '#83672c',
-    headerBgDark: '#594318',
-    headerTextClass: 'text-white',
-    bodyBgLight: '#e0cb93',
-    bodyBgDark: '#2b2212',
-    borderLight: '#c8ae6b',
-    borderDark: '#574421',
-    rank: 3,
-  },
-];
-
-const TEN_MB_LIMIT_BYTES = 10 * 1024 * 1024; // 10,485,760 bytes
-
-function measureUtf8Bytes(data: unknown): number {
-  try {
-    const raw = typeof data === 'string' ? data : JSON.stringify(data ?? '');
-    return new TextEncoder().encode(raw).length;
-  } catch {
-    return 0;
-  }
-}
-
-export function formatStorageMb(usedBytes: number): string {
-  if (usedBytes <= 0) return '0.00 MB';
-  const mb = usedBytes / (1024 * 1024);
-  if (mb < 0.01) {
-    const kb = Math.max(0.1, usedBytes / 1024);
-    return `${kb.toFixed(1)} KB (${mb.toFixed(3)} MB)`;
-  }
-  return `${mb.toFixed(2)} MB`;
+interface PaymentReceipt {
+  transactionId: string;
+  receiptNumber: string;
+  planId: SubscriptionPlanId;
+  planName: string;
+  membershipStatus: string;
+  limitBytes: number;
+  limitLabel: string;
+  amountCents: number;
+  payerSummary: string;
 }
 
 interface SubscriptionViewProps {
@@ -151,6 +69,18 @@ interface SubscriptionViewProps {
   onStorageSynced?: (usedBytes: number, limitBytes: number, planId: SubscriptionPlanId) => void;
   onBackupViewChange?: (isOpen: boolean) => void;
   closeBackupSignal?: number;
+  refreshSignal?: number;
+}
+
+function formatCardNumberSpacing(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 16);
+  return digits.replace(/(\d{4})(?=\d)/g, '$1 ');
+}
+
+function formatExpiryInput(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 4);
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}/${digits.slice(2)}`;
 }
 
 export default function SubscriptionView({
@@ -162,35 +92,51 @@ export default function SubscriptionView({
   onStorageSynced,
   onBackupViewChange,
   closeBackupSignal = 0,
+  refreshSignal = 0,
 }: SubscriptionViewProps) {
   const { isDark } = useTheme();
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
+
+  const initialSnapshot = useMemo(
+    () => buildLocalStorageSnapshot(currentUser?.id),
+    [currentUser?.id]
+  );
 
   const [showBackupSettings, setShowBackupSettings] = useState(false);
   const prevCloseBackupSignalRef = useRef(closeBackupSignal);
+  const prevRefreshSignalRef = useRef(refreshSignal);
+
   const [activePlanId, setActivePlanId] = useState<SubscriptionPlanId>(
-    currentUser ? 'pro' : 'starter'
+    initialSnapshot.planId || 'starter'
   );
-  const [usedBytes, setUsedBytes] = useState<number>(0);
-  const [limitBytes, setLimitBytes] = useState<number>(TEN_MB_LIMIT_BYTES);
-  const [breakdown, setBreakdown] = useState<{
-    calculationsBytes: number;
-    notesBytes: number;
-    tasksBytes: number;
-  }>({
-    calculationsBytes: 0,
-    notesBytes: 0,
-    tasksBytes: 0,
-  });
-  const [counts, setCounts] = useState<{ calculations: number; notes: number; tasks: number }>({
-    calculations: 0,
-    notes: 0,
-    tasks: 0,
-  });
+  const [usedBytes, setUsedBytes] = useState<number>(initialSnapshot.usedBytes || 0);
+  const [limitBytes, setLimitBytes] = useState<number>(
+    initialSnapshot.limitBytes || TEN_MB_LIMIT_BYTES
+  );
+  const [breakdown, setBreakdown] = useState(initialSnapshot.breakdown);
+  const [counts, setCounts] = useState(initialSnapshot.counts);
   const [isSyncingStorage, setIsSyncingStorage] = useState<boolean>(false);
-  const [cloudSyncedAt, setCloudSyncedAt] = useState<string | null>(null);
+  const [cloudSyncedAt, setCloudSyncedAt] = useState<string | null>(initialSnapshot.syncedAt);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
   const [activeScrollIndex, setActiveScrollIndex] = useState<number>(0);
+
+  // Payment Gateway Checkout State
+  const [checkoutPlan, setCheckoutPlan] = useState<SubscriptionPlanSpec | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<GatewayMethod>('card');
+  const [cardholderName, setCardholderName] = useState('');
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvc, setCardCvc] = useState('');
+  const [upiId, setUpiId] = useState('');
+  const [bankName, setBankName] = useState('HDFC Bank');
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [paymentReceipt, setPaymentReceipt] = useState<PaymentReceipt | null>(null);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   useEffect(() => {
     onBackupViewChange?.(showBackupSettings);
@@ -202,18 +148,30 @@ export default function SubscriptionView({
   useEffect(() => {
     if (closeBackupSignal === prevCloseBackupSignalRef.current) return;
     prevCloseBackupSignalRef.current = closeBackupSignal;
+    if (checkoutPlan) {
+      if (!isProcessingPayment) {
+        setCheckoutPlan(null);
+        setPaymentReceipt(null);
+        setPaymentError(null);
+      }
+      return;
+    }
     if (showBackupSettings) {
       setShowBackupSettings(false);
       if (typeof window !== 'undefined') {
         window.scrollTo({ top: 0, behavior: 'auto' });
       }
     }
-  }, [closeBackupSignal, showBackupSettings]);
+  }, [checkoutPlan, closeBackupSignal, isProcessingPayment, showBackupSettings]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (showBackupSettings) {
+        if (checkoutPlan && !isProcessingPayment) {
+          setCheckoutPlan(null);
+          setPaymentReceipt(null);
+          setPaymentError(null);
+        } else if (showBackupSettings) {
           setShowBackupSettings(false);
         } else {
           onClose();
@@ -222,7 +180,7 @@ export default function SubscriptionView({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, showBackupSettings]);
+  }, [checkoutPlan, isProcessingPayment, onClose, showBackupSettings]);
 
   const activeCurrencyObj = useMemo(
     () => currencies.find((c) => c.symbol === currency) || currencies[0],
@@ -263,135 +221,97 @@ export default function SubscriptionView({
 
   const avatarUrl = currentUser?.user_metadata?.avatar_url;
 
-  const syncStorageWithCloud = useCallback(async () => {
-    setIsSyncingStorage(true);
-    try {
-      const uid = currentUser?.id;
-      const localCalcs = getCalculationHistory(uid);
-      const localNotes = getLocalNotes(uid);
-      const localTasks = getLocalTasks(uid);
-      const localLists = getLocalTaskLists(uid);
+  const applySnapshotToState = useCallback(
+    (snap: ReturnType<typeof buildLocalStorageSnapshot>) => {
+      setBreakdown(snap.breakdown);
+      setCounts(snap.counts);
+      setUsedBytes(snap.usedBytes);
+      setLimitBytes(snap.limitBytes);
+      setActivePlanId(snap.planId);
+      if (snap.syncedAt) {
+        setCloudSyncedAt(snap.syncedAt);
+      }
+      onStorageSynced?.(snap.usedBytes, snap.limitBytes, snap.planId);
+    },
+    [onStorageSynced]
+  );
 
-      const localCalcBytes = localCalcs.length > 0 ? measureUtf8Bytes(localCalcs) : 0;
-      const localNotesBytes = localNotes.length > 0 ? measureUtf8Bytes(localNotes) : 0;
-      const localTasksBytes =
-        (localTasks.length > 0 ? measureUtf8Bytes(localTasks) : 0) +
-        (localLists.length > 0 ? measureUtf8Bytes(localLists) : 0);
-
-      let finalCalcBytes = localCalcBytes;
-      let finalNotesBytes = localNotesBytes;
-      let finalTasksBytes = localTasksBytes;
-      let finalCalcCount = localCalcs.length;
-      let finalNotesCount = localNotes.length;
-      let finalTasksCount = localTasks.length;
-      let resolvedPlan: SubscriptionPlanId = currentUser ? 'pro' : 'starter';
-
-      if (typeof window !== 'undefined') {
-        const savedPlan = localStorage.getItem(
-          `calculator-max-plan-${uid || 'guest'}`
-        ) as SubscriptionPlanId | null;
-        if (savedPlan && ['starter', 'pro', 'team', 'enterprise'].includes(savedPlan)) {
-          resolvedPlan = savedPlan;
+  // Cloud Sync animation ONLY runs when manually requested (showAnimation = true).
+  // Navigating to Subscription loads the cached/silent snapshot without spinning animation.
+  const syncStorageWithCloud = useCallback(
+    async (showAnimation: boolean) => {
+      if (showAnimation) {
+        setIsSyncingStorage(true);
+      }
+      try {
+        const snapshot = await fetchAndCacheStorageSnapshot(currentUser?.id);
+        applySnapshotToState(snapshot);
+      } finally {
+        if (showAnimation) {
+          setIsSyncingStorage(false);
         }
       }
+    },
+    [applySnapshotToState, currentUser?.id]
+  );
 
-      if (uid) {
-        try {
-          const supabase = createClient();
-          const {
-            data: { session },
-          } = await supabase.auth.getSession();
-
-          const headers: Record<string, string> = {};
-          if (session?.access_token) {
-            headers['Authorization'] = `Bearer ${session.access_token}`;
-          }
-
-          const res = await fetch('/api/storage', {
-            method: 'GET',
-            headers,
-            cache: 'no-store',
-          });
-
-          if (res.ok) {
-            const cloudData = await res.json();
-            finalCalcBytes = Math.max(
-              localCalcBytes,
-              Number(cloudData.breakdown?.calculationsBytes) || 0
-            );
-            finalNotesBytes = Math.max(
-              localNotesBytes,
-              Number(cloudData.breakdown?.notesBytes) || 0
-            );
-            finalTasksBytes = Math.max(
-              localTasksBytes,
-              Number(cloudData.breakdown?.tasksBytes) || 0
-            );
-            finalCalcCount = Math.max(localCalcs.length, Number(cloudData.counts?.calculations) || 0);
-            finalNotesCount = Math.max(localNotes.length, Number(cloudData.counts?.notes) || 0);
-            finalTasksCount = Math.max(localTasks.length, Number(cloudData.counts?.tasks) || 0);
-
-            if (
-              cloudData.planId &&
-              ['starter', 'pro', 'team', 'enterprise'].includes(cloudData.planId)
-            ) {
-              resolvedPlan = cloudData.planId as SubscriptionPlanId;
-              if (typeof window !== 'undefined') {
-                localStorage.setItem(`calculator-max-plan-${uid}`, resolvedPlan);
-              }
-            }
-          }
-        } catch {
-          // Fallback to local byte measurement if offline
-        }
-      }
-
-      const totalUsed = finalCalcBytes + finalNotesBytes + finalTasksBytes;
-      setBreakdown({
-        calculationsBytes: finalCalcBytes,
-        notesBytes: finalNotesBytes,
-        tasksBytes: finalTasksBytes,
-      });
-      setCounts({
-        calculations: finalCalcCount,
-        notes: finalNotesCount,
-        tasks: finalTasksCount,
-      });
-      setUsedBytes(totalUsed);
-      setLimitBytes(TEN_MB_LIMIT_BYTES);
-      setActivePlanId(resolvedPlan);
-      setCloudSyncedAt(
-        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      );
-      onStorageSynced?.(totalUsed, TEN_MB_LIMIT_BYTES, resolvedPlan);
-    } finally {
-      setIsSyncingStorage(false);
-    }
-  }, [currentUser, onStorageSynced]);
-
+  // On mount / navigation to Subscription screen: hydrate from cache immediately and
+  // perform a silent check without activating Cloud Sync animation.
   useEffect(() => {
-    void syncStorageWithCloud();
-  }, [syncStorageWithCloud]);
+    const snap = buildLocalStorageSnapshot(currentUser?.id);
+    applySnapshotToState(snap);
+    void syncStorageWithCloud(false);
+  }, [applySnapshotToState, currentUser?.id, syncStorageWithCloud]);
+
+  // Manual pull-to-refresh signal from parent triggers Cloud Sync animation explicitly
+  useEffect(() => {
+    if (refreshSignal === prevRefreshSignalRef.current) return;
+    prevRefreshSignalRef.current = refreshSignal;
+    void syncStorageWithCloud(true);
+  }, [refreshSignal, syncStorageWithCloud]);
+
+  const openPaymentGateway = (plan: SubscriptionPlanSpec) => {
+    if (!currentUser) {
+      onOpenAuthModal('signin');
+      return;
+    }
+    setCheckoutPlan(plan);
+    setPaymentReceipt(null);
+    setPaymentError(null);
+    setPaymentMethod('card');
+    setCardholderName(
+      currentUser?.user_metadata?.full_name ||
+        currentUser?.user_metadata?.name ||
+        ''
+    );
+    setCardNumber('');
+    setCardExpiry('');
+    setCardCvc('');
+    setUpiId('');
+  };
 
   const handleSelectPlan = async (plan: SubscriptionPlanSpec) => {
-    if (plan.id === 'enterprise') {
-      setPlanNotice(
-        'Enterprise inquiry registered. Our account team will contact your email with custom 1 TB workspace provisioning.'
-      );
-      setTimeout(() => setPlanNotice(null), 4500);
+    if (plan.id === activePlanId) return;
+
+    const currentRank =
+      SUBSCRIPTION_PLANS.find((p) => p.id === activePlanId)?.rank ?? 0;
+
+    // Require payment gateway checkout whenever upgrading to a paid tier
+    if (plan.rank > currentRank && plan.id !== 'starter') {
+      openPaymentGateway(plan);
       return;
     }
 
+    // Switching back to free Starter tier
     if (!currentUser && plan.id !== 'starter') {
       onOpenAuthModal('signin');
       return;
     }
 
     const uid = currentUser?.id || 'guest';
+    const nextLimit = getPlanLimitBytes(plan.id);
     setActivePlanId(plan.id);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(`calculator-max-plan-${uid}`, plan.id);
-    }
+    setLimitBytes(nextLimit);
 
     if (currentUser?.id) {
       try {
@@ -403,7 +323,9 @@ export default function SubscriptionView({
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+            ...(session?.access_token
+              ? { Authorization: `Bearer ${session.access_token}` }
+              : {}),
           },
           body: JSON.stringify({
             planId: plan.id,
@@ -415,9 +337,122 @@ export default function SubscriptionView({
       }
     }
 
-    onStorageSynced?.(usedBytes, limitBytes, plan.id);
-    setPlanNotice(`Subscription updated to ${plan.title} (${plan.price}${plan.period}).`);
+    saveCachedStorageSnapshot(uid, {
+      planId: plan.id,
+      usedBytes,
+      limitBytes: nextLimit,
+      breakdown,
+      counts,
+      syncedAt:
+        cloudSyncedAt ||
+        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    });
+    onStorageSynced?.(usedBytes, nextLimit, plan.id);
+    setPlanNotice(
+      `Subscription switched to ${plan.title} (${formatStorageLimitLabel(nextLimit)} Storage).`
+    );
     setTimeout(() => setPlanNotice(null), 3500);
+  };
+
+  const handleSubmitPaymentCheckout = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!checkoutPlan || isProcessingPayment) return;
+
+    setPaymentError(null);
+    setIsProcessingPayment(true);
+
+    try {
+      const supabase = createClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token && !currentUser) {
+        setPaymentError('Please sign in to complete your upgrade.');
+        setIsProcessingPayment(false);
+        return;
+      }
+
+      // Smooth gateway authorization feedback
+      await new Promise((resolve) => setTimeout(resolve, 650));
+
+      const res = await fetch('/api/payments/checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token
+            ? { Authorization: `Bearer ${session.access_token}` }
+            : {}),
+        },
+        body: JSON.stringify({
+          planId: checkoutPlan.id,
+          paymentMethod,
+          cardholderName,
+          cardNumber,
+          expiry: cardExpiry,
+          cvc: cardCvc,
+          upiId,
+          bankName,
+          countryRegion: activeCurrencyObj?.country,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        setPaymentError(
+          data.error || 'Payment declined by gateway. Please verify your details and try again.'
+        );
+        setIsProcessingPayment(false);
+        return;
+      }
+
+      const upgradedPlan = (data.planId as SubscriptionPlanId) || checkoutPlan.id;
+      const upgradedLimit =
+        Number(data.limitBytes) || getPlanLimitBytes(upgradedPlan);
+      const syncedNow = new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      setActivePlanId(upgradedPlan);
+      setLimitBytes(upgradedLimit);
+      setCloudSyncedAt(syncedNow);
+
+      saveCachedStorageSnapshot(currentUser?.id, {
+        planId: upgradedPlan,
+        usedBytes,
+        limitBytes: upgradedLimit,
+        breakdown,
+        counts,
+        syncedAt: syncedNow,
+      });
+
+      onStorageSynced?.(usedBytes, upgradedLimit, upgradedPlan);
+
+      setPaymentReceipt({
+        transactionId: data.transactionId,
+        receiptNumber: data.receiptNumber,
+        planId: upgradedPlan,
+        planName: data.planName || getPlanDisplayName(upgradedPlan),
+        membershipStatus:
+          data.membershipStatus || `${getPlanDisplayName(upgradedPlan)} Member`,
+        limitBytes: upgradedLimit,
+        limitLabel: data.limitLabel || formatStorageLimitLabel(upgradedLimit),
+        amountCents: Number(data.amountCents) || checkoutPlan.priceCents,
+        payerSummary: data.payerSummary || paymentMethod.toUpperCase(),
+      });
+
+      setPlanNotice(
+        `Payment confirmed! Upgraded to ${getPlanDisplayName(
+          upgradedPlan
+        )} (${formatStorageLimitLabel(upgradedLimit)} Cloud Storage).`
+      );
+      setTimeout(() => setPlanNotice(null), 5000);
+    } catch {
+      setPaymentError('Network error while contacting the payment gateway. Please retry.');
+    } finally {
+      setIsProcessingPayment(false);
+    }
   };
 
   const handleScrollPlans = (dir: 'left' | 'right') => {
@@ -446,10 +481,10 @@ export default function SubscriptionView({
     setActiveScrollIndex(idx);
   };
 
-  // Accurate percentage of 10MB per-user limit with optical minimum when data > 0
-  const rawPercent = Math.min(100, (usedBytes / limitBytes) * 100);
+  const rawPercent = Math.min(100, (usedBytes / Math.max(1, limitBytes)) * 100);
   const progressBarPercent = usedBytes > 0 ? Math.max(4, rawPercent) : 0;
-  const usedMbNumber = (usedBytes / (1024 * 1024)).toFixed(2);
+  const usedShortLabel = formatUsedStorageShort(usedBytes);
+  const limitShortLabel = formatStorageLimitLabel(limitBytes);
   const usedKbNumber = (usedBytes / 1024).toFixed(1);
 
   const activePlanSpec =
@@ -495,7 +530,7 @@ export default function SubscriptionView({
         </div>
       </div>
 
-      {/* User Identity Horizontal Card (Matching Reference Photo) */}
+      {/* User Identity Horizontal Card with Current Membership Badge */}
       <section
         aria-label="Subscriber Profile"
         className="bg-white/95 rounded-3xl border border-slate-200/80 shadow-[0_4px_20px_rgba(15,23,42,0.05)] p-4 sm:p-5 flex items-center gap-4"
@@ -524,15 +559,26 @@ export default function SubscriptionView({
         </div>
 
         <div className="min-w-0 flex-1 space-y-0.5">
-          <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase truncate">
-            {displayName}
-          </h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase truncate">
+              {displayName}
+            </h3>
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide border ${
+                activePlanId === 'starter'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-blue-50 text-blue-700 border-blue-200'
+              }`}
+            >
+              {getPlanDisplayName(activePlanId)} Plan
+            </span>
+          </div>
           <p className="text-xs sm:text-sm font-semibold text-slate-600 truncate">{userHandle}</p>
           <p className="text-xs font-medium text-slate-500 truncate">{memberSinceLabel}</p>
         </div>
       </section>
 
-      {/* STORAGE STATUS Section (10MB Per-User Limit Synced with Cloud) */}
+      {/* STORAGE STATUS Section (Dynamic Plan Cloud Storage Quota) */}
       <section aria-labelledby="subscription-storage-heading" className="space-y-2.5">
         <div className="flex items-center justify-between px-1">
           <h4
@@ -544,10 +590,10 @@ export default function SubscriptionView({
 
           <button
             type="button"
-            onClick={() => void syncStorageWithCloud()}
+            onClick={() => void syncStorageWithCloud(true)}
             disabled={isSyncingStorage}
             className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-700 cursor-pointer disabled:opacity-60"
-            title="Sync storage usage with Supabase Cloud"
+            title="Manually sync storage usage with Cloud"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isSyncingStorage ? 'animate-spin' : ''}`} />
             <span>
@@ -566,8 +612,8 @@ export default function SubscriptionView({
             <div className="flex items-center gap-2 min-w-0">
               <HardDrive className="w-4.5 h-4.5 text-blue-600 shrink-0" />
               <div className="text-sm sm:text-base font-extrabold text-slate-900 tabular-nums">
-                <span className="text-blue-600">{usedMbNumber} MB</span>
-                <span className="text-slate-600 font-bold"> / 10MB</span>
+                <span className="text-blue-600">{usedShortLabel}</span>
+                <span className="text-slate-600 font-bold"> / {limitShortLabel}</span>
                 <span className="ml-2 text-xs font-medium text-slate-500">
                   ({usedKbNumber} KB used)
                 </span>
@@ -576,24 +622,26 @@ export default function SubscriptionView({
 
             <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 tabular-nums shrink-0">
               <Cloud className="w-3.5 h-3.5 text-blue-500" />
-              <span>{rawPercent < 0.1 && usedBytes > 0 ? '< 0.1%' : `${rawPercent.toFixed(1)}%`}</span>
+              <span>
+                {rawPercent < 0.1 && usedBytes > 0 ? '< 0.1%' : `${rawPercent.toFixed(1)}%`}
+              </span>
             </span>
           </div>
 
-          {/* 10MB Per-User Cloud Storage Progress Bar + Right-Aligned "10 MB Per-User Cloud Limit" Opposite the Storage Bar */}
+          {/* Per-User Cloud Storage Progress Bar + Right-Aligned Limit Label */}
           <div className="flex items-center justify-between gap-3">
             <div
               role="progressbar"
-              aria-label="Cloud storage usage out of 10MB limit"
+              aria-label={`Cloud storage usage out of ${limitShortLabel} limit`}
               aria-valuemin={0}
-              aria-valuemax={10}
-              aria-valuenow={Number(usedMbNumber)}
+              aria-valuemax={Math.round(limitBytes / (1024 * 1024))}
+              aria-valuenow={Number((usedBytes / (1024 * 1024)).toFixed(2))}
               className="flex-1 h-3.5 rounded-full bg-slate-200/90 overflow-hidden p-0.5 shadow-inner"
             >
               <motion.div
-                initial={{ width: 0 }}
+                initial={false}
                 animate={{ width: `${progressBarPercent}%` }}
-                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
                 className={`h-full rounded-full ${
                   rawPercent >= 90
                     ? 'bg-gradient-to-r from-rose-600 to-amber-500'
@@ -603,7 +651,7 @@ export default function SubscriptionView({
             </div>
 
             <span className="text-[11px] sm:text-xs font-semibold text-slate-600 text-right whitespace-nowrap shrink-0">
-              10 MB Per-User Cloud Limit
+              {limitShortLabel} Per-User Cloud Limit
             </span>
           </div>
 
@@ -639,20 +687,20 @@ export default function SubscriptionView({
       {planNotice && (
         <div
           role="status"
-          className="px-4 py-3 rounded-2xl bg-blue-50 border border-blue-200 text-xs font-bold text-blue-800 flex items-center justify-between gap-2"
+          className="px-4 py-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800 flex items-center justify-between gap-2"
         >
           <span>{planNotice}</span>
           <button
             type="button"
             onClick={() => setPlanNotice(null)}
-            className="text-blue-600 hover:text-blue-900 font-extrabold cursor-pointer px-1"
+            className="text-emerald-700 hover:text-emerald-950 font-extrabold cursor-pointer px-1"
           >
             OK
           </button>
         </div>
       )}
 
-      {/* SUBSCRIPTION PLANS Section (Horizontal Scrolling Carousel Matching Reference Photo) */}
+      {/* SUBSCRIPTION PLANS Section */}
       <section aria-labelledby="subscription-plans-heading" className="space-y-3 relative">
         <div className="flex items-center justify-between px-1">
           <h4
@@ -725,7 +773,19 @@ export default function SubscriptionView({
 
                   {/* Plan Bottom Action / Status Control */}
                   <div className="px-4 pb-4 pt-2 mt-auto">
-                    {isEnterprise ? (
+                    {isCurrentPlan ? (
+                      <div className="min-h-[38px] flex items-center text-xs font-extrabold text-slate-800">
+                        {isStarter ? '[Current]' : '[Active]'}
+                      </div>
+                    ) : isStarter ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleSelectPlan(plan)}
+                        className="w-full min-h-[38px] px-3 py-1.5 rounded-full bg-white/85 hover:bg-white border border-emerald-400/70 text-emerald-900 text-xs font-bold shadow-2xs transition-colors cursor-pointer whitespace-nowrap"
+                      >
+                        Switch to Free
+                      </button>
+                    ) : isEnterprise ? (
                       <button
                         type="button"
                         onClick={() => void handleSelectPlan(plan)}
@@ -735,27 +795,23 @@ export default function SubscriptionView({
                         }}
                         className="w-full min-h-[38px] px-3 py-2 rounded-lg text-xs font-bold shadow-xs hover:opacity-95 transition-opacity cursor-pointer whitespace-nowrap"
                       >
-                        Contact Sales
+                        Upgrade ($49.99)
                       </button>
-                    ) : isCurrentPlan ? (
-                      <div className="min-h-[38px] flex items-center text-xs font-extrabold text-slate-800">
-                        {isStarter ? '[Current]' : '[Active]'}
-                      </div>
-                    ) : isStarter ? (
+                    ) : isLowerRank ? (
                       <button
                         type="button"
-                        onClick={() => void handleSelectPlan(plan)}
-                        className="min-h-[38px] text-left text-xs font-extrabold text-emerald-900 hover:underline cursor-pointer whitespace-nowrap"
+                        onClick={() => openPaymentGateway(plan)}
+                        className="w-full min-h-[38px] px-3 py-1.5 rounded-full bg-white/85 hover:bg-white border border-slate-300 text-slate-800 text-xs font-bold shadow-2xs transition-colors cursor-pointer whitespace-nowrap"
                       >
-                        [Current]
+                        Switch Plan
                       </button>
                     ) : (
                       <button
                         type="button"
                         onClick={() => void handleSelectPlan(plan)}
-                        className="w-full min-h-[38px] px-3 py-1.5 rounded-full bg-white/85 hover:bg-white border border-purple-400/70 text-slate-900 text-xs font-bold shadow-2xs transition-colors cursor-pointer whitespace-nowrap"
+                        className="w-full min-h-[38px] px-3 py-1.5 rounded-full bg-white/90 hover:bg-white border border-purple-400/70 text-slate-900 text-xs font-bold shadow-2xs transition-colors cursor-pointer whitespace-nowrap"
                       >
-                        {isLowerRank ? 'Downgrade' : 'Upgrade'}
+                        Upgrade
                       </button>
                     )}
                   </div>
@@ -764,7 +820,7 @@ export default function SubscriptionView({
             })}
           </div>
 
-          {/* Floating Horizontal Scroll Arrow Button (Matching Reference Photo) */}
+          {/* Floating Horizontal Scroll Arrow Button */}
           <button
             type="button"
             onClick={() =>
@@ -801,6 +857,378 @@ export default function SubscriptionView({
           ))}
         </div>
       </section>
+
+      {/* SECURE PAYMENT GATEWAY MODAL FOR SUBSCRIPTION UPGRADES */}
+      {isMounted &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <AnimatePresence>
+            {checkoutPlan && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="fixed inset-0 z-[99995] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/55 backdrop-blur-xs"
+                onClick={() => {
+                  if (!isProcessingPayment) {
+                    setCheckoutPlan(null);
+                    setPaymentReceipt(null);
+                    setPaymentError(null);
+                  }
+                }}
+              >
+                <motion.div
+                  initial={{ opacity: 0, y: 28, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 24, scale: 0.98 }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="payment-gateway-title"
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-lg bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 p-5 sm:p-6 space-y-4 max-h-[90dvh] overflow-y-auto overscroll-contain pb-[max(1.5rem,env(safe-area-inset-bottom))]"
+                >
+                  {/* Modal Header */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-10 h-10 rounded-2xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center shrink-0">
+                        <ShieldCheck className="w-5 h-5" />
+                      </span>
+                      <div>
+                        <h3
+                          id="payment-gateway-title"
+                          className="text-base sm:text-lg font-black text-slate-900 tracking-tight"
+                        >
+                          {paymentReceipt ? 'Payment Confirmed' : 'Secure Payment Gateway'}
+                        </h3>
+                        <p className="text-[11px] font-medium text-slate-500 flex items-center gap-1">
+                          <Lock className="w-3 h-3 text-emerald-600" />
+                          <span>256-bit TLS Encrypted Checkout</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    {!isProcessingPayment && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCheckoutPlan(null);
+                          setPaymentReceipt(null);
+                          setPaymentError(null);
+                        }}
+                        aria-label="Close payment gateway"
+                        className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {paymentReceipt ? (
+                    /* PAYMENT RECEIPT CONFIRMATION VIEW */
+                    <div className="space-y-4">
+                      <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-start gap-3">
+                        <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          <div className="text-sm font-extrabold text-emerald-950">
+                            {paymentReceipt.planName} Plan Activated!
+                          </div>
+                          <p className="text-xs text-emerald-800 leading-relaxed">
+                            Your membership status has been updated to{' '}
+                            <strong>{paymentReceipt.membershipStatus}</strong> and your cloud
+                            storage quota is now{' '}
+                            <strong>{paymentReceipt.limitLabel}</strong>.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 rounded-2xl border border-slate-200/80 divide-y divide-slate-200/70 text-xs">
+                        <div className="px-4 py-2.5 flex items-center justify-between">
+                          <span className="text-slate-500 font-medium">Receipt Number</span>
+                          <span className="font-bold text-slate-900 tabular-nums">
+                            {paymentReceipt.receiptNumber}
+                          </span>
+                        </div>
+                        <div className="px-4 py-2.5 flex items-center justify-between">
+                          <span className="text-slate-500 font-medium">Transaction ID</span>
+                          <span className="font-mono text-[11px] font-bold text-slate-800">
+                            {paymentReceipt.transactionId}
+                          </span>
+                        </div>
+                        <div className="px-4 py-2.5 flex items-center justify-between">
+                          <span className="text-slate-500 font-medium">Membership Status</span>
+                          <span className="font-bold text-blue-700">
+                            {paymentReceipt.membershipStatus}
+                          </span>
+                        </div>
+                        <div className="px-4 py-2.5 flex items-center justify-between">
+                          <span className="text-slate-500 font-medium">Cloud Storage Limit</span>
+                          <span className="font-extrabold text-emerald-700">
+                            {paymentReceipt.limitLabel}
+                          </span>
+                        </div>
+                        <div className="px-4 py-2.5 flex items-center justify-between">
+                          <span className="text-slate-500 font-medium">Amount Charged</span>
+                          <span className="font-black text-slate-900 tabular-nums">
+                            ${(paymentReceipt.amountCents / 100).toFixed(2)} USD
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCheckoutPlan(null);
+                          setPaymentReceipt(null);
+                        }}
+                        className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl shadow-xs cursor-pointer transition-colors"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  ) : (
+                    /* PAYMENT CHECKOUT FORM */
+                    <form onSubmit={handleSubmitPaymentCheckout} className="space-y-4">
+                      {/* Upgrade Summary Card */}
+                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-700">
+                              Upgrading To
+                            </span>
+                            <div className="text-sm font-black text-slate-900">
+                              {checkoutPlan.title} Membership
+                            </div>
+                          </div>
+                          <div className="text-right tabular-nums">
+                            <div className="text-lg font-black text-slate-900">
+                              {checkoutPlan.price}
+                              <span className="text-xs font-semibold text-slate-500">
+                                {checkoutPlan.period}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-200/70 text-[11px] font-semibold text-slate-700">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200">
+                            <Cloud className="w-3 h-3" />
+                            <span>
+                              Storage: {formatStorageLimitLabel(limitBytes)} →{' '}
+                              {formatStorageLimitLabel(checkoutPlan.storageLimitBytes)}
+                            </span>
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <Sparkles className="w-3 h-3" />
+                            <span>{getPlanDisplayName(checkoutPlan.id)} Status</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Payment Method Tabs */}
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaymentMethod('card');
+                            setPaymentError(null);
+                          }}
+                          className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                            paymentMethod === 'card'
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          <CreditCard className="w-3.5 h-3.5" />
+                          <span>Card</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaymentMethod('upi');
+                            setPaymentError(null);
+                          }}
+                          className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                            paymentMethod === 'upi'
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          <Smartphone className="w-3.5 h-3.5" />
+                          <span>UPI</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaymentMethod('netbanking');
+                            setPaymentError(null);
+                          }}
+                          className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                            paymentMethod === 'netbanking'
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          <Building2 className="w-3.5 h-3.5" />
+                          <span>Bank</span>
+                        </button>
+                      </div>
+
+                      {/* Method Fields */}
+                      {paymentMethod === 'card' && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                              Card Details
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!cardholderName.trim()) {
+                                  setCardholderName(displayName);
+                                }
+                                setCardNumber('4242 4242 4242 4242');
+                                setCardExpiry('12/28');
+                                setCardCvc('424');
+                                setPaymentError(null);
+                              }}
+                              className="text-[11px] font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
+                            >
+                              Fill Test Visa (4242)
+                            </button>
+                          </div>
+
+                          <input
+                            type="text"
+                            value={cardholderName}
+                            onChange={(e) => setCardholderName(e.target.value)}
+                            placeholder="Cardholder Name"
+                            aria-label="Cardholder Name"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                          />
+
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={cardNumber}
+                            onChange={(e) => setCardNumber(formatCardNumberSpacing(e.target.value))}
+                            placeholder="Card Number (e.g. 4242 4242 4242 4242)"
+                            aria-label="Card Number"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-mono font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                          />
+
+                          <div className="grid grid-cols-2 gap-2.5">
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={cardExpiry}
+                              onChange={(e) => setCardExpiry(formatExpiryInput(e.target.value))}
+                              placeholder="MM/YY"
+                              aria-label="Card Expiry"
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-mono font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                            />
+                            <input
+                              type="password"
+                              inputMode="numeric"
+                              maxLength={4}
+                              value={cardCvc}
+                              onChange={(e) => setCardCvc(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                              placeholder="CVC"
+                              aria-label="Card CVC"
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-mono font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {paymentMethod === 'upi' && (
+                        <div className="space-y-2">
+                          <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                            UPI ID / VPA
+                          </label>
+                          <input
+                            type="text"
+                            value={upiId}
+                            onChange={(e) => setUpiId(e.target.value)}
+                            placeholder="yourname@okaxis"
+                            aria-label="UPI ID"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                          />
+                        </div>
+                      )}
+
+                      {paymentMethod === 'netbanking' && (
+                        <div className="space-y-2">
+                          <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                            Select Bank
+                          </label>
+                          <select
+                            value={bankName}
+                            onChange={(e) => setBankName(e.target.value)}
+                            aria-label="Select Bank"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                          >
+                            <option value="HDFC Bank">HDFC Bank</option>
+                            <option value="ICICI Bank">ICICI Bank</option>
+                            <option value="State Bank of India">State Bank of India</option>
+                            <option value="Axis Bank">Axis Bank</option>
+                            <option value="Kotak Mahindra Bank">Kotak Mahindra Bank</option>
+                            <option value="Chase / Global Wire">Chase / Global Wire</option>
+                          </select>
+                        </div>
+                      )}
+
+                      {paymentError && (
+                        <div
+                          role="alert"
+                          className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700 flex items-start gap-2"
+                        >
+                          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                          <span>{paymentError}</span>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                        <button
+                          type="button"
+                          disabled={isProcessingPayment}
+                          onClick={() => {
+                            setCheckoutPlan(null);
+                            setPaymentError(null);
+                          }}
+                          className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={isProcessingPayment}
+                          className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white font-extrabold text-xs rounded-xl shadow-xs cursor-pointer transition-all flex items-center gap-2"
+                        >
+                          {isProcessingPayment ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>Processing Payment...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Lock className="w-3.5 h-3.5" />
+                              <span>
+                                Pay {checkoutPlan.price} &amp; Upgrade
+                              </span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
     </motion.div>
   );
 }
