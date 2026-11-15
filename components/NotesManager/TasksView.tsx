@@ -26,7 +26,9 @@ import {
   Flag,
   MoreVertical,
   CloudOff,
+  User,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { TaskItem, TaskList, TaskPriority } from '@/lib/types/notes-tasks';
 import {
   fetchTasks,
@@ -56,6 +58,7 @@ interface TasksViewProps {
   onSubOverlayChange?: (hasOverlay: boolean) => void;
   closeEditorSignal?: number;
   refreshSignal?: number;
+  onOpenProfile?: () => void;
 }
 
 type TaskFilterTab = 'all' | 'active' | 'completed' | 'priority';
@@ -124,6 +127,7 @@ export default function TasksView({
   onSubOverlayChange,
   closeEditorSignal = 0,
   refreshSignal = 0,
+  onOpenProfile,
 }: TasksViewProps) {
   const { isDark } = useTheme();
   const [isMounted, setIsMounted] = useState(false);
@@ -803,7 +807,12 @@ export default function TasksView({
   }, [tasks, activeListId, activeFilter, searchQuery]);
 
   return (
-    <div className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-4 pb-16">
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+      className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-4 pb-16"
+    >
       {/* Active In-App Reminder Alert Banner */}
       {activeAlert && (
         <div className="mt-2 bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-3.5 rounded-2xl shadow-lg flex items-center justify-between gap-3">
@@ -841,7 +850,7 @@ export default function TasksView({
         </div>
       )}
 
-      {/* Sticky Header: Title, Search Bar + Three-Dot Menu (with Alert Toggle), Filter Chips, and List Tabs */}
+      {/* Sticky Header: Title + Profile Avatar, Search Bar + Three-Dot Menu (with Alert Toggle), Filter Chips, and List Tabs */}
       <div
         data-sticky-secondary-header="tasks"
         className="sticky top-0 z-30 -mx-3 sm:-mx-6 md:-mx-8 px-3 sm:px-6 md:px-8 pt-2.5 pb-2.5 bg-[#f2f8fc]/95 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_10px_rgba(15,23,42,0.03)] space-y-2.5"
@@ -851,23 +860,40 @@ export default function TasksView({
             Tasks Manager
           </h2>
 
-          <div className="flex items-center gap-2 shrink-0">
-            {currentUser?.id && tasks.some((t) => t.syncStatus === 'unsynced') && !refreshNotice && (
-              <span
-                className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-1 rounded-full border border-amber-200"
-                title="Saved locally — will sync automatically when online"
-              >
-                <CloudOff className="w-3 h-3 text-amber-600" />
-                <span className="hidden sm:inline">Pending Sync</span>
-              </span>
-            )}
-
-            {refreshNotice && (
-              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                <Check className="w-3 h-3 text-emerald-600" />
-                <span>{refreshNotice}</span>
-              </span>
-            )}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.92 }}
+              whileHover={{ scale: 1.04 }}
+              onClick={() => onOpenProfile?.()}
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-slate-200/60 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label="Open Profile & Account Settings"
+              title={
+                currentUser
+                  ? `Profile: ${currentUser.user_metadata?.full_name || currentUser.email}`
+                  : 'Profile & Account Settings'
+              }
+            >
+              {currentUser?.user_metadata?.avatar_url ? (
+                <img
+                  src={currentUser.user_metadata.avatar_url}
+                  alt={currentUser.user_metadata?.full_name || 'Profile'}
+                  className="w-9 h-9 rounded-full border border-slate-200 object-cover shadow-xs"
+                  referrerPolicy="no-referrer"
+                />
+              ) : currentUser ? (
+                <span className="w-9 h-9 rounded-full bg-slate-900 text-white font-bold text-sm flex items-center justify-center shadow-xs">
+                  {(
+                    (currentUser.user_metadata?.full_name || currentUser.email || 'U')[0] ||
+                    'U'
+                  ).toUpperCase()}
+                </span>
+              ) : (
+                <span className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-xs">
+                  <User className="w-4.5 h-4.5" />
+                </span>
+              )}
+            </motion.button>
           </div>
         </div>
 
@@ -1122,6 +1148,36 @@ export default function TasksView({
           {filteredTasks.map((task) => renderTaskCard(task))}
         </div>
       )}
+
+      {/* Minimized, unobtrusive 'Tasks Updated' / Sync Status micro-pill relocated to bottom-left */}
+      <AnimatePresence>
+        {!detailTask &&
+          !isCreateModalOpen &&
+          (refreshNotice || (currentUser?.id && tasks.some((t) => t.syncStatus === 'unsynced'))) && (
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.94 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              className="fixed bottom-20 left-4 sm:left-6 z-30 pointer-events-none"
+            >
+              {refreshNotice ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
+                  <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                  <span>{refreshNotice}</span>
+                </span>
+              ) : (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-amber-200/80 shadow-xs"
+                  title="Saved locally — will sync automatically when online"
+                >
+                  <CloudOff className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                  <span>Pending Sync</span>
+                </span>
+              )}
+            </motion.div>
+          )}
+      </AnimatePresence>
 
       {/* Floating Dark Circular + Action Button (Bottom Right above Bottom Nav) */}
       {!detailTask && !isCreateModalOpen && selectedTaskIds.length === 0 && (
@@ -1682,7 +1738,7 @@ export default function TasksView({
         </div>,
         document.body
       )}
-    </div>
+    </motion.div>
   );
 
   function renderTaskCard(task: TaskItem) {

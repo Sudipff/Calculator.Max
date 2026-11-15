@@ -71,20 +71,20 @@ type ActiveTab = 'home' | 'age' | 'calculator' | 'emi' | 'wishlist' | 'discount'
 export type VibrationType = 'success' | 'error' | 'click' | 'reset';
 
 const TAB_ORDER: Record<ActiveTab, number> = {
-  home: -1,
-  age: 0,
-  calculator: 1,
-  emi: 2,
-  wishlist: 3,
-  discount: 4,
-  weight: 5,
-  unit: 6,
-  currency: 7,
-  quick: 8,
-  notes: 9,
-  tasks: 10,
-  history: 11,
-  profile: 12,
+  home: 0,
+  history: 1,
+  notes: 2,
+  tasks: 3,
+  calculator: 4,
+  age: 5,
+  emi: 6,
+  wishlist: 7,
+  discount: 8,
+  weight: 9,
+  unit: 10,
+  currency: 11,
+  quick: 12,
+  profile: 13,
 };
 
 const CURRENCIES = [
@@ -2308,9 +2308,9 @@ export default function RetailCalc() {
               variants={{
                 enter: (dir: number) => ({
                   opacity: 0,
-                  x: dir > 0 ? 22 : -22,
-                  y: 4,
-                  scale: 0.992,
+                  x: dir > 0 ? 28 : -28,
+                  y: 6,
+                  scale: 0.99,
                 }),
                 center: {
                   opacity: 1,
@@ -2320,15 +2320,16 @@ export default function RetailCalc() {
                 },
                 exit: (dir: number) => ({
                   opacity: 0,
-                  x: dir > 0 ? -16 : 16,
-                  y: -2,
-                  scale: 0.992,
+                  x: dir > 0 ? -20 : 20,
+                  y: -4,
+                  scale: 0.99,
                 }),
               }}
               initial="enter"
               animate="center"
               exit="exit"
-              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+              style={{ willChange: 'transform, opacity' }}
               className={`w-full flex-1 flex flex-col ${
                 activeTab === 'calculator' ||
                 activeTab === 'home' ||
@@ -2452,6 +2453,7 @@ export default function RetailCalc() {
                     onSubOverlayChange={(hasOverlay) => setIsManagerSubOverlayOpen(hasOverlay)}
                     closeEditorSignal={noteEditorCloseSignal}
                     refreshSignal={notesRefreshSignal}
+                    onOpenProfile={() => handleTabChange('profile')}
                   />
                 </section>
               )}
@@ -2466,6 +2468,7 @@ export default function RetailCalc() {
                     onSubOverlayChange={(hasOverlay) => setIsManagerSubOverlayOpen(hasOverlay)}
                     closeEditorSignal={noteEditorCloseSignal}
                     refreshSignal={tasksRefreshSignal}
+                    onOpenProfile={() => handleTabChange('profile')}
                   />
                 </section>
               )}
@@ -2490,6 +2493,7 @@ export default function RetailCalc() {
                     onDownloadAllPDF={(items) => handleDownloadAllPDF(items)}
                     onExportCSV={(items) => exportHistoryCSV(items)}
                     onRetrySyncItem={retrySyncItem}
+                    onOpenProfile={() => handleTabChange('profile')}
                   />
                 </section>
               )}

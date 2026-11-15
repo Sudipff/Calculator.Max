@@ -23,7 +23,9 @@ import {
   CheckCircle2,
   MoreVertical,
   CloudOff,
+  User,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { NoteItem, NOTE_COLORS } from '@/lib/types/notes-tasks';
 import {
   fetchNotes,
@@ -46,6 +48,7 @@ interface NotesViewProps {
   onSubOverlayChange?: (hasOverlay: boolean) => void;
   closeEditorSignal?: number;
   refreshSignal?: number;
+  onOpenProfile?: () => void;
 }
 
 function getCompactNoteSurface(colorId: string, isDark = false): { bg: string; border: string } {
@@ -134,6 +137,7 @@ export default function NotesView({
   onSubOverlayChange,
   closeEditorSignal = 0,
   refreshSignal = 0,
+  onOpenProfile,
 }: NotesViewProps) {
   const { isDark } = useTheme();
   const [isMounted, setIsMounted] = useState(false);
@@ -658,8 +662,13 @@ export default function NotesView({
     : NOTE_COLORS[0];
 
   return (
-    <div className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-4 pb-16">
-      {/* Sticky Header: Title, Search Bar + Three-Dot Menu, and Filter Chips */}
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+      className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-4 pb-16"
+    >
+      {/* Sticky Header: Title + Profile Avatar, Search Bar + Three-Dot Menu, and Filter Chips */}
       <div
         data-sticky-secondary-header="notes"
         className="sticky top-0 z-30 -mx-3 sm:-mx-6 md:-mx-8 px-3 sm:px-6 md:px-8 pt-2.5 pb-2.5 bg-[#f2f8fc]/95 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_10px_rgba(15,23,42,0.03)] space-y-2.5"
@@ -669,22 +678,40 @@ export default function NotesView({
             Notes Manager
           </h2>
 
-          <div className="flex items-center gap-2 shrink-0">
-            {currentUser?.id && notes.some((n) => n.syncStatus === 'unsynced') && !refreshNotice && (
-              <span
-                className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200"
-                title="Saved offline — will sync automatically when connected"
-              >
-                <CloudOff className="w-3 h-3 text-amber-600" />
-                <span>Pending Sync</span>
-              </span>
-            )}
-            {refreshNotice && (
-              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                <Check className="w-3 h-3 text-emerald-600" />
-                <span>{refreshNotice}</span>
-              </span>
-            )}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.92 }}
+              whileHover={{ scale: 1.04 }}
+              onClick={() => onOpenProfile?.()}
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-slate-200/60 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label="Open Profile & Account Settings"
+              title={
+                currentUser
+                  ? `Profile: ${currentUser.user_metadata?.full_name || currentUser.email}`
+                  : 'Profile & Account Settings'
+              }
+            >
+              {currentUser?.user_metadata?.avatar_url ? (
+                <img
+                  src={currentUser.user_metadata.avatar_url}
+                  alt={currentUser.user_metadata?.full_name || 'Profile'}
+                  className="w-9 h-9 rounded-full border border-slate-200 object-cover shadow-xs"
+                  referrerPolicy="no-referrer"
+                />
+              ) : currentUser ? (
+                <span className="w-9 h-9 rounded-full bg-slate-900 text-white font-bold text-sm flex items-center justify-center shadow-xs">
+                  {(
+                    (currentUser.user_metadata?.full_name || currentUser.email || 'U')[0] ||
+                    'U'
+                  ).toUpperCase()}
+                </span>
+              ) : (
+                <span className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-xs">
+                  <User className="w-4.5 h-4.5" />
+                </span>
+              )}
+            </motion.button>
           </div>
         </div>
 
@@ -901,6 +928,35 @@ export default function NotesView({
           {filteredNotes.map((note) => renderNoteCard(note))}
         </div>
       )}
+
+      {/* Minimized, unobtrusive 'Notes Updated' / Sync Status micro-pill relocated to bottom-left */}
+      <AnimatePresence>
+        {!editingNote &&
+          (refreshNotice || (currentUser?.id && notes.some((n) => n.syncStatus === 'unsynced'))) && (
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.94 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              className="fixed bottom-20 left-4 sm:left-6 z-30 pointer-events-none"
+            >
+              {refreshNotice ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
+                  <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                  <span>{refreshNotice}</span>
+                </span>
+              ) : (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-amber-200/80 shadow-xs"
+                  title="Saved offline — will sync automatically when connected"
+                >
+                  <CloudOff className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                  <span>Pending Sync</span>
+                </span>
+              )}
+            </motion.div>
+          )}
+      </AnimatePresence>
 
       {/* Floating + Action Button (Bottom Right above Bottom Nav) */}
       {!editingNote && selectedNoteIds.length === 0 && (
@@ -1484,7 +1540,7 @@ export default function NotesView({
         </div>,
         document.body
       )}
-    </div>
+    </motion.div>
   );
 
   function renderNoteCard(note: NoteItem) {

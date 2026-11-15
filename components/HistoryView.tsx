@@ -26,6 +26,7 @@ import {
   AlertCircle,
   Cloud,
   CloudOff,
+  User,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { HistoryItem, parseSavedAmountFromText } from '../lib/historyStorage';
@@ -54,6 +55,7 @@ interface HistoryViewProps {
   onDownloadAllPDF: (items: HistoryItem[]) => void;
   onExportCSV: (items: HistoryItem[]) => void;
   onRetrySyncItem: (item: HistoryItem) => void;
+  onOpenProfile?: () => void;
 }
 
 interface CategoryVisual {
@@ -243,6 +245,7 @@ export default function HistoryView({
   onDownloadAllPDF,
   onExportCSV,
   onRetrySyncItem,
+  onOpenProfile,
 }: HistoryViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<HistoryCategoryFilter>('all');
@@ -428,28 +431,78 @@ export default function HistoryView({
   };
 
   return (
-    <div className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-4 pb-12">
-      {/* Sticky Top Header: Title, Shortened Search Bar + 3-Dot Menu, and Category Filter Chips */}
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+      className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-4 pb-12"
+    >
+      {/* Sticky Top Header: Title + Profile Avatar, Shortened Search Bar + 3-Dot Menu, and Category Filter Chips */}
       <div
         data-sticky-secondary-header="history"
         className="sticky top-0 z-30 -mx-3 sm:-mx-6 md:-mx-8 px-3 sm:px-6 md:px-8 pt-2.5 pb-2.5 bg-[#f2f8fc]/95 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_10px_rgba(15,23,42,0.03)] space-y-2.5"
       >
-        {/* Header Title + Inline Status */}
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase truncate">
-            Calculator History
-          </h2>
-
-          {(refreshNotice || isRefreshingLocal) && (
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 shrink-0">
-              {isRefreshingLocal ? (
-                <RefreshCw className="w-3 h-3 text-emerald-600 animate-spin" />
-              ) : (
-                <Check className="w-3 h-3 text-emerald-600" />
+        {/* Header Title + Top-Right Profile Avatar */}
+        <div className="flex items-center justify-between gap-3 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase truncate">
+              Calculator History
+            </h2>
+            <AnimatePresence>
+              {(refreshNotice || isRefreshingLocal) && (
+                <motion.span
+                  initial={{ opacity: 0, scale: 0.92 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.92 }}
+                  transition={{ duration: 0.18 }}
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/90 px-2 py-0.5 rounded-full border border-emerald-200/80 shrink-0"
+                >
+                  {isRefreshingLocal ? (
+                    <RefreshCw className="w-2.5 h-2.5 text-emerald-600 animate-spin" />
+                  ) : (
+                    <Check className="w-2.5 h-2.5 text-emerald-600" />
+                  )}
+                  <span>{isRefreshingLocal ? 'Syncing' : refreshNotice}</span>
+                </motion.span>
               )}
-              <span>{isRefreshingLocal ? 'Refreshing...' : refreshNotice}</span>
-            </span>
-          )}
+            </AnimatePresence>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.92 }}
+              whileHover={{ scale: 1.04 }}
+              onClick={() => onOpenProfile?.()}
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-slate-200/60 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label="Open Profile & Account Settings"
+              title={
+                currentUser
+                  ? `Profile: ${currentUser.user_metadata?.full_name || currentUser.email}`
+                  : 'Profile & Account Settings'
+              }
+            >
+              {currentUser?.user_metadata?.avatar_url ? (
+                <img
+                  src={currentUser.user_metadata.avatar_url}
+                  alt={currentUser.user_metadata?.full_name || 'Profile'}
+                  className="w-9 h-9 rounded-full border border-slate-200 object-cover shadow-xs"
+                  referrerPolicy="no-referrer"
+                />
+              ) : currentUser ? (
+                <span className="w-9 h-9 rounded-full bg-slate-900 text-white font-bold text-sm flex items-center justify-center shadow-xs">
+                  {(
+                    (currentUser.user_metadata?.full_name || currentUser.email || 'U')[0] ||
+                    'U'
+                  ).toUpperCase()}
+                </span>
+              ) : (
+                <span className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-xs">
+                  <User className="w-4.5 h-4.5" />
+                </span>
+              )}
+            </motion.button>
+          </div>
         </div>
 
         {/* Shortened Search Bar + Three-Dot Overflow Menu */}
@@ -896,6 +949,6 @@ export default function HistoryView({
           {filteredHistory.length !== history.length ? ` of ${history.length}` : ''}
         </p>
       </div>
-    </div>
+    </motion.div>
   );
 }
