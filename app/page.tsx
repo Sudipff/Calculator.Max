@@ -350,7 +350,7 @@ export default function RetailCalc() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [historyRefreshNotice, setHistoryRefreshNotice] = useState<string | null>(null);
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<
-    { type: 'single'; item: HistoryItem } | { type: 'all' } | null
+    { type: 'single'; item: HistoryItem } | { type: 'batch'; items: HistoryItem[] } | { type: 'all' } | null
   >(null);
   const [previewHistoryItem, setPreviewHistoryItem] = useState<HistoryItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -1515,9 +1515,84 @@ export default function RetailCalc() {
     setDeleteConfirmTarget({ type: 'single', item });
   };
 
+  const handleRequestDeleteBatch = (items: HistoryItem[]) => {
+    if (!items || items.length === 0) return;
+    triggerVibration('click');
+    if (items.length === 1) {
+      setDeleteConfirmTarget({ type: 'single', item: items[0] });
+    } else {
+      setDeleteConfirmTarget({ type: 'batch', items });
+    }
+  };
+
   const handleRequestClearHistory = () => {
     triggerVibration('click');
     setDeleteConfirmTarget({ type: 'all' });
+  };
+
+  const executeDeleteBatchHistoryItems = async (itemsToDelete: HistoryItem[]) => {
+    setIsDeleting(true);
+    try {
+      triggerVibration('reset');
+      const userId = currentUser?.id;
+      let updated = [...history];
+      for (const itemToDelete of itemsToDelete) {
+        updated = deleteCalculationHistoryItem(itemToDelete, userId);
+      }
+      setHistory(updated);
+
+      if (currentUser) {
+        for (const itemToDelete of itemsToDelete) {
+          const delOpKey = `delete_calculation:${itemToDelete.dbId || itemToDelete.id}`;
+          enqueueCalculationOfflineSync(
+            {
+              opKey: delOpKey,
+              type: 'delete_calculation',
+              deletePayload: {
+                id: itemToDelete.id,
+                dbId: itemToDelete.dbId,
+                details: itemToDelete.details,
+                result: itemToDelete.result,
+                type: itemToDelete.type,
+              },
+            },
+            currentUser.id
+          );
+
+          if (navigator.onLine) {
+            let directDeleted = false;
+            try {
+              const supabase = createClient();
+              if (itemToDelete.dbId) {
+                const numId = parseInt(itemToDelete.dbId.toString(), 10);
+                if (!isNaN(numId)) {
+                  await supabase.from('calculations').delete().eq('user_id', currentUser.id).eq('id', numId);
+                }
+                await supabase.from('calculations').delete().eq('user_id', currentUser.id).eq('id', itemToDelete.dbId);
+              }
+              if (itemToDelete.details && itemToDelete.result) {
+                await supabase
+                  .from('calculations')
+                  .delete()
+                  .eq('user_id', currentUser.id)
+                  .eq('details', itemToDelete.details)
+                  .eq('result', itemToDelete.result);
+              }
+              directDeleted = true;
+            } catch (sErr) {
+              console.warn('Direct client batch deletion notice:', sErr);
+            }
+
+            if (directDeleted) {
+              clearCalculationOfflineOp(delOpKey, currentUser.id);
+            }
+          }
+        }
+      }
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirmTarget(null);
+    }
   };
 
   const executeDeleteHistoryItem = async (itemToDelete: HistoryItem) => {
@@ -2488,6 +2563,7 @@ export default function RetailCalc() {
                     }}
                     onToggleFavorite={handleToggleFavoriteHistory}
                     onRequestDeleteItem={(item) => handleRequestDeleteItem(item)}
+                    onRequestDeleteBatch={(items) => handleRequestDeleteBatch(items)}
                     onRequestClearAll={handleRequestClearHistory}
                     onDownloadSinglePDF={handleDownloadSinglePDF}
                     onDownloadAllPDF={(items) => handleDownloadAllPDF(items)}
@@ -2724,11 +2800,15 @@ export default function RetailCalc() {
                   <h3 className="text-lg font-bold text-slate-900 leading-tight">
                     {deleteConfirmTarget.type === 'single'
                       ? 'Delete History Record?'
+                      : deleteConfirmTarget.type === 'batch'
+                      ? `Delete ${deleteConfirmTarget.items.length} Selected Records?`
                       : 'Clear All History?'}
                   </h3>
                   <p className="text-xs font-medium text-slate-500 mt-0.5">
                     {deleteConfirmTarget.type === 'single'
                       ? 'Confirm deletion of this calculation record'
+                      : deleteConfirmTarget.type === 'batch'
+                      ? `Confirm deletion of ${deleteConfirmTarget.items.length} selected calculation records`
                       : 'Confirm clearing all calculation history'}
                   </p>
                 </div>
@@ -2770,6 +2850,15 @@ export default function RetailCalc() {
                       Are you sure you want to delete this calculation record? It will be permanently removed from both your device and the <strong>cloud database</strong>.
                     </p>
                   </>
+                ) : deleteConfirmTarget.type === 'batch' ? (
+                  <div className="bg-rose-50/80 border border-rose-200/70 rounded-2xl p-3.5 space-y-1">
+                    <div className="text-xs font-bold text-rose-900">
+                      {deleteConfirmTarget.items.length} selected {deleteConfirmTarget.items.length === 1 ? 'record' : 'records'} will be deleted
+                    </div>
+                    <p className="text-xs text-rose-700 leading-relaxed">
+                      Are you sure you want to delete the selected calculation records? They will be permanently removed from local storage and the cloud database.
+                    </p>
+                  </div>
                 ) : (
                   <div className="bg-rose-50/80 border border-rose-200/70 rounded-2xl p-3.5 space-y-1">
                     <div className="text-xs font-bold text-rose-900">
@@ -2801,6 +2890,8 @@ export default function RetailCalc() {
                   onClick={() => {
                     if (deleteConfirmTarget.type === 'single') {
                       executeDeleteHistoryItem(deleteConfirmTarget.item);
+                    } else if (deleteConfirmTarget.type === 'batch') {
+                      executeDeleteBatchHistoryItems(deleteConfirmTarget.items);
                     } else {
                       executeClearAllHistory();
                     }
@@ -2816,7 +2907,11 @@ export default function RetailCalc() {
                     <>
                       <Trash2 className="w-3.5 h-3.5" />
                       <span>
-                        {deleteConfirmTarget.type === 'single' ? 'Confirm Delete' : 'Clear All'}
+                        {deleteConfirmTarget.type === 'single'
+                          ? 'Confirm Delete'
+                          : deleteConfirmTarget.type === 'batch'
+                          ? `Delete ${deleteConfirmTarget.items.length} Records`
+                          : 'Clear All'}
                       </span>
                     </>
                   )}

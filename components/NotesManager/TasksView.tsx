@@ -27,6 +27,7 @@ import {
   MoreVertical,
   CloudOff,
   User,
+  ChevronRight,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { TaskItem, TaskList, TaskPriority } from '@/lib/types/notes-tasks';
@@ -666,7 +667,7 @@ export default function TasksView({
       if (t.id === parentId) {
         return {
           ...t,
-          subtasks: [...(t.subtasks || []), newSubtask],
+          subtasks: [newSubtask, ...(t.subtasks || [])],
           updatedAt: new Date().toISOString(),
         };
       }
@@ -802,9 +803,22 @@ export default function TasksView({
           if (rankDiff !== 0) return rankDiff;
         }
         if (a.completed !== b.completed) return a.completed ? 1 : -1;
-        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        const timeA = Math.max(
+          new Date(a.createdAt || 0).getTime() || 0,
+          new Date(a.updatedAt || 0).getTime() || 0
+        );
+        const timeB = Math.max(
+          new Date(b.createdAt || 0).getTime() || 0,
+          new Date(b.updatedAt || 0).getTime() || 0
+        );
+        return timeB - timeA;
       });
   }, [tasks, activeListId, activeFilter, searchQuery]);
+
+  const listStripScrollRef = useRef<HTMLDivElement | null>(null);
+  const handleScrollListStripRight = () => {
+    listStripScrollRef.current?.scrollBy({ left: 150, behavior: 'smooth' });
+  };
 
   return (
     <motion.div
@@ -1035,47 +1049,62 @@ export default function TasksView({
           ))}
         </div>
 
-        {/* Compact Task List Tabs Strip (Preserves custom list management) */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
-          {taskLists.map((list) => (
-            <div
-              key={list.id}
-              className={`shrink-0 inline-flex items-center rounded-xl text-[11px] font-bold transition-all ${
-                activeListId === list.id
-                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                  : 'bg-white/75 text-slate-600 hover:bg-slate-100 border border-slate-200/70'
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => setActiveListId(list.id)}
-                className={`py-1.5 cursor-pointer flex items-center gap-1 whitespace-nowrap ${
-                  !list.isDefault ? 'pl-2.5 pr-1' : 'px-2.5'
+        {/* Compact Task List Tabs Strip (Preserves custom list management) with right-side scroll indicator icon */}
+        <div className="relative flex items-center min-w-0">
+          <div
+            ref={listStripScrollRef}
+            className="flex items-center gap-1.5 overflow-x-auto pr-9 scrollbar-none"
+          >
+            {taskLists.map((list) => (
+              <div
+                key={list.id}
+                className={`shrink-0 inline-flex items-center rounded-xl text-[11px] font-bold transition-all ${
+                  activeListId === list.id
+                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                    : 'bg-white/75 text-slate-600 hover:bg-slate-100 border border-slate-200/70'
                 }`}
               >
-                <span>{list.name}</span>
-              </button>
-              {!list.isDefault && (
                 <button
                   type="button"
-                  onClick={() => handleDeleteList(list.id)}
-                  className="mr-1.5 p-0.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
-                  aria-label={`Delete ${list.name} list`}
-                  title="Delete list"
+                  onClick={() => setActiveListId(list.id)}
+                  className={`py-1.5 cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                    !list.isDefault ? 'pl-2.5 pr-1' : 'px-2.5'
+                  }`}
                 >
-                  <X className="w-3 h-3" />
+                  <span>{list.name}</span>
                 </button>
-              )}
-            </div>
-          ))}
+                {!list.isDefault && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteList(list.id)}
+                    className="mr-1.5 p-0.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
+                    aria-label={`Delete ${list.name} list`}
+                    title="Delete list"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+
+            <button
+              type="button"
+              onClick={() => setShowNewListModal(true)}
+              className="px-2.5 py-1.5 bg-slate-100/90 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+            >
+              <FolderPlus className="w-3 h-3 text-blue-600" />
+              <span>+ List</span>
+            </button>
+          </div>
 
           <button
             type="button"
-            onClick={() => setShowNewListModal(true)}
-            className="px-2.5 py-1.5 bg-slate-100/90 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+            onClick={handleScrollListStripRight}
+            aria-label="More categories to the right"
+            title="More categories"
+            className="absolute right-0 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/95 border border-slate-200/90 text-slate-600 hover:text-slate-900 hover:bg-slate-50 shadow-xs flex items-center justify-center cursor-pointer shrink-0 z-10"
           >
-            <FolderPlus className="w-3 h-3 text-blue-600" />
-            <span>+ List</span>
+            <ChevronRight className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -1149,48 +1178,54 @@ export default function TasksView({
         </div>
       )}
 
-      {/* Minimized, unobtrusive 'Tasks Updated' / Sync Status micro-pill relocated to bottom-left */}
-      <AnimatePresence>
-        {!detailTask &&
-          !isCreateModalOpen &&
-          (refreshNotice || (currentUser?.id && tasks.some((t) => t.syncStatus === 'unsynced'))) && (
-            <motion.div
-              initial={{ opacity: 0, y: 10, scale: 0.94 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.94 }}
-              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-              className="fixed bottom-20 left-4 sm:left-6 z-30 pointer-events-none"
-            >
-              {refreshNotice ? (
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
-                  <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
-                  <span>{refreshNotice}</span>
-                </span>
-              ) : (
-                <span
-                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-amber-200/80 shadow-xs"
-                  title="Saved locally — will sync automatically when online"
-                >
-                  <CloudOff className="w-2.5 h-2.5 text-amber-600 shrink-0" />
-                  <span>Pending Sync</span>
-                </span>
-              )}
-            </motion.div>
-          )}
-      </AnimatePresence>
+      {/* Pinned Bottom Status Pill + Large Fixed Floating + Action Button (Portaled to body so parent transforms never unpin it) */}
+      {isMounted &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <>
+            <AnimatePresence>
+              {!detailTask &&
+                !isCreateModalOpen &&
+                (refreshNotice || (currentUser?.id && tasks.some((t) => t.syncStatus === 'unsynced'))) && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.94 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.94 }}
+                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                    className="fixed bottom-20 left-4 sm:left-6 z-[85] pointer-events-none"
+                  >
+                    {refreshNotice ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
+                        <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                        <span>{refreshNotice}</span>
+                      </span>
+                    ) : (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-amber-200/80 shadow-xs"
+                        title="Saved locally — will sync automatically when online"
+                      >
+                        <CloudOff className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                        <span>Pending Sync</span>
+                      </span>
+                    )}
+                  </motion.div>
+                )}
+            </AnimatePresence>
 
-      {/* Floating Dark Circular + Action Button (Bottom Right above Bottom Nav) */}
-      {!detailTask && !isCreateModalOpen && selectedTaskIds.length === 0 && (
-        <button
-          type="button"
-          onClick={() => setIsCreateModalOpen(true)}
-          aria-label="Create new task"
-          title="New Task"
-          className="fixed bottom-20 right-4 sm:right-6 z-30 w-13 h-13 rounded-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white shadow-[0_8px_24px_rgba(15,23,42,0.28)] flex items-center justify-center transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-        >
-          <Plus className="w-6 h-6" />
-        </button>
-      )}
+            {!detailTask && !isCreateModalOpen && selectedTaskIds.length === 0 && (
+              <button
+                type="button"
+                onClick={() => setIsCreateModalOpen(true)}
+                aria-label="Create new task"
+                title="New Task"
+                className="fixed bottom-20 right-4 sm:right-6 z-[90] w-14 h-14 sm:w-16 sm:h-16 min-w-[56px] min-h-[56px] rounded-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white shadow-[0_10px_28px_rgba(15,23,42,0.36)] border-2 border-white/90 flex items-center justify-center transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              >
+                <Plus className="w-7 h-7 stroke-[2.75]" />
+              </button>
+            )}
+          </>,
+          document.body
+        )}
 
       {/* Quick Create Task Modal / Sheet */}
       {isCreateModalOpen && isMounted && typeof document !== 'undefined' && createPortal(

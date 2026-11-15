@@ -180,6 +180,9 @@ const DEFAULT_TASK_LISTS: TaskList[] = [
   { id: 'default-shopping', name: 'Shopping & Retail', color: 'emerald', isDefault: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
 ];
 
+const SEED_PAST_ISO_1 = new Date(Date.now() - 86400000 * 3).toISOString();
+const SEED_PAST_ISO_2 = new Date(Date.now() - 86400000 * 5).toISOString();
+
 const DEFAULT_NOTES: NoteItem[] = [
   {
     id: 'seed-note-1',
@@ -197,8 +200,8 @@ const DEFAULT_NOTES: NoteItem[] = [
     reminderAt: null,
     isEmergency: false,
     syncStatus: 'unsynced',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: SEED_PAST_ISO_1,
+    updatedAt: SEED_PAST_ISO_1,
   },
   {
     id: 'seed-note-2',
@@ -213,8 +216,8 @@ const DEFAULT_NOTES: NoteItem[] = [
     reminderAt: null,
     isEmergency: false,
     syncStatus: 'unsynced',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: SEED_PAST_ISO_2,
+    updatedAt: SEED_PAST_ISO_2,
   },
 ];
 
@@ -231,8 +234,8 @@ const DEFAULT_TASKS: TaskItem[] = [
     dueDate: new Date(Date.now() + 86400000 * 2).toISOString(),
     reminderAt: null,
     syncStatus: 'unsynced',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: SEED_PAST_ISO_1,
+    updatedAt: SEED_PAST_ISO_1,
     subtasks: [
       {
         id: 'seed-sub-1',
@@ -241,8 +244,8 @@ const DEFAULT_TASKS: TaskItem[] = [
         title: 'Export EMI & Discount calculation history report',
         completed: true,
         isStarred: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: SEED_PAST_ISO_1,
+        updatedAt: SEED_PAST_ISO_1,
       },
       {
         id: 'seed-sub-2',
@@ -251,8 +254,8 @@ const DEFAULT_TASKS: TaskItem[] = [
         title: 'Send audited summaries to accountant',
         completed: false,
         isStarred: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: SEED_PAST_ISO_1,
+        updatedAt: SEED_PAST_ISO_1,
       },
     ],
   },

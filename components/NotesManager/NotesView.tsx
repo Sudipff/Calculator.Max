@@ -24,6 +24,7 @@ import {
   MoreVertical,
   CloudOff,
   User,
+  ChevronRight,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { NoteItem, NOTE_COLORS } from '@/lib/types/notes-tasks';
@@ -549,10 +550,10 @@ export default function NotesView({
       updatedAt: new Date().toISOString(),
     };
 
-    const existsInList = notes.some((n) => n.id === noteToSave.id);
-    const updated = existsInList
-      ? notes.map((n) => (n.id === noteToSave.id ? noteToSave : n))
-      : [noteToSave, ...notes];
+    const updated = [
+      noteToSave,
+      ...notes.filter((n) => n.id !== noteToSave.id),
+    ];
 
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
@@ -585,10 +586,10 @@ export default function NotesView({
       updatedAt: new Date().toISOString(),
     };
 
-    const existsInList = notes.some((n) => n.id === updatedNote.id);
-    const updated = existsInList
-      ? notes.map((n) => (n.id === updatedNote.id ? updatedNote : n))
-      : [updatedNote, ...notes];
+    const updated = [
+      updatedNote,
+      ...notes.filter((n) => n.id !== updatedNote.id),
+    ];
 
     setEditingNote(updatedNote);
     setNotes(updated);
@@ -652,10 +653,22 @@ export default function NotesView({
         return matchPinned && matchSearch && matchLabel;
       })
       .sort((a, b) => {
-        if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
-        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        const timeA = Math.max(
+          new Date(a.createdAt || 0).getTime() || 0,
+          new Date(a.updatedAt || 0).getTime() || 0
+        );
+        const timeB = Math.max(
+          new Date(b.createdAt || 0).getTime() || 0,
+          new Date(b.updatedAt || 0).getTime() || 0
+        );
+        return timeB - timeA;
       });
   }, [notes, searchQuery, selectedLabel, onlyPinned]);
+
+  const filterBarScrollRef = useRef<HTMLDivElement | null>(null);
+  const handleScrollFilterRight = () => {
+    filterBarScrollRef.current?.scrollBy({ left: 150, behavior: 'smooth' });
+  };
 
   const editingColorTheme = editingNote
     ? NOTE_COLORS.find((c) => c.id === editingNote.color) || NOTE_COLORS[0]
@@ -799,50 +812,65 @@ export default function NotesView({
           </div>
         </div>
 
-        {/* Interactive Filter Pills: All Notes, Pinned, + Labels */}
-        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 scrollbar-none">
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedLabel(null);
-              setOnlyPinned(false);
-            }}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-              selectedLabel === null && !onlyPinned
-                ? 'bg-slate-300/90 text-slate-900 font-bold shadow-2xs'
-                : 'bg-white/90 text-slate-700 hover:bg-slate-100 border border-slate-200/80'
-            }`}
+        {/* Interactive Filter Pills: All Notes, Pinned, + Labels with right-side scroll indicator icon */}
+        <div className="relative flex items-center min-w-0">
+          <div
+            ref={filterBarScrollRef}
+            className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pr-9 scrollbar-none"
           >
-            All Notes
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setOnlyPinned((prev) => !prev)}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1.5 ${
-              onlyPinned
-                ? 'bg-slate-900 text-white shadow-2xs'
-                : 'bg-white/90 text-slate-700 hover:bg-slate-100 border border-slate-200/80'
-            }`}
-          >
-            <Pin className={`w-3 h-3 ${onlyPinned ? 'fill-white text-white' : 'text-slate-700 fill-slate-700'}`} />
-            <span>Pinned</span>
-          </button>
-
-          {allLabels.map((lbl) => (
             <button
-              key={lbl}
               type="button"
-              onClick={() => setSelectedLabel(selectedLabel === lbl ? null : lbl)}
+              onClick={() => {
+                setSelectedLabel(null);
+                setOnlyPinned(false);
+              }}
               className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                selectedLabel === lbl
+                selectedLabel === null && !onlyPinned
+                  ? 'bg-slate-300/90 text-slate-900 font-bold shadow-2xs'
+                  : 'bg-white/90 text-slate-700 hover:bg-slate-100 border border-slate-200/80'
+              }`}
+            >
+              All Notes
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setOnlyPinned((prev) => !prev)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                onlyPinned
                   ? 'bg-slate-900 text-white shadow-2xs'
                   : 'bg-white/90 text-slate-700 hover:bg-slate-100 border border-slate-200/80'
               }`}
             >
-              {lbl}
+              <Pin className={`w-3 h-3 ${onlyPinned ? 'fill-white text-white' : 'text-slate-700 fill-slate-700'}`} />
+              <span>Pinned</span>
             </button>
-          ))}
+
+            {allLabels.map((lbl) => (
+              <button
+                key={lbl}
+                type="button"
+                onClick={() => setSelectedLabel(selectedLabel === lbl ? null : lbl)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                  selectedLabel === lbl
+                    ? 'bg-slate-900 text-white shadow-2xs'
+                    : 'bg-white/90 text-slate-700 hover:bg-slate-100 border border-slate-200/80'
+                }`}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleScrollFilterRight}
+            aria-label="More categories to the right"
+            title="More categories"
+            className="absolute right-0 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/95 border border-slate-200/90 text-slate-600 hover:text-slate-900 hover:bg-slate-50 shadow-xs flex items-center justify-center cursor-pointer shrink-0 z-10"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 
@@ -929,47 +957,53 @@ export default function NotesView({
         </div>
       )}
 
-      {/* Minimized, unobtrusive 'Notes Updated' / Sync Status micro-pill relocated to bottom-left */}
-      <AnimatePresence>
-        {!editingNote &&
-          (refreshNotice || (currentUser?.id && notes.some((n) => n.syncStatus === 'unsynced'))) && (
-            <motion.div
-              initial={{ opacity: 0, y: 10, scale: 0.94 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.94 }}
-              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-              className="fixed bottom-20 left-4 sm:left-6 z-30 pointer-events-none"
-            >
-              {refreshNotice ? (
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
-                  <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
-                  <span>{refreshNotice}</span>
-                </span>
-              ) : (
-                <span
-                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-amber-200/80 shadow-xs"
-                  title="Saved offline — will sync automatically when connected"
-                >
-                  <CloudOff className="w-2.5 h-2.5 text-amber-600 shrink-0" />
-                  <span>Pending Sync</span>
-                </span>
-              )}
-            </motion.div>
-          )}
-      </AnimatePresence>
+      {/* Pinned Bottom Status Pill + Large Fixed Floating + Action Button (Portaled to body so parent transforms never unpin it) */}
+      {isMounted &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <>
+            <AnimatePresence>
+              {!editingNote &&
+                (refreshNotice || (currentUser?.id && notes.some((n) => n.syncStatus === 'unsynced'))) && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.94 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.94 }}
+                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                    className="fixed bottom-20 left-4 sm:left-6 z-[85] pointer-events-none"
+                  >
+                    {refreshNotice ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
+                        <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                        <span>{refreshNotice}</span>
+                      </span>
+                    ) : (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-amber-200/80 shadow-xs"
+                        title="Saved offline — will sync automatically when connected"
+                      >
+                        <CloudOff className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                        <span>Pending Sync</span>
+                      </span>
+                    )}
+                  </motion.div>
+                )}
+            </AnimatePresence>
 
-      {/* Floating + Action Button (Bottom Right above Bottom Nav) */}
-      {!editingNote && selectedNoteIds.length === 0 && (
-        <button
-          type="button"
-          onClick={openNewNoteEditor}
-          aria-label="Create new note"
-          title="New Note"
-          className="fixed bottom-20 right-4 sm:right-6 z-30 w-13 h-13 rounded-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white shadow-[0_8px_24px_rgba(15,23,42,0.28)] flex items-center justify-center transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-        >
-          <Plus className="w-6 h-6" />
-        </button>
-      )}
+            {!editingNote && selectedNoteIds.length === 0 && (
+              <button
+                type="button"
+                onClick={openNewNoteEditor}
+                aria-label="Create new note"
+                title="New Note"
+                className="fixed bottom-20 right-4 sm:right-6 z-[90] w-14 h-14 sm:w-16 sm:h-16 min-w-[56px] min-h-[56px] rounded-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white shadow-[0_10px_28px_rgba(15,23,42,0.36)] border-2 border-white/90 flex items-center justify-center transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              >
+                <Plus className="w-7 h-7 stroke-[2.75]" />
+              </button>
+            )}
+          </>,
+          document.body
+        )}
 
       {/* NOTE EDITING VIEW (Clean Unified Full-Page Workspace) */}
       {editingNote && isMounted && typeof document !== 'undefined' && createPortal(

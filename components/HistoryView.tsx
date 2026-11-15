@@ -27,6 +27,8 @@ import {
   Cloud,
   CloudOff,
   User,
+  ChevronRight,
+  CheckSquare,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { HistoryItem, parseSavedAmountFromText } from '../lib/historyStorage';
@@ -50,6 +52,7 @@ interface HistoryViewProps {
   onInspectItem: (item: HistoryItem) => void;
   onToggleFavorite: (itemId: string) => void;
   onRequestDeleteItem: (item: HistoryItem) => void;
+  onRequestDeleteBatch?: (items: HistoryItem[]) => void;
   onRequestClearAll: () => void;
   onDownloadSinglePDF: (item: HistoryItem) => void;
   onDownloadAllPDF: (items: HistoryItem[]) => void;
@@ -240,6 +243,7 @@ export default function HistoryView({
   onInspectItem,
   onToggleFavorite,
   onRequestDeleteItem,
+  onRequestDeleteBatch,
   onRequestClearAll,
   onDownloadSinglePDF,
   onDownloadAllPDF,
@@ -254,7 +258,27 @@ export default function HistoryView({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isRefreshingLocal, setIsRefreshingLocal] = useState(false);
 
+  // Batch Selection State (Activated by Long-Press)
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const isLongPressFiredRef = useRef(false);
+
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
+  const categoryScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const handleScrollCategoriesRight = () => {
+    categoryScrollRef.current?.scrollBy({ left: 160, behavior: 'smooth' });
+  };
+
+  // Prune stale selected IDs if history items are deleted
+  useEffect(() => {
+    const validIds = new Set(history.map((item) => item.id));
+    setSelectedItemIds((prev) => {
+      const next = prev.filter((id) => validIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [history]);
 
   // Close menus on outside pointer click or Escape
   useEffect(() => {
@@ -272,6 +296,7 @@ export default function HistoryView({
       if (e.key === 'Escape') {
         setIsHeaderMenuOpen(false);
         setOpenCardMenuId(null);
+        setSelectedItemIds([]);
       }
     };
 
@@ -282,6 +307,49 @@ export default function HistoryView({
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [isHeaderMenuOpen, openCardMenuId]);
+
+  // Long-press detection helpers for touch and mouse
+  const handleStartLongPress = (id: string, clientX?: number, clientY?: number) => {
+    if (selectedItemIds.length > 0) return;
+    isLongPressFiredRef.current = false;
+    if (clientX !== undefined && clientY !== undefined) {
+      touchStartPosRef.current = { x: clientX, y: clientY };
+    }
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      isLongPressFiredRef.current = true;
+      setOpenCardMenuId(null);
+      setSelectedItemIds([id]);
+    }, 450);
+  };
+
+  const handleCancelLongPress = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (touchStartPosRef.current && e.touches[0]) {
+      const dx = Math.abs(e.touches[0].clientX - touchStartPosRef.current.x);
+      const dy = Math.abs(e.touches[0].clientY - touchStartPosRef.current.y);
+      if (dx > 10 || dy > 10) {
+        handleCancelLongPress();
+      }
+    }
+  };
+
+  const handleToggleSelectItem = (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setSelectedItemIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleCancelSelection = () => {
+    setSelectedItemIds([]);
+  };
 
   const favoritesCount = useMemo(
     () => history.filter((item) => Boolean(item.isFavorite)).length,
@@ -583,6 +651,25 @@ export default function HistoryView({
                   </button>
 
                   {filteredHistory.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsHeaderMenuOpen(false);
+                        const allIds = filteredHistory.map((item) => item.id);
+                        setSelectedItemIds((prev) =>
+                          prev.length === allIds.length ? [] : allIds
+                        );
+                      }}
+                      className="w-full px-3.5 py-2.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                    >
+                      <CheckSquare className="w-4 h-4 text-slate-400" />
+                      <span>
+                        {selectedItemIds.length > 0 ? 'Clear Selection' : 'Select Calculations'}
+                      </span>
+                    </button>
+                  )}
+
+                  {filteredHistory.length > 0 && (
                     <>
                       <div className="my-1 border-t border-slate-100" />
                       <button
@@ -633,39 +720,111 @@ export default function HistoryView({
           </div>
         </div>
 
-        {/* Category Filter Chips (Horizontal Single-Line Interactive Controls) */}
-        <div
-          role="tablist"
-          aria-label="Filter history by category"
-          className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 scrollbar-none"
-        >
-          {categoryChips.map((chip) => {
-            const isActive = selectedCategory === chip.id;
-            return (
-              <button
-                key={chip.id}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                data-history-chip-active={isActive ? 'true' : undefined}
-                onClick={() => setSelectedCategory(chip.id)}
-                className={`px-3.5 py-1.5 min-h-[34px] rounded-full text-xs font-semibold border transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
-                  isActive ? chip.activeClass : chip.inactiveClass
-                }`}
-              >
-                {chip.id === 'favorites' && (
-                  <Star
-                    className={`w-3.5 h-3.5 ${
-                      isActive ? 'fill-white text-white' : 'fill-amber-400 text-amber-500'
-                    }`}
-                  />
-                )}
-                <span>{chip.label}</span>
-              </button>
-            );
-          })}
+        {/* Category Filter Chips (Horizontal Single-Line Controls with Right-Edge More Categories Icon) */}
+        <div className="relative flex items-center min-w-0">
+          <div
+            ref={categoryScrollRef}
+            role="tablist"
+            aria-label="Filter history by category"
+            className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pr-9 scrollbar-none"
+          >
+            {categoryChips.map((chip) => {
+              const isActive = selectedCategory === chip.id;
+              return (
+                <button
+                  key={chip.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  data-history-chip-active={isActive ? 'true' : undefined}
+                  onClick={() => setSelectedCategory(chip.id)}
+                  className={`px-3.5 py-1.5 min-h-[34px] rounded-full text-xs font-semibold border transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                    isActive ? chip.activeClass : chip.inactiveClass
+                  }`}
+                >
+                  {chip.id === 'favorites' && (
+                    <Star
+                      className={`w-3.5 h-3.5 ${
+                        isActive ? 'fill-white text-white' : 'fill-amber-400 text-amber-500'
+                      }`}
+                    />
+                  )}
+                  <span>{chip.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleScrollCategoriesRight}
+            aria-label="More categories to the right"
+            title="More categories"
+            className="absolute right-0 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/95 border border-slate-200/90 text-slate-600 hover:text-slate-900 hover:bg-slate-50 shadow-xs flex items-center justify-center cursor-pointer shrink-0 z-10"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
+
+      {/* Sticky Batch Selection Action Bar when items are selected via Long-Press */}
+      {selectedItemIds.length > 0 && (
+        <div className="sticky top-[134px] z-20 bg-slate-900 text-white p-3 sm:p-4 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 border border-slate-700">
+          <div className="flex items-center gap-2.5">
+            <span className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-xs font-black">
+              {selectedItemIds.length}
+            </span>
+            <span className="text-xs font-bold">
+              {selectedItemIds.length} {selectedItemIds.length === 1 ? 'record' : 'records'} selected
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const allIds = filteredHistory.map((item) => item.id);
+                setSelectedItemIds(
+                  selectedItemIds.length === allIds.length ? [] : allIds
+                );
+              }}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+            >
+              {selectedItemIds.length === filteredHistory.length ? 'Deselect All' : 'Select All'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const selectedItems = history.filter((item) =>
+                  selectedItemIds.includes(item.id)
+                );
+                if (selectedItems.length === 0) return;
+                if (onRequestDeleteBatch) {
+                  onRequestDeleteBatch(selectedItems);
+                } else if (selectedItems.length === 1) {
+                  onRequestDeleteItem(selectedItems[0]);
+                }
+                setSelectedItemIds([]);
+              }}
+              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete ({selectedItemIds.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCancelSelection}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              title="Cancel selection"
+              aria-label="Cancel selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Empty States or Chronological Date-Grouped Cards */}
       {history.length === 0 ? (
@@ -714,6 +873,7 @@ export default function HistoryView({
                       ? item.savedAmount
                       : parseSavedAmountFromText(item.type, item.details, item.result);
                   const isMenuOpen = openCardMenuId === item.id;
+                  const isSelected = selectedItemIds.includes(item.id);
 
                   return (
                     <motion.article
@@ -722,12 +882,48 @@ export default function HistoryView({
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.16 }}
-                      onClick={() => onInspectItem(item)}
-                      className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-[0_2px_10px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-2.5 text-left relative"
+                      onTouchStart={(e) =>
+                        handleStartLongPress(item.id, e.touches[0]?.clientX, e.touches[0]?.clientY)
+                      }
+                      onTouchMove={handleTouchMove}
+                      onTouchEnd={handleCancelLongPress}
+                      onMouseDown={(e) => handleStartLongPress(item.id, e.clientX, e.clientY)}
+                      onMouseUp={handleCancelLongPress}
+                      onMouseLeave={handleCancelLongPress}
+                      onClick={(e) => {
+                        if (isLongPressFiredRef.current) {
+                          isLongPressFiredRef.current = false;
+                          return;
+                        }
+                        if (selectedItemIds.length > 0) {
+                          handleToggleSelectItem(item.id, e);
+                          return;
+                        }
+                        onInspectItem(item);
+                      }}
+                      className={`bg-white rounded-2xl p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.04)] transition-all cursor-pointer flex flex-col justify-between gap-2.5 text-left relative select-none ${
+                        isSelected
+                          ? 'border-indigo-600 ring-2 ring-indigo-600/30 bg-indigo-50/20'
+                          : 'border-slate-200/80 hover:border-slate-300 hover:shadow-md'
+                      }`}
                     >
-                      {/* Top Card Row: Category Badge + Timestamp + Favorite Indicator + Card 3-Dot Menu */}
+                      {/* Top Card Row: Selection Checkbox (when active) + Category Badge + Timestamp + Favorite Indicator + Card 3-Dot Menu */}
                       <div className="flex items-center justify-between gap-2 min-w-0">
                         <div className="flex items-center gap-2 min-w-0 flex-1">
+                          {selectedItemIds.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleToggleSelectItem(item.id, e)}
+                              aria-label={isSelected ? 'Deselect calculation' : 'Select calculation'}
+                              className={`w-5 h-5 rounded-md flex items-center justify-center border transition-all shrink-0 cursor-pointer ${
+                                isSelected
+                                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                                  : 'bg-white border-slate-300 text-transparent'
+                              }`}
+                            >
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                            </button>
+                          )}
                           <span
                             className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${visual.iconBg} ${visual.iconText}`}
                           >
