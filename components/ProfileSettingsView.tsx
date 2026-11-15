@@ -26,6 +26,7 @@ import {
   Facebook,
   KeyRound,
   ExternalLink,
+  Lock,
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 import type { HistoryItem } from '../lib/historyStorage';
@@ -154,6 +155,14 @@ export default function ProfileSettingsView({
       setNotificationPermission('unsupported');
     }
 
+    const checkPerm = () => {
+      if ('Notification' in window) {
+        setNotificationPermission(Notification.permission);
+      }
+    };
+    window.addEventListener('focus', checkPerm);
+    document.addEventListener('visibilitychange', checkPerm);
+
     const handleSyncUpdated = () => {
       const pending = getPendingSyncCount(currentUser?.id);
       setPendingSyncCount(pending);
@@ -166,7 +175,11 @@ export default function ProfileSettingsView({
       }
     };
     window.addEventListener('calcmax:sync-updated', handleSyncUpdated);
-    return () => window.removeEventListener('calcmax:sync-updated', handleSyncUpdated);
+    return () => {
+      window.removeEventListener('calcmax:sync-updated', handleSyncUpdated);
+      window.removeEventListener('focus', checkPerm);
+      document.removeEventListener('visibilitychange', checkPerm);
+    };
   }, [currentUser]);
 
   const toggleTheme = () => {
@@ -871,6 +884,8 @@ export default function ProfileSettingsView({
                   className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
                     notificationPermission === 'granted'
                       ? 'bg-emerald-100 text-emerald-600'
+                      : notificationPermission === 'denied'
+                      ? 'bg-amber-100 text-amber-700'
                       : 'bg-indigo-100 text-indigo-600'
                   }`}
                 >
@@ -912,6 +927,61 @@ export default function ProfileSettingsView({
                 ) : null}
               </div>
             </div>
+
+            {/* Dynamic Onboarding Walkthrough for Blocked Browser Permissions */}
+            {notificationPermission === 'denied' && (
+              <div className="mt-3 p-3.5 bg-amber-50/90 border border-amber-200/90 rounded-2xl space-y-3 shadow-xs">
+                <div className="flex items-start gap-2.5">
+                  <span className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5">
+                    <Lock className="w-4 h-4" />
+                  </span>
+                  <div className="space-y-1 min-w-0">
+                    <h5 className="text-xs font-extrabold text-amber-900">
+                      Browser Notification Permission Blocked
+                    </h5>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      Notifications are currently blocked by your browser. Follow these quick steps to unblock them:
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-white/90 rounded-xl p-3 border border-amber-200/60 space-y-2 text-[11px] text-slate-700 font-medium">
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">1</span>
+                    <p><strong className="text-slate-900">Click the Lock or Site Settings icon</strong> in your browser's address bar (next to the URL).</p>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">2</span>
+                    <p>Locate <strong className="text-slate-900">Notifications</strong> in the site settings or permissions panel.</p>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">3</span>
+                    <p>Change the setting from <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-bold">Block</span> to <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">Allow</span> (or Reset Permission).</p>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">4</span>
+                    <p>Refresh this page and click <strong className="text-slate-900">Allow Push</strong> above.</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-0.5">
+                  <span className="text-[10px] font-semibold text-amber-700/80">
+                    Auto-dismisses once allowed
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if ('Notification' in window) {
+                        setNotificationPermission(Notification.permission);
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold transition-colors cursor-pointer"
+                  >
+                    Check Status Now
+                  </button>
+                </div>
+              </div>
+            )}
 
             {pushFeedback && (
               <p className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200/80 rounded-xl px-3 py-1.5">

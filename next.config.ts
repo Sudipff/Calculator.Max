@@ -1,6 +1,7 @@
-/** @type {import('next').NextConfig} */
+/** @type {import('import').NextConfig} */
 const nextConfig = {
   reactStrictMode: false,
+  allowedDevOrigins: ['ais-dev-e6ozjhcsj3jcjn2wushno5-901334434410.asia-southeast1.run.app'],
   eslint: {
     ignoreDuringBuilds: true,
   },
