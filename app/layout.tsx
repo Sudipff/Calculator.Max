@@ -6,7 +6,7 @@ import { ThemeProvider } from '../components/ThemeProvider';
 export const metadata: Metadata = {
   title: 'Calculator Max • All Calculators, Notes & Tasks',
   description: 'Calculator Max with Scientific Calculator, EMI, Wishlist Savings Goal Planner, Notes, Tasks Manager, and Offline Cloud Sync',
-  manifest: '/manifest.json',
+  manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
@@ -19,6 +19,9 @@ export const metadata: Metadata = {
       { url: '/pwa-512x512.png', sizes: '512x512', type: 'image/png' },
     ],
     apple: [{ url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
+  },
+  other: {
+    'mobile-web-app-capable': 'yes',
   },
   formatDetection: {
     telephone: false,
@@ -51,6 +54,18 @@ const themeInitScript = `
     document.documentElement.dataset.theme = 'light';
     document.documentElement.classList.remove('dark');
   }
+  try {
+    window.__deferredPWAInstallPrompt = window.__deferredPWAInstallPrompt || null;
+    window.addEventListener('beforeinstallprompt', function(e) {
+      e.preventDefault();
+      window.__deferredPWAInstallPrompt = e;
+      window.dispatchEvent(new CustomEvent('calcmax:pwa-prompt-ready'));
+    });
+    window.addEventListener('appinstalled', function() {
+      window.__deferredPWAInstallPrompt = null;
+      window.dispatchEvent(new CustomEvent('calcmax:pwa-installed'));
+    });
+  } catch (e) {}
 })();
 `;
 
@@ -62,6 +77,7 @@ export default function RootLayout({
   return (
     <html lang="en" data-theme="light" suppressHydrationWarning className="h-full w-full">
       <head>
+        <link rel="icon" type="image/svg+xml" href="/icon.svg" />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className="min-h-full w-full max-w-[100vw] overflow-x-clip antialiased transition-colors duration-200">

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Calculator, CheckSquare, FileText } from 'lucide-react';
 import { motion } from 'motion/react';
 import {
   DEFAULT_BACKUP_PERMISSIONS,
@@ -22,6 +22,8 @@ interface BackupToggleSpec {
   key: keyof BackupPermissions;
   title: string;
   description: string;
+  icon: React.ComponentType<{ className?: string }>;
+  iconBgClass: string;
 }
 
 const BACKUP_ITEMS: BackupToggleSpec[] = [
@@ -29,16 +31,22 @@ const BACKUP_ITEMS: BackupToggleSpec[] = [
     key: 'calculatorHistory',
     title: 'Calculator History',
     description: 'Automatically back up calculator activity',
+    icon: Calculator,
+    iconBgClass: 'bg-blue-100 text-blue-600',
   },
   {
     key: 'notes',
     title: 'Notes',
     description: 'Securely back up all your saved notes',
+    icon: FileText,
+    iconBgClass: 'bg-amber-100 text-amber-600',
   },
   {
     key: 'tasks',
     title: 'Tasks',
     description: 'Prevent data loss for your task lists',
+    icon: CheckSquare,
+    iconBgClass: 'bg-emerald-100 text-emerald-600',
   },
 ];
 
@@ -111,67 +119,84 @@ export default function BackupSettingsView({
       aria-label="Backup Management Settings"
       className="w-full max-w-2xl mx-auto px-3 sm:px-4 pb-12 space-y-5"
     >
-      {/* Top Back Arrow & Page Title (Matching Reference Photo) */}
-      <div className="pt-1 space-y-3">
-        <button
-          type="button"
-          onClick={onBack}
-          aria-label="Back to Subscription"
-          title="Back to Subscription"
-          className="min-w-[40px] min-h-[40px] -ml-1.5 rounded-2xl text-slate-800 hover:bg-slate-200/60 flex items-center justify-center transition-colors cursor-pointer"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-
-        <div className="flex items-baseline justify-between gap-3 px-0.5">
-          <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
+      {/* Top Header Bar: Back Button + "Backup Settings" Title */}
+      <div className="flex items-center justify-between gap-3 pt-1">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Back to Subscription"
+            title="Back to Subscription"
+            className="min-w-[42px] min-h-[42px] rounded-2xl bg-white/90 hover:bg-slate-100 border border-slate-200/80 text-slate-800 flex items-center justify-center shadow-2xs transition-colors cursor-pointer shrink-0"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight truncate">
             Backup Settings
           </h2>
-          {isSaving && (
-            <span className="text-[11px] font-semibold text-emerald-600">
-              Saving...
-            </span>
-          )}
         </div>
+
+        {isSaving && (
+          <span className="text-[11px] font-semibold text-emerald-600 shrink-0">
+            Saving...
+          </span>
+        )}
       </div>
 
-      {/* Independent Backup Permission Cards */}
-      <section aria-label="Backup Permissions" className="space-y-3.5">
-        {BACKUP_ITEMS.map((item) => {
-          const isEnabled = permissions[item.key];
-          return (
-            <div
-              key={item.key}
-              className="bg-white/95 rounded-2xl border border-slate-200/80 shadow-[0_4px_18px_rgba(15,23,42,0.05)] px-5 py-4 flex items-center justify-between gap-4"
-            >
-              <div className="min-w-0 space-y-1">
-                <h3 className="text-base sm:text-lg font-semibold text-slate-900 leading-snug">
-                  {item.title}
-                </h3>
-                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                  {item.description}
-                </p>
-              </div>
+      {/* Independent Backup Permission Toggle Cards (Matching Profile Settings Toggle Design) */}
+      <section aria-labelledby="backup-permissions-heading" className="space-y-2.5">
+        <h4
+          id="backup-permissions-heading"
+          className="px-1 text-[11px] font-extrabold uppercase tracking-wider text-slate-700"
+        >
+          Backup Permissions
+        </h4>
 
-              <button
-                type="button"
-                role="switch"
-                aria-checked={isEnabled}
-                aria-label={`Toggle ${item.title} backup`}
-                onClick={() => void handleToggle(item.key)}
-                className={`relative inline-flex items-center w-14 h-8 rounded-full transition-colors duration-200 cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
-                  isEnabled ? 'bg-emerald-500' : 'bg-slate-300'
-                }`}
+        <div className="space-y-3">
+          {BACKUP_ITEMS.map((item) => {
+            const isEnabled = permissions[item.key];
+            const Icon = item.icon;
+            return (
+              <div
+                key={item.key}
+                className="bg-white/95 rounded-2xl border border-slate-200/80 shadow-[0_2px_12px_rgba(15,23,42,0.03)] px-4 py-3.5 flex items-center justify-between gap-3"
               >
-                <span
-                  className={`inline-block w-6.5 h-6.5 rounded-full bg-white shadow-sm transform transition-transform duration-200 ${
-                    isEnabled ? 'translate-x-[26px]' : 'translate-x-[3px]'
+                <div className="flex items-center gap-3 min-w-0">
+                  <span
+                    className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${item.iconBgClass}`}
+                  >
+                    <Icon className="w-4 h-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <span className="block text-sm font-semibold text-slate-800 truncate">
+                      {item.title}
+                    </span>
+                    <span className="block text-[11px] text-slate-500 leading-snug">
+                      {item.description}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isEnabled}
+                  aria-label={`Toggle ${item.title} backup`}
+                  onClick={() => void handleToggle(item.key)}
+                  className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer shrink-0 ${
+                    isEnabled ? 'bg-emerald-500' : 'bg-slate-300'
                   }`}
-                />
-              </button>
-            </div>
-          );
-        })}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                      isEnabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </section>
     </motion.div>
   );

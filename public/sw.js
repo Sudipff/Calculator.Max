@@ -1,10 +1,11 @@
-const CACHE_NAME = 'calculator-max-pwa-v3';
+const CACHE_NAME = 'calculator-max-pwa-v4';
 const PUSH_DB_NAME = 'calcMaxPushDB';
 const PUSH_DB_VERSION = 1;
 const REMINDERS_STORE = 'reminders';
 
 const PRECACHE_URLS = [
   '/',
+  '/manifest.webmanifest',
   '/manifest.json',
   '/icon.svg',
   '/pwa-192x192.png',
@@ -12,6 +13,29 @@ const PRECACHE_URLS = [
   '/pwa-maskable-512x512.png',
   '/apple-touch-icon.png',
 ];
+
+const OFFLINE_SHELL_HTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Calculator Max • Offline</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f8fafc; color: #0f172a; padding: 24px; }
+    .card { max-width: 360px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 24px; text-align: center; box-shadow: 0 10px 30px rgba(15,23,42,0.06); }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    p { font-size: 14px; color: #475569; margin: 0 0 16px; line-height: 1.5; }
+    button { background: #2563eb; color: #fff; border: 0; border-radius: 12px; padding: 10px 18px; font-weight: 600; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Calculator Max</h1>
+    <p>You are currently offline. Reconnect or tap Retry to reload the cached workspace.</p>
+    <button onclick="window.location.reload()">Retry</button>
+  </div>
+</body>
+</html>`;
 
 const scheduledTimeouts = new Map();
 
@@ -178,9 +202,16 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) =>
       Promise.allSettled(
-        PRECACHE_URLS.map((url) =>
-          cache.add(new Request(url, { cache: 'reload' })).catch(() => undefined)
-        )
+        PRECACHE_URLS.map(async (url) => {
+          try {
+            const response = await fetch(new Request(url, { cache: 'reload' }));
+            if (response && response.status === 200) {
+              await cache.put(url, response.clone());
+            }
+          } catch {
+            // Skip unreachable URLs during background install
+          }
+        })
       )
     )
   );
@@ -235,6 +266,8 @@ self.addEventListener('message', (event) => {
     );
   } else if (payload.type === 'CHECK_REMINDERS') {
     event.waitUntil(checkAndScheduleRemindersInSW());
+  } else if (payload.type === 'SKIP_WAITING') {
+    self.skipWaiting();
   }
 });
 
@@ -326,7 +359,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Never cache API, auth, or dev HMR routes
+  // Never intercept or cache API, auth, or dev HMR routes
   if (
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/auth/') ||
@@ -336,22 +369,45 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first for HTML page navigations with cached fallback when offline
-  if (request.mode === 'navigate') {
+  // Manifest files: always Network-First so updates apply immediately without stale metadata
+  if (url.pathname === '/manifest.webmanifest' || url.pathname === '/manifest.json') {
     event.respondWith(
       fetch(request)
         .then((networkResponse) => {
-          if (networkResponse && networkResponse.ok) {
+          if (networkResponse && networkResponse.status === 200) {
             const responseClone = networkResponse.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
           }
           return networkResponse;
         })
         .catch(async () => {
-          const cachedPage = await caches.match(request);
+          const cached = await caches.match(request);
+          return cached || Response.error();
+        })
+    );
+    return;
+  }
+
+  // Network-first for HTML page navigations with guaranteed offline fallback
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
+            const responseClone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
+          }
+          return networkResponse;
+        })
+        .catch(async () => {
+          const cachedPage = await caches.match(request, { ignoreSearch: true });
           if (cachedPage) return cachedPage;
-          const cachedRoot = await caches.match('/');
-          return cachedRoot || Response.error();
+          const cachedRoot = await caches.match('/', { ignoreSearch: true });
+          if (cachedRoot) return cachedRoot;
+          return new Response(OFFLINE_SHELL_HTML, {
+            status: 200,
+            headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          });
         })
     );
     return;
@@ -366,7 +422,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((networkResponse) => {
-          if (networkResponse && networkResponse.ok) {
+          if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
             const responseClone = networkResponse.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
           }
@@ -380,21 +436,21 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Stale-while-revalidate for icons, images, fonts, and manifest
-  const isMediaOrManifest = /\.(?:png|jpg|jpeg|svg|webp|ico|woff2?|json)$/i.test(url.pathname);
+  // Stale-while-revalidate for icons, images, and fonts (never returns undefined)
+  const isMediaOrFont = /\.(?:png|jpg|jpeg|svg|webp|ico|woff2?)$/i.test(url.pathname);
 
-  if (isMediaOrManifest) {
+  if (isMediaOrFont) {
     event.respondWith(
       caches.open(CACHE_NAME).then(async (cache) => {
         const cachedResponse = await cache.match(request);
         const networkPromise = fetch(request)
           .then((networkResponse) => {
-            if (networkResponse && networkResponse.ok) {
+            if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
               cache.put(request, networkResponse.clone());
             }
             return networkResponse;
           })
-          .catch(() => cachedResponse);
+          .catch(() => cachedResponse || Response.error());
 
         return cachedResponse || networkPromise;
       })

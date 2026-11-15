@@ -203,8 +203,11 @@ export default function PwaRuntime() {
     const registerSW = () => {
       if (!isMounted) return;
       navigator.serviceWorker
-        .register('/sw.js', { scope: '/' })
+        .register('/sw.js', { scope: '/', updateViaCache: 'none' })
         .then((reg) => {
+          if (reg.waiting) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
           reg.update().catch(() => {});
           // Attempt periodic reminder check registration (Chromium PWAs)
           const periodic = (reg as unknown as {
@@ -221,11 +224,7 @@ export default function PwaRuntime() {
         });
     };
 
-    if (document.readyState === 'complete') {
-      registerSW();
-    } else {
-      window.addEventListener('load', registerSW, { once: true });
-    }
+    registerSW();
 
     const handleSwMessage = (event: MessageEvent) => {
       if (event.data?.type === 'CALCMAX_TRIGGER_OFFLINE_SYNC') {

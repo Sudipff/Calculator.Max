@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   ArrowRight,
   Check,
   Cloud,
@@ -476,11 +477,22 @@ export default function SubscriptionView({
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
       className="w-full max-w-3xl mx-auto px-2 sm:px-4 pb-10 space-y-5"
     >
-      {/* Top Header Bar: Clean "Subscription" Title (Back arrow and settings icon removed) */}
-      <div className="flex items-center justify-between gap-3 pt-1 px-1">
-        <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight truncate">
-          Subscription
-        </h2>
+      {/* Top Header Bar: Back Button + "Subscription" Title */}
+      <div className="flex items-center justify-between gap-3 pt-1">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Back to Profile Settings"
+            title="Back to Profile Settings"
+            className="min-w-[42px] min-h-[42px] rounded-2xl bg-white/90 hover:bg-slate-100 border border-slate-200/80 text-slate-800 flex items-center justify-center shadow-2xs transition-colors cursor-pointer shrink-0"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight truncate">
+            Subscription
+          </h2>
+        </div>
       </div>
 
       {/* User Identity Horizontal Card (Matching Reference Photo) */}
