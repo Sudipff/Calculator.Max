@@ -40,6 +40,7 @@ import {
   sendServiceWorkerPushNotification,
 } from '../lib/reminderService';
 import { flushOfflineSyncQueue, getPendingSyncCount } from '../lib/notesTasksStorage';
+import SubscriptionView, { type SubscriptionPlanId } from './SubscriptionView';
 
 export interface CurrencyOption {
   symbol: string;
@@ -91,6 +92,10 @@ export default function ProfileSettingsView({
   calculationsCount,
 }: ProfileSettingsViewProps) {
   const [expandedAccount, setExpandedAccount] = useState<ExpandedAccountPanel>(null);
+  const [showSubscriptionView, setShowSubscriptionView] = useState(false);
+  const [activePlanLabel, setActivePlanLabel] = useState<SubscriptionPlanId>(
+    currentUser ? 'pro' : 'starter'
+  );
   const [showBackupPanel, setShowBackupPanel] = useState(false);
 
   // User profile editing state
@@ -99,7 +104,7 @@ export default function ProfileSettingsView({
   const [profileFeedback, setProfileFeedback] = useState<string | null>(null);
 
   // Preferences persisted to localStorage
-  const [themeMode, setThemeMode] = useState<'light' | 'dark'>('dark');
+  const [themeMode, setThemeMode] = useState<'light' | 'dark'>('light');
   const [localUnitSystem, setLocalUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const [notifyUpdates, setNotifyUpdates] = useState(true);
   const [notifyGoals, setNotifyGoals] = useState(true);
@@ -137,11 +142,13 @@ export default function ProfileSettingsView({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    const userSet = localStorage.getItem('calculator-max-user-theme-set') === 'true';
     const savedTheme = localStorage.getItem('calculator-max-theme');
     const resolvedTheme: 'light' | 'dark' =
-      savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'dark';
+      userSet && (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : 'light';
     setThemeMode(resolvedTheme);
     document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.classList.toggle('dark', resolvedTheme === 'dark');
 
     const handleThemeChanged = (e: Event) => {
       const next = (e as CustomEvent)?.detail?.theme;
@@ -500,6 +507,22 @@ export default function ProfileSettingsView({
   const activeCurrencyObj =
     currencies.find((c) => c.symbol === currency) || currencies[0];
 
+  if (showSubscriptionView) {
+    return (
+      <SubscriptionView
+        currentUser={currentUser}
+        currency={currency}
+        currencies={currencies}
+        onCurrencyChange={onCurrencyChange}
+        onClose={() => setShowSubscriptionView(false)}
+        onOpenAuthModal={onOpenAuthModal}
+        onStorageSynced={(_used, _limit, planId) => {
+          setActivePlanLabel(planId);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="w-full max-w-2xl mx-auto px-3 sm:px-4 pb-8 space-y-5">
       {/* Top Profile Title & Quick Session Control */}
@@ -718,48 +741,35 @@ export default function ProfileSettingsView({
             )}
           </div>
 
-          {/* Subscriptions */}
+          {/* Subscriptions (Opens dedicated Subscription & 10MB Storage Status View) */}
           <div>
             <button
               type="button"
-              onClick={() =>
-                setExpandedAccount((prev) =>
-                  prev === 'subscriptions' ? null : 'subscriptions'
-                )
-              }
+              onClick={() => setShowSubscriptionView(true)}
               className="w-full px-4 py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors cursor-pointer text-left"
             >
               <div className="flex items-center gap-3 min-w-0">
                 <span className="w-8 h-8 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
                   <Crown className="w-4 h-4" />
                 </span>
-                <span className="text-sm font-semibold text-slate-800 truncate">
-                  Subscriptions
-                </span>
+                <div className="min-w-0">
+                  <span className="block text-sm font-semibold text-slate-800 truncate">
+                    Subscriptions
+                  </span>
+                  <span className="block text-[11px] text-slate-500 truncate">
+                    10MB Cloud Storage Limit · Plans &amp; Usage
+                  </span>
+                </div>
               </div>
               <div className="flex items-center gap-1.5 text-xs font-semibold shrink-0">
-                <span className={currentUser ? 'text-emerald-600' : 'text-slate-500'}>
-                  {currentUser ? 'Premium - Active' : 'Free Plan'}
+                <span className={currentUser ? 'text-emerald-600 uppercase' : 'text-slate-500 uppercase'}>
+                  {activePlanLabel === 'starter'
+                    ? 'Starter · Free'
+                    : `${activePlanLabel} · Active`}
                 </span>
-                {expandedAccount === 'subscriptions' ? (
-                  <ChevronDown className="w-4 h-4 text-slate-400" />
-                ) : (
-                  <ChevronRight className="w-4 h-4 text-slate-400" />
-                )}
+                <ChevronRight className="w-4 h-4 text-slate-400" />
               </div>
             </button>
-
-            {expandedAccount === 'subscriptions' && (
-              <div className="px-4 pb-4 pt-2 bg-slate-50/60 border-t border-slate-100 space-y-1.5 text-xs text-slate-600">
-                <p className="font-bold text-slate-800">
-                  {currentUser ? 'Calculator Max Pro Workspace' : 'Calculator Max Standard'}
-                </p>
-                <p>
-                  Includes full Scientific Calculator, EMI &amp; Wishlist Planners, Notes Manager,
-                  Tasks Organizer, and encrypted cloud synchronization.
-                </p>
-              </div>
-            )}
           </div>
         </div>
       </section>

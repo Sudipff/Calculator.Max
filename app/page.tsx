@@ -32,8 +32,6 @@ import {
   ArrowLeft,
   LogOut,
   ArrowDown,
-  Sun,
-  Moon,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import EmiCalculator from '../components/EmiCalculator';
@@ -322,7 +320,6 @@ const CALCULATOR_TOOLS_INFO: ToolInfoItem[] = [
 
 export default function RetailCalc() {
   const [currency, setCurrency] = useState('₹');
-  const [themeMode, setThemeMode] = useState<'light' | 'dark'>('dark');
   const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const [isClient, setIsClient] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
@@ -669,20 +666,21 @@ export default function RetailCalc() {
     const savedCurrency = localStorage.getItem('retail-calc-currency');
     if (savedCurrency) setCurrency(savedCurrency);
 
+    const userSetTheme = localStorage.getItem('calculator-max-user-theme-set') === 'true';
     const savedTheme = localStorage.getItem('calculator-max-theme');
     const resolvedTheme: 'light' | 'dark' =
-      savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : 'dark';
-    setThemeMode(resolvedTheme);
+      userSetTheme && (savedTheme === 'light' || savedTheme === 'dark') ? savedTheme : 'light';
     document.documentElement.dataset.theme = resolvedTheme;
-    if (!savedTheme) {
-      localStorage.setItem('calculator-max-theme', resolvedTheme);
+    document.documentElement.classList.toggle('dark', resolvedTheme === 'dark');
+    if (!userSetTheme) {
+      localStorage.setItem('calculator-max-theme', 'light');
     }
 
     const handleThemeSync = (e: Event) => {
       const next = (e as CustomEvent)?.detail?.theme;
       if (next === 'light' || next === 'dark') {
-        setThemeMode(next);
         document.documentElement.dataset.theme = next;
+        document.documentElement.classList.toggle('dark', next === 'dark');
       }
     };
     window.addEventListener('calcmax:theme-changed', handleThemeSync);
@@ -717,16 +715,6 @@ export default function RetailCalc() {
       window.removeEventListener('calcmax:theme-changed', handleThemeSync);
     };
   }, [loadUserHistory]);
-
-  const toggleHeaderTheme = useCallback(() => {
-    const next: 'light' | 'dark' = themeMode === 'dark' ? 'light' : 'dark';
-    setThemeMode(next);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('calculator-max-theme', next);
-      document.documentElement.dataset.theme = next;
-      window.dispatchEvent(new CustomEvent('calcmax:theme-changed', { detail: { theme: next } }));
-    }
-  }, [themeMode]);
 
   useEffect(() => {
     if (isClient) {
@@ -2200,24 +2188,9 @@ export default function RetailCalc() {
                 </button>
               </h1>
 
-              {/* Right: Install App (when available) + Theme Toggle + Profile Avatar */}
+              {/* Right: Install App (when available) + Profile Avatar */}
               <div className="flex items-center gap-1.5 shrink-0">
                 <PWAInstallButton compact />
-                <motion.button
-                  type="button"
-                  whileTap={{ scale: 0.9 }}
-                  whileHover={{ scale: 1.05 }}
-                  onClick={toggleHeaderTheme}
-                  className="w-9 h-9 flex items-center justify-center rounded-full bg-slate-100 hover:bg-slate-200/80 text-slate-700 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  aria-label={themeMode === 'dark' ? 'Switch to Light theme' : 'Switch to Dark theme'}
-                  title={themeMode === 'dark' ? 'Switch to Light theme' : 'Switch to Dark theme'}
-                >
-                  {themeMode === 'dark' ? (
-                    <Sun className="w-4 h-4 text-amber-400" />
-                  ) : (
-                    <Moon className="w-4 h-4 text-slate-700" />
-                  )}
-                </motion.button>
                 <motion.button
                   type="button"
                   whileTap={{ scale: 0.92 }}

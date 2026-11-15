@@ -12,13 +12,14 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: 'dark',
-  isDark: true,
+  theme: 'light',
+  isDark: false,
   setTheme: () => {},
   toggleTheme: () => {},
 });
 
 const STORAGE_KEY = 'calculator-max-theme';
+const USER_SET_KEY = 'calculator-max-user-theme-set';
 
 function applyThemeToDom(mode: ThemeMode) {
   if (typeof document === 'undefined') return;
@@ -31,13 +32,14 @@ function applyThemeToDom(mode: ThemeMode) {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeMode>('dark');
+  const [theme, setThemeState] = useState<ThemeMode>('light');
 
   const setTheme = useCallback((next: ThemeMode) => {
     setThemeState(next);
     applyThemeToDom(next);
     if (typeof window !== 'undefined') {
       try {
+        localStorage.setItem(USER_SET_KEY, 'true');
         localStorage.setItem(STORAGE_KEY, next);
       } catch {
         // ignore storage errors
@@ -51,16 +53,17 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [theme, setTheme]);
 
   useEffect(() => {
-    let resolved: ThemeMode = 'dark';
+    let resolved: ThemeMode = 'light';
     try {
+      const userSet = localStorage.getItem(USER_SET_KEY) === 'true';
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved === 'light' || saved === 'dark') {
+      if (userSet && (saved === 'light' || saved === 'dark')) {
         resolved = saved;
       } else {
-        localStorage.setItem(STORAGE_KEY, 'dark');
+        localStorage.setItem(STORAGE_KEY, 'light');
       }
     } catch {
-      resolved = 'dark';
+      resolved = 'light';
     }
     setThemeState(resolved);
     applyThemeToDom(resolved);
@@ -68,6 +71,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const handleCustomTheme = (e: Event) => {
       const next = (e as CustomEvent)?.detail?.theme;
       if (next === 'light' || next === 'dark') {
+        try {
+          localStorage.setItem(USER_SET_KEY, 'true');
+          localStorage.setItem(STORAGE_KEY, next);
+        } catch {
+          // ignore storage errors
+        }
         setThemeState(next);
         applyThemeToDom(next);
       }

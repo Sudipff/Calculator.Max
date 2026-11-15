@@ -40,17 +40,16 @@ export const viewport: Viewport = {
 const themeInitScript = `
 (function() {
   try {
+    var userSet = localStorage.getItem('calculator-max-user-theme-set') === 'true';
     var saved = localStorage.getItem('calculator-max-theme');
-    var theme = (saved === 'light' || saved === 'dark') ? saved : 'dark';
+    var theme = (userSet && (saved === 'light' || saved === 'dark')) ? saved : 'light';
     document.documentElement.dataset.theme = theme;
     document.documentElement.classList.toggle('dark', theme === 'dark');
     document.documentElement.style.colorScheme = theme;
-    if (!saved) {
-      localStorage.setItem('calculator-max-theme', theme);
-    }
+    localStorage.setItem('calculator-max-theme', theme);
   } catch (e) {
-    document.documentElement.dataset.theme = 'dark';
-    document.documentElement.classList.add('dark');
+    document.documentElement.dataset.theme = 'light';
+    document.documentElement.classList.remove('dark');
   }
 })();
 `;
@@ -61,7 +60,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" data-theme="dark" suppressHydrationWarning className="h-full w-full dark">
+    <html lang="en" data-theme="light" suppressHydrationWarning className="h-full w-full">
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
