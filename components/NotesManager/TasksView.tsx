@@ -47,6 +47,7 @@ import {
   sendDeviceNotification,
   requestNotificationPermission,
 } from '@/lib/reminderService';
+import { useTheme } from '@/components/ThemeProvider';
 
 interface TasksViewProps {
   currentUser: any;
@@ -68,7 +69,21 @@ function resolvePriority(task: Pick<TaskItem, 'priority' | 'isStarred'>): TaskPr
   return task.isStarred ? 'high' : 'medium';
 }
 
-function getTaskCardSurface(priority: TaskPriority, completed: boolean): { bg: string; border: string } {
+function getTaskCardSurface(priority: TaskPriority, completed: boolean, isDark = false): { bg: string; border: string } {
+  if (isDark) {
+    if (completed) {
+      return { bg: '#162235', border: '#253959' };
+    }
+    switch (priority) {
+      case 'high':
+        return { bg: '#2a1820', border: '#4c2633' };
+      case 'low':
+        return { bg: '#132820', border: '#1f4435' };
+      case 'medium':
+      default:
+        return { bg: '#282315', border: '#473d21' };
+    }
+  }
   if (completed) {
     return { bg: '#eaf3ff', border: '#d1e2fb' };
   }
@@ -110,6 +125,7 @@ export default function TasksView({
   closeEditorSignal = 0,
   refreshSignal = 0,
 }: TasksViewProps) {
+  const { isDark } = useTheme();
   const [isMounted, setIsMounted] = useState(false);
   const [taskLists, setTaskLists] = useState<TaskList[]>([]);
   const [activeListId, setActiveListId] = useState<string>('default-my-tasks');
@@ -1230,8 +1246,12 @@ export default function TasksView({
       {detailTask && isMounted && typeof document !== 'undefined' && createPortal(
         <div
           data-task-card="true"
+          data-task-detail="true"
+          data-task-priority={detailTask.completed ? 'completed' : resolvePriority(detailTask)}
           style={{
-            backgroundColor: getTaskCardSurface(resolvePriority(detailTask), detailTask.completed).bg,
+            backgroundColor: isDark
+              ? '#0f172a'
+              : getTaskCardSurface(resolvePriority(detailTask), detailTask.completed, false).bg,
           }}
           className="fixed inset-0 z-[99999] w-screen h-[100dvh] flex flex-col overscroll-none touch-manipulation"
         >
@@ -1667,7 +1687,7 @@ export default function TasksView({
 
   function renderTaskCard(task: TaskItem) {
     const priority = resolvePriority(task);
-    const surface = getTaskCardSurface(priority, task.completed);
+    const surface = getTaskCardSurface(priority, task.completed, isDark);
     const badge = getPriorityBadgeConfig(priority);
     const dueLabel = formatDueDateShort(task.dueDate || task.reminderAt);
     const isOverdue =
@@ -1682,6 +1702,7 @@ export default function TasksView({
       <article
         key={task.id}
         data-task-card="true"
+        data-task-priority={task.completed ? 'completed' : priority}
         onTouchStart={(e) => handleStartLongPress(task.id, e.touches[0]?.clientX, e.touches[0]?.clientY)}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleCancelLongPress}
@@ -1701,7 +1722,7 @@ export default function TasksView({
         }}
         style={{
           backgroundColor: surface.bg,
-          borderColor: isSelected ? '#2563eb' : surface.border,
+          borderColor: isSelected ? '#3b82f6' : surface.border,
         }}
         className={`group relative rounded-2xl p-3 sm:p-3.5 border transition-all duration-150 hover:shadow-md hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between min-h-[124px] sm:min-h-[136px] shadow-[0_2px_8px_rgba(15,23,42,0.04)] select-none overflow-hidden ${
           isSelected ? 'ring-2 ring-blue-500 shadow-md scale-[1.01]' : ''

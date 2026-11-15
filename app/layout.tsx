@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
 import PwaRuntime from '../components/PwaRuntime';
+import { ThemeProvider } from '../components/ThemeProvider';
 
 export const metadata: Metadata = {
   title: 'Calculator Max • All Calculators, Notes & Tasks',
@@ -30,8 +31,29 @@ export const viewport: Viewport = {
   maximumScale: 5,
   userScalable: true,
   viewportFit: 'cover',
-  themeColor: '#2563eb',
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#0f172a' },
+    { media: '(prefers-color-scheme: light)', color: '#2563eb' },
+  ],
 };
+
+const themeInitScript = `
+(function() {
+  try {
+    var saved = localStorage.getItem('calculator-max-theme');
+    var theme = (saved === 'light' || saved === 'dark') ? saved : 'dark';
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.style.colorScheme = theme;
+    if (!saved) {
+      localStorage.setItem('calculator-max-theme', theme);
+    }
+  } catch (e) {
+    document.documentElement.dataset.theme = 'dark';
+    document.documentElement.classList.add('dark');
+  }
+})();
+`;
 
 export default function RootLayout({
   children,
@@ -39,10 +61,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="h-full w-full">
-      <body className="min-h-full w-full max-w-[100vw] overflow-x-clip antialiased">
-        {children}
-        <PwaRuntime />
+    <html lang="en" data-theme="dark" suppressHydrationWarning className="h-full w-full dark">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
+      <body className="min-h-full w-full max-w-[100vw] overflow-x-clip antialiased transition-colors duration-200">
+        <ThemeProvider>
+          {children}
+          <PwaRuntime />
+        </ThemeProvider>
       </body>
     </html>
   );

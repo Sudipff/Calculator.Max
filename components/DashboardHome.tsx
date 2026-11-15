@@ -16,6 +16,7 @@ import {
   ListTodo,
   ChevronRight,
 } from 'lucide-react';
+import { motion } from 'motion/react';
 import type { NoteItem } from '../lib/types/notes-tasks';
 
 export type DashboardTargetTab =
@@ -190,18 +191,25 @@ export default function DashboardHome({
   return (
     <div className="w-full max-w-5xl mx-auto px-4 pt-4 pb-6 space-y-5 sm:px-6 sm:pt-5 sm:space-y-6">
       {!hasAnyMatches ? (
-        <div className="bg-white/90 border border-slate-200/80 rounded-2xl p-8 text-center space-y-3 shadow-xs">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.97 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.18 }}
+          className="bg-white/90 border border-slate-200/80 rounded-2xl p-8 text-center space-y-3 shadow-xs"
+        >
           <p className="text-sm font-semibold text-slate-700">
             No calculators, tools, or notes matched &ldquo;{searchQuery}&rdquo;.
           </p>
-          <button
+          <motion.button
             type="button"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => onSearchChange('')}
             className="inline-flex items-center justify-center px-4 py-2 min-h-[44px] rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer"
           >
             Clear search
-          </button>
-        </div>
+          </motion.button>
+        </motion.div>
       ) : (
         <>
           {/* Section 1: ALL CALCULATORS */}
@@ -214,18 +222,24 @@ export default function DashboardHome({
                 All Calculators
               </h2>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                {filteredCalculators.map((card) => {
+                {filteredCalculators.map((card, index) => {
                   const Icon = card.icon;
                   return (
-                    <button
+                    <motion.button
                       key={card.id}
                       type="button"
+                      data-dashboard-card="true"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.22, delay: index * 0.03, ease: [0.22, 1, 0.36, 1] }}
+                      whileHover={{ y: -3, scale: 1.01 }}
+                      whileTap={{ scale: 0.96 }}
                       onClick={() => onSelectTool(card.id)}
-                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-all duration-150 active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[116px] min-w-0 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg}`}
+                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-colors duration-150 cursor-pointer flex flex-col justify-between min-h-[116px] min-w-0 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg}`}
                     >
                       <span className="flex items-center gap-2 mb-2.5">
                         <span
-                          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-150 group-hover:scale-105 ${card.iconBg} ${card.iconText}`}
+                          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-3 ${card.iconBg} ${card.iconText}`}
                         >
                           <Icon className="w-4.5 h-4.5" />
                         </span>
@@ -238,7 +252,7 @@ export default function DashboardHome({
                           {card.subtitle}
                         </span>
                       </span>
-                    </button>
+                    </motion.button>
                   );
                 })}
               </div>
@@ -255,25 +269,31 @@ export default function DashboardHome({
                 Quick Tools
               </h2>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                {filteredQuickTools.map((card) => {
+                {filteredQuickTools.map((card, index) => {
                   const Icon = card.icon;
                   const SecondaryIcon = card.secondaryIcon;
                   return (
-                    <button
+                    <motion.button
                       key={card.id}
                       type="button"
+                      data-dashboard-card="true"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.22, delay: 0.08 + index * 0.03, ease: [0.22, 1, 0.36, 1] }}
+                      whileHover={{ y: -3, scale: 1.01 }}
+                      whileTap={{ scale: 0.96 }}
                       onClick={() => onSelectTool(card.id)}
-                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-all duration-150 active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[116px] min-w-0 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg}`}
+                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-colors duration-150 cursor-pointer flex flex-col justify-between min-h-[116px] min-w-0 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg}`}
                     >
                       <span className="flex items-center gap-2 mb-2.5">
                         <span
-                          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-150 group-hover:scale-105 ${card.iconBg} ${card.iconText}`}
+                          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-3 ${card.iconBg} ${card.iconText}`}
                         >
                           <Icon className="w-4.5 h-4.5" />
                         </span>
                         {SecondaryIcon && (
                           <SecondaryIcon
-                            className={`w-4 h-4 shrink-0 ${card.secondaryIconClass || ''}`}
+                            className={`w-4 h-4 shrink-0 transition-transform duration-200 group-hover:scale-110 ${card.secondaryIconClass || ''}`}
                           />
                         )}
                       </span>
@@ -285,7 +305,7 @@ export default function DashboardHome({
                           {card.subtitle}
                         </span>
                       </span>
-                    </button>
+                    </motion.button>
                   );
                 })}
               </div>
@@ -294,7 +314,10 @@ export default function DashboardHome({
 
           {/* Section 3: NOTES MANAGER (Strictly Contained Entry — Individual Notes Live Inside Notes Manager View) */}
           {(showMyNotesCard || showTasksCard) && (
-            <section
+            <motion.section
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24, delay: 0.16, ease: [0.22, 1, 0.36, 1] }}
               aria-labelledby="section-notes-manager"
               className="w-full max-w-full overflow-hidden rounded-2xl bg-white/80 border border-slate-200/80 shadow-[0_2px_12px_rgba(15,23,42,0.03)] p-3.5 sm:p-4 space-y-3"
             >
@@ -305,22 +328,27 @@ export default function DashboardHome({
                 >
                   Notes Manager
                 </h2>
-                <button
+                <motion.button
                   type="button"
+                  whileHover={{ x: 2 }}
+                  whileTap={{ scale: 0.96 }}
                   onClick={() => onSelectTool('notes')}
                   className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 min-h-[36px] px-2 rounded-lg hover:bg-blue-50/70 transition-colors cursor-pointer shrink-0"
                 >
                   <span>Open Notes</span>
                   <ChevronRight className="w-3.5 h-3.5" />
-                </button>
+                </motion.button>
               </div>
 
               <div className="grid grid-cols-2 gap-2.5 sm:gap-3 w-full min-w-0 overflow-hidden">
                 {showMyNotesCard && (
-                  <button
+                  <motion.button
                     type="button"
+                    data-dashboard-card="true"
+                    whileHover={{ y: -2, scale: 1.01 }}
+                    whileTap={{ scale: 0.97 }}
                     onClick={() => onSelectTool('notes')}
-                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 sm:p-4 bg-slate-50/90 hover:bg-slate-100/90 border border-slate-200/80 shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[96px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 sm:p-4 bg-slate-50/90 hover:bg-slate-100/90 border border-slate-200/80 shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors cursor-pointer flex flex-col justify-between min-h-[96px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   >
                     <span className="flex items-center justify-between gap-2 mb-1.5 w-full min-w-0">
                       <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
@@ -331,14 +359,17 @@ export default function DashboardHome({
                     <span className="block text-xs font-medium text-slate-500 tabular-nums truncate">
                       {notes.length} {notes.length === 1 ? 'Item' : 'Items'}
                     </span>
-                  </button>
+                  </motion.button>
                 )}
 
                 {showTasksCard && (
-                  <button
+                  <motion.button
                     type="button"
+                    data-dashboard-card="true"
+                    whileHover={{ y: -2, scale: 1.01 }}
+                    whileTap={{ scale: 0.97 }}
                     onClick={() => onSelectTool('tasks')}
-                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 sm:p-4 bg-[#eef2ff] hover:bg-[#e3e9ff] border border-[#d6defe] shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors active:scale-[0.98] cursor-pointer flex flex-col justify-between min-h-[96px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 sm:p-4 bg-[#eef2ff] hover:bg-[#e3e9ff] border border-[#d6defe] shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors cursor-pointer flex flex-col justify-between min-h-[96px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   >
                     <span className="flex items-center justify-between gap-2 mb-1.5 w-full min-w-0">
                       <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
@@ -349,10 +380,10 @@ export default function DashboardHome({
                     <span className="block text-xs font-medium text-slate-600 tabular-nums truncate">
                       {tasksCount} {tasksCount === 1 ? 'Task' : 'Tasks'}
                     </span>
-                  </button>
+                  </motion.button>
                 )}
               </div>
-            </section>
+            </motion.section>
           )}
         </>
       )}

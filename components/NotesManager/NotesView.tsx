@@ -37,6 +37,7 @@ import {
   checkAndFireDueReminders,
   requestNotificationPermission,
 } from '@/lib/reminderService';
+import { useTheme } from '@/components/ThemeProvider';
 
 interface NotesViewProps {
   currentUser: any;
@@ -47,7 +48,30 @@ interface NotesViewProps {
   refreshSignal?: number;
 }
 
-function getCompactNoteSurface(colorId: string): { bg: string; border: string } {
+function getCompactNoteSurface(colorId: string, isDark = false): { bg: string; border: string } {
+  if (isDark) {
+    switch (colorId) {
+      case 'mint':
+      case 'sage':
+        return { bg: '#132a23', border: '#1f493b' };
+      case 'coral':
+      case 'blossom':
+      case 'peach':
+        return { bg: '#2c1a1e', border: '#4c2930' };
+      case 'sky':
+      case 'dusk':
+        return { bg: '#15253b', border: '#243f66' };
+      case 'lavender':
+        return { bg: '#231c38', border: '#3c2e61' };
+      case 'sand':
+        return { bg: '#2b2415', border: '#4c3f22' };
+      case 'clay':
+      case 'charcoal':
+        return { bg: '#1e293b', border: '#334155' };
+      default:
+        return { bg: '#1e293b', border: '#334155' };
+    }
+  }
   switch (colorId) {
     case 'mint':
     case 'sage':
@@ -111,6 +135,7 @@ export default function NotesView({
   closeEditorSignal = 0,
   refreshSignal = 0,
 }: NotesViewProps) {
+  const { isDark } = useTheme();
   const [isMounted, setIsMounted] = useState(false);
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -894,7 +919,9 @@ export default function NotesView({
       {editingNote && isMounted && typeof document !== 'undefined' && createPortal(
         <div
           data-note-card="true"
-          style={{ backgroundColor: getCompactNoteSurface(editingNote.color).bg }}
+          data-note-editor="true"
+          data-note-color={editingNote.color || 'default'}
+          style={{ backgroundColor: isDark ? '#0f172a' : getCompactNoteSurface(editingNote.color, false).bg }}
           className="fixed inset-0 z-[99999] w-screen h-[100dvh] flex flex-col overscroll-none select-text touch-manipulation transition-colors duration-200"
         >
           {/* Consistent Top Toolbar: Back + Subtle Status | Pin, Delete, Save, Post-Save Three-Dot Menu */}
@@ -1461,7 +1488,7 @@ export default function NotesView({
   );
 
   function renderNoteCard(note: NoteItem) {
-    const surface = getCompactNoteSurface(note.color);
+    const surface = getCompactNoteSurface(note.color, isDark);
     const isOverdue = note.reminderAt && new Date(note.reminderAt) < new Date();
     const isSelected = selectedNoteIds.includes(note.id);
 
@@ -1481,6 +1508,7 @@ export default function NotesView({
       <article
         key={note.id}
         data-note-card="true"
+        data-note-color={note.color || 'default'}
         onTouchStart={(e) => handleStartLongPress(note.id, e.touches[0]?.clientX, e.touches[0]?.clientY)}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleCancelLongPress}
@@ -1500,7 +1528,7 @@ export default function NotesView({
         }}
         style={{
           backgroundColor: surface.bg,
-          borderColor: isSelected ? '#2563eb' : surface.border,
+          borderColor: isSelected ? '#3b82f6' : surface.border,
         }}
         className={`group relative rounded-2xl p-3 sm:p-3.5 border transition-all duration-150 hover:shadow-md hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between min-h-[126px] sm:min-h-[138px] shadow-[0_2px_8px_rgba(15,23,42,0.04)] select-none overflow-hidden ${
           isSelected ? 'ring-2 ring-blue-500 shadow-md scale-[1.01]' : ''

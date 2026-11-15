@@ -32,6 +32,8 @@ import {
   ArrowLeft,
   LogOut,
   ArrowDown,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import EmiCalculator from '../components/EmiCalculator';
@@ -320,6 +322,7 @@ const CALCULATOR_TOOLS_INFO: ToolInfoItem[] = [
 
 export default function RetailCalc() {
   const [currency, setCurrency] = useState('₹');
+  const [themeMode, setThemeMode] = useState<'light' | 'dark'>('dark');
   const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const [isClient, setIsClient] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
@@ -667,9 +670,22 @@ export default function RetailCalc() {
     if (savedCurrency) setCurrency(savedCurrency);
 
     const savedTheme = localStorage.getItem('calculator-max-theme');
-    if (savedTheme === 'dark' || savedTheme === 'light') {
-      document.documentElement.dataset.theme = savedTheme;
+    const resolvedTheme: 'light' | 'dark' =
+      savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : 'dark';
+    setThemeMode(resolvedTheme);
+    document.documentElement.dataset.theme = resolvedTheme;
+    if (!savedTheme) {
+      localStorage.setItem('calculator-max-theme', resolvedTheme);
     }
+
+    const handleThemeSync = (e: Event) => {
+      const next = (e as CustomEvent)?.detail?.theme;
+      if (next === 'light' || next === 'dark') {
+        setThemeMode(next);
+        document.documentElement.dataset.theme = next;
+      }
+    };
+    window.addEventListener('calcmax:theme-changed', handleThemeSync);
 
     const savedUnitSys = localStorage.getItem('calculator-max-unit-system');
     if (savedUnitSys === 'metric' || savedUnitSys === 'imperial') {
@@ -696,7 +712,21 @@ export default function RetailCalc() {
     } else {
       setHistory(getCalculationHistory());
     }
+
+    return () => {
+      window.removeEventListener('calcmax:theme-changed', handleThemeSync);
+    };
   }, [loadUserHistory]);
+
+  const toggleHeaderTheme = useCallback(() => {
+    const next: 'light' | 'dark' = themeMode === 'dark' ? 'light' : 'dark';
+    setThemeMode(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('calculator-max-theme', next);
+      document.documentElement.dataset.theme = next;
+      window.dispatchEvent(new CustomEvent('calcmax:theme-changed', { detail: { theme: next } }));
+    }
+  }, [themeMode]);
 
   useEffect(() => {
     if (isClient) {
@@ -2127,40 +2157,6 @@ export default function RetailCalc() {
     </div>
   );
 
-  const currencyPreferencesCard = (
-    <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/80 space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-          <Globe className="w-4 h-4 text-blue-600" />
-          <span>Default Country & Currency</span>
-        </div>
-        <span className="text-xs font-extrabold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-lg">
-          {currency}
-        </span>
-      </div>
-      <div className="relative">
-        <select
-          value={CURRENCIES.find((c) => c.symbol === currency)?.code || 'INR'}
-          onChange={(e) => {
-            const selected = CURRENCIES.find((c) => c.code === e.target.value);
-            if (selected) {
-              setCurrency(selected.symbol);
-              triggerVibration('click');
-            }
-          }}
-          className="w-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 font-semibold text-xs py-2.5 pl-3 pr-8 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-200 appearance-none cursor-pointer"
-        >
-          {CURRENCIES.map((c) => (
-            <option key={c.code} value={c.code}>
-              {c.flag} {c.country} ({c.code} {c.symbol})
-            </option>
-          ))}
-        </select>
-        <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-      </div>
-    </div>
-  );
-
   return (
     <div className="min-h-[100dvh] w-full bg-gradient-to-br from-[#eef7ff] via-[#f6faf7] to-[#fdf6ef] text-slate-800 flex flex-col sm:items-center font-sans antialiased m-0 p-0">
       <div className="mobile-edge-shell w-full max-w-5xl relative flex-1 flex flex-col min-h-[100dvh] m-0 p-0">
@@ -2172,7 +2168,6 @@ export default function RetailCalc() {
           requestedAuthTab={requestedAuthTab}
           signOutSignal={signOutSignal}
           onRequestSignOut={() => setShowSignOutConfirm(true)}
-          currencySlot={currencyPreferencesCard}
           onSyncHistory={handleSyncFromCloudSql}
           onUserChanged={handleUserChanged}
           onModalOpenChange={(isOpen) => {
@@ -2205,11 +2200,28 @@ export default function RetailCalc() {
                 </button>
               </h1>
 
-              {/* Right: Install App (when available) + Profile Avatar */}
+              {/* Right: Install App (when available) + Theme Toggle + Profile Avatar */}
               <div className="flex items-center gap-1.5 shrink-0">
                 <PWAInstallButton compact />
-                <button
+                <motion.button
                   type="button"
+                  whileTap={{ scale: 0.9 }}
+                  whileHover={{ scale: 1.05 }}
+                  onClick={toggleHeaderTheme}
+                  className="w-9 h-9 flex items-center justify-center rounded-full bg-slate-100 hover:bg-slate-200/80 text-slate-700 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  aria-label={themeMode === 'dark' ? 'Switch to Light theme' : 'Switch to Dark theme'}
+                  title={themeMode === 'dark' ? 'Switch to Light theme' : 'Switch to Dark theme'}
+                >
+                  {themeMode === 'dark' ? (
+                    <Sun className="w-4 h-4 text-amber-400" />
+                  ) : (
+                    <Moon className="w-4 h-4 text-slate-700" />
+                  )}
+                </motion.button>
+                <motion.button
+                  type="button"
+                  whileTap={{ scale: 0.92 }}
+                  whileHover={{ scale: 1.04 }}
                   onClick={() => handleTabChange('profile')}
                   className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-slate-100/80 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   aria-label="Open Profile & Account Settings"
@@ -2238,7 +2250,7 @@ export default function RetailCalc() {
                       <User className="w-4.5 h-4.5" />
                     </span>
                   )}
-                </button>
+                </motion.button>
               </div>
             </div>
 
@@ -2321,20 +2333,29 @@ export default function RetailCalc() {
               key={activeTab}
               custom={direction}
               variants={{
-                enter: {
+                enter: (dir: number) => ({
                   opacity: 0,
-                },
+                  x: dir > 0 ? 22 : -22,
+                  y: 4,
+                  scale: 0.992,
+                }),
                 center: {
                   opacity: 1,
+                  x: 0,
+                  y: 0,
+                  scale: 1,
                 },
-                exit: {
+                exit: (dir: number) => ({
                   opacity: 0,
-                },
+                  x: dir > 0 ? -16 : 16,
+                  y: -2,
+                  scale: 0.992,
+                }),
               }}
               initial="enter"
               animate="center"
               exit="exit"
-              transition={{ duration: 0.14, ease: [0.25, 0.1, 0.25, 1] }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
               className={`w-full flex-1 flex flex-col ${
                 activeTab === 'calculator' ||
                 activeTab === 'home' ||
@@ -2598,61 +2619,99 @@ export default function RetailCalc() {
         {!isNoteFullScreen && (
           <nav
             aria-label="Primary bottom navigation"
-            className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/80 shadow-[0_-4px_20px_rgba(15,23,42,0.04)] pb-[env(safe-area-inset-bottom)]"
+            className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/80 shadow-[0_-4px_20px_rgba(15,23,42,0.04)] pb-[env(safe-area-inset-bottom)] transition-colors"
           >
             <div className="max-w-5xl mx-auto grid grid-cols-5 items-center h-14 px-2">
-              <button
+              <motion.button
                 type="button"
+                whileTap={{ scale: 0.9 }}
+                whileHover={{ y: -1.5 }}
                 onClick={() => handleTabChange('home')}
-                className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
-                  activeTab === 'home' ? 'text-slate-900 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
+                className={`relative min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
+                  activeTab === 'home' ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
                 }`}
               >
-                <Home className={`w-5 h-5 ${activeTab === 'home' ? 'fill-slate-900 text-slate-900' : ''}`} />
+                {activeTab === 'home' && (
+                  <motion.span
+                    layoutId="bottom-nav-indicator"
+                    className="absolute -top-1 w-6 h-1 rounded-full bg-blue-600"
+                    transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+                  />
+                )}
+                <Home className={`w-5 h-5 ${activeTab === 'home' ? 'text-blue-600' : ''}`} />
                 <span className="text-[10px] tracking-tight">Home</span>
-              </button>
+              </motion.button>
 
-              <button
+              <motion.button
                 type="button"
+                whileTap={{ scale: 0.9 }}
+                whileHover={{ y: -1.5 }}
                 onClick={() => handleTabChange('history')}
-                className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
+                className={`relative min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
                   activeTab === 'history' ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
                 }`}
               >
+                {activeTab === 'history' && (
+                  <motion.span
+                    layoutId="bottom-nav-indicator"
+                    className="absolute -top-1 w-6 h-1 rounded-full bg-blue-600"
+                    transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+                  />
+                )}
                 <Clock className="w-5 h-5" />
                 <span className="text-[10px] tracking-tight">History</span>
-              </button>
+              </motion.button>
 
-              <button
+              <motion.button
                 type="button"
+                whileTap={{ scale: 0.9 }}
+                whileHover={{ y: -1.5 }}
                 onClick={handleFocusDashboardSearch}
-                className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-slate-400 hover:text-slate-700 font-medium transition-colors cursor-pointer rounded-xl"
+                className="relative min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-slate-400 hover:text-slate-700 font-medium transition-colors cursor-pointer rounded-xl"
               >
                 <Search className="w-5 h-5" />
                 <span className="text-[10px] tracking-tight">Search</span>
-              </button>
+              </motion.button>
 
-              <button
+              <motion.button
                 type="button"
+                whileTap={{ scale: 0.9 }}
+                whileHover={{ y: -1.5 }}
                 onClick={() => handleTabChange('notes')}
-                className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
+                className={`relative min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
                   activeTab === 'notes' ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
                 }`}
               >
+                {activeTab === 'notes' && (
+                  <motion.span
+                    layoutId="bottom-nav-indicator"
+                    className="absolute -top-1 w-6 h-1 rounded-full bg-blue-600"
+                    transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+                  />
+                )}
                 <FileText className="w-5 h-5" />
                 <span className="text-[10px] tracking-tight">Notes</span>
-              </button>
+              </motion.button>
 
-              <button
+              <motion.button
                 type="button"
+                whileTap={{ scale: 0.9 }}
+                whileHover={{ y: -1.5 }}
                 onClick={() => handleTabChange('tasks')}
-                className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
+                className={`relative min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer rounded-xl ${
                   activeTab === 'tasks' ? 'text-blue-600 font-bold' : 'text-slate-400 hover:text-slate-700 font-medium'
                 }`}
               >
+                {activeTab === 'tasks' && (
+                  <motion.span
+                    layoutId="bottom-nav-indicator"
+                    className="absolute -top-1 w-6 h-1 rounded-full bg-blue-600"
+                    transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+                  />
+                )}
                 <ListTodo className="w-5 h-5" />
                 <span className="text-[10px] tracking-tight">Tasks</span>
-              </button>
+              </motion.button>
             </div>
           </nav>
         )}

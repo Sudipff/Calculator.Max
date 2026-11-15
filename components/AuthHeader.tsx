@@ -40,7 +40,6 @@ interface AuthHeaderProps {
   headless?: boolean;
   openSignal?: number;
   closeSignal?: number;
-  currencySlot?: React.ReactNode;
 }
 
 type AuthTab = 'google' | 'email_login' | 'email_signup' | 'demo' | 'forgot_password' | 'update_password';
@@ -57,7 +56,6 @@ export default function AuthHeader({
   headless = false,
   openSignal = 0,
   closeSignal = 0,
-  currencySlot,
 }: AuthHeaderProps) {
   const [mounted, setMounted] = useState(false);
   const [user, setUser] = useState<SupabaseUser | null>(null);
@@ -979,29 +977,19 @@ export default function AuthHeader({
                   Calculator <span className="text-blue-600">Max</span>
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowModal(false);
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-full transition-all cursor-pointer"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Back to Calculator</span>
-              </button>
             </div>
 
-            {/* Desktop Close / Return Button */}
+            {/* Prominent Bottom-Right Back to Calculator Button */}
             <button
               type="button"
               onClick={() => {
                 setShowModal(false);
               }}
-              className="hidden md:flex absolute top-6 right-6 z-50 px-3.5 py-2 bg-slate-100/90 hover:bg-slate-200 text-slate-700 rounded-full backdrop-blur-md transition-all shadow-sm cursor-pointer items-center gap-1.5"
-              title="Close and return to app"
+              className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-5 py-3.5 sm:px-6 sm:py-4 min-h-[48px] bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-sm sm:text-base rounded-2xl shadow-[0_10px_28px_rgba(37,99,235,0.38)] border border-blue-400/30 transition-all cursor-pointer"
+              title="Close and return to Calculator"
             >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="text-xs font-bold text-slate-700">Back to Calculator</span>
+              <ArrowLeft className="w-5 h-5 shrink-0" />
+              <span>Back to Calculator</span>
             </button>
 
             {/* Left Branding Container */}
@@ -1047,7 +1035,7 @@ export default function AuthHeader({
             </div>
 
             {/* Right Form Container */}
-            <div className="w-full md:w-7/12 lg:w-1/2 min-h-[calc(100dvh-57px)] md:min-h-[100dvh] p-6 sm:p-10 md:p-14 flex flex-col justify-center overflow-y-auto">
+            <div className="w-full md:w-7/12 lg:w-1/2 min-h-[calc(100dvh-57px)] md:min-h-[100dvh] p-6 pb-24 sm:p-10 sm:pb-24 md:p-14 md:pb-24 flex flex-col justify-center overflow-y-auto">
               {user && activeTab !== 'update_password' ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center space-y-4">
                   <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 mb-2 border border-emerald-200">
@@ -1093,11 +1081,6 @@ export default function AuthHeader({
                       <span>Sign Out</span>
                     </button>
                   </div>
-                  {currencySlot && (
-                    <div className="w-full max-w-md pt-4 text-left">
-                      {currencySlot}
-                    </div>
-                  )}
 
                   {/* Privacy, Encryption & Compliance Controls */}
                   <div className="w-full max-w-md bg-slate-50 border border-slate-200/80 rounded-2xl p-4 text-left space-y-3 mt-2">
@@ -1583,12 +1566,6 @@ export default function AuthHeader({
                         </button>
                       </div>
                     </form>
-                  )}
-
-                  {currencySlot && (
-                    <div className="mt-4">
-                      {currencySlot}
-                    </div>
                   )}
 
                   <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200/80 text-left text-[11px] text-slate-500 space-y-1 mt-4">

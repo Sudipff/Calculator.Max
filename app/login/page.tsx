@@ -580,23 +580,18 @@ export default function LoginPage() {
             <div className="w-8 h-8 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-xs">
               <Calculator className="w-4 h-4" />
             </div>
-            <span className="font-extrabold text-base text-slate-800">Retail<span className="text-blue-600">Calc</span></span>
+            <span className="font-extrabold text-base text-slate-800">
+              Calculator<span className="text-blue-600">Max</span>
+            </span>
           </div>
-          <Link
-            href="/"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-full transition-all cursor-pointer"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Back to Calculator</span>
-          </Link>
         </div>
 
-        {/* Desktop Back to App Link */}
+        {/* Prominent Bottom-Right Back to Calculator Button */}
         <Link
           href="/"
-          className="hidden md:flex absolute top-6 right-6 z-20 items-center gap-1.5 px-3.5 py-2 bg-slate-100/90 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-full transition-all cursor-pointer backdrop-blur-xs shadow-sm"
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-5 py-3.5 sm:px-6 sm:py-4 min-h-[48px] bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-sm sm:text-base rounded-2xl shadow-[0_10px_28px_rgba(37,99,235,0.38)] border border-blue-400/30 transition-all cursor-pointer"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="w-5 h-5 shrink-0" />
           <span>Back to Calculator</span>
         </Link>
 
@@ -609,7 +604,7 @@ export default function LoginPage() {
               </div>
               <div>
                 <h2 className="text-2xl font-extrabold tracking-tight text-white leading-tight">
-                  Retail<span className="text-blue-300">Calc</span>
+                  Calculator<span className="text-blue-300">Max</span>
                 </h2>
                 <p className="text-blue-200/80 text-xs font-semibold uppercase tracking-widest">
                   Pro Workspace
@@ -638,7 +633,7 @@ export default function LoginPage() {
         </div>
 
         {/* Right Form Container */}
-        <div className="w-full md:w-7/12 lg:w-1/2 min-h-[calc(100dvh-57px)] md:min-h-[100dvh] p-6 sm:p-10 md:p-14 flex flex-col justify-center overflow-y-auto overscroll-y-contain">
+        <div className="w-full md:w-7/12 lg:w-1/2 min-h-[calc(100dvh-57px)] md:min-h-[100dvh] p-6 pb-24 sm:p-10 sm:pb-24 md:p-14 md:pb-24 flex flex-col justify-center overflow-y-auto overscroll-y-contain">
           <div className="max-w-md w-full mx-auto">
           {currentUser && activeTab !== 'update_password' ? (
             <div className="py-8 text-center space-y-4">

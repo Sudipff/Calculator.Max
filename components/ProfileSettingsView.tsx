@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   User,
   ShieldCheck,
@@ -27,7 +28,10 @@ import {
   KeyRound,
   ExternalLink,
   Lock,
+  Globe,
+  X,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { createClient } from '@/utils/supabase/client';
 import type { HistoryItem } from '../lib/historyStorage';
 import {
@@ -95,7 +99,7 @@ export default function ProfileSettingsView({
   const [profileFeedback, setProfileFeedback] = useState<string | null>(null);
 
   // Preferences persisted to localStorage
-  const [themeMode, setThemeMode] = useState<'light' | 'dark'>('light');
+  const [themeMode, setThemeMode] = useState<'light' | 'dark'>('dark');
   const [localUnitSystem, setLocalUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const [notifyUpdates, setNotifyUpdates] = useState(true);
   const [notifyGoals, setNotifyGoals] = useState(true);
@@ -106,6 +110,7 @@ export default function ProfileSettingsView({
   const [lastSyncedText, setLastSyncedText] = useState('Ready to sync');
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default');
+  const [skipBlockedPushPopup, setSkipBlockedPushPopup] = useState(false);
   const [pushFeedback, setPushFeedback] = useState<string | null>(null);
   const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
   const [privacyLoading, setPrivacyLoading] = useState(false);
@@ -133,10 +138,18 @@ export default function ProfileSettingsView({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const savedTheme = localStorage.getItem('calculator-max-theme');
-    if (savedTheme === 'dark' || savedTheme === 'light') {
-      setThemeMode(savedTheme);
-      document.documentElement.dataset.theme = savedTheme;
-    }
+    const resolvedTheme: 'light' | 'dark' =
+      savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'dark';
+    setThemeMode(resolvedTheme);
+    document.documentElement.dataset.theme = resolvedTheme;
+
+    const handleThemeChanged = (e: Event) => {
+      const next = (e as CustomEvent)?.detail?.theme;
+      if (next === 'dark' || next === 'light') {
+        setThemeMode(next);
+      }
+    };
+    window.addEventListener('calcmax:theme-changed', handleThemeChanged);
     const savedUnits = localStorage.getItem('calculator-max-unit-system');
     if (savedUnits === 'metric' || savedUnits === 'imperial') {
       setLocalUnitSystem(savedUnits);
@@ -163,6 +176,21 @@ export default function ProfileSettingsView({
     window.addEventListener('focus', checkPerm);
     document.addEventListener('visibilitychange', checkPerm);
 
+    let permStatus: PermissionStatus | null = null;
+    if ('permissions' in navigator && typeof navigator.permissions?.query === 'function') {
+      navigator.permissions
+        .query({ name: 'notifications' as PermissionName })
+        .then((status) => {
+          permStatus = status;
+          status.onchange = () => {
+            checkPerm();
+          };
+        })
+        .catch(() => {});
+    }
+
+    const permInterval = window.setInterval(checkPerm, 1500);
+
     const handleSyncUpdated = () => {
       const pending = getPendingSyncCount(currentUser?.id);
       setPendingSyncCount(pending);
@@ -177,8 +205,13 @@ export default function ProfileSettingsView({
     window.addEventListener('calcmax:sync-updated', handleSyncUpdated);
     return () => {
       window.removeEventListener('calcmax:sync-updated', handleSyncUpdated);
+      window.removeEventListener('calcmax:theme-changed', handleThemeChanged);
       window.removeEventListener('focus', checkPerm);
       document.removeEventListener('visibilitychange', checkPerm);
+      window.clearInterval(permInterval);
+      if (permStatus) {
+        permStatus.onchange = null;
+      }
     };
   }, [currentUser]);
 
@@ -188,6 +221,7 @@ export default function ProfileSettingsView({
     if (typeof window !== 'undefined') {
       localStorage.setItem('calculator-max-theme', next);
       document.documentElement.dataset.theme = next;
+      window.dispatchEvent(new CustomEvent('calcmax:theme-changed', { detail: { theme: next } }));
     }
   };
 
@@ -228,12 +262,14 @@ export default function ProfileSettingsView({
     const perm = await requestNotificationPermission(currentUser?.id);
     setNotificationPermission(perm);
     if (perm === 'granted') {
+      setSkipBlockedPushPopup(false);
       playReminderChime(false);
       await sendServiceWorkerPushNotification('Calculator Max Push Active', {
         body: 'Scheduled Note & Task reminders will alert you even when offline.',
       });
       setPushFeedback('Push notifications enabled for offline & background alerts.');
     } else if (perm === 'denied') {
+      setSkipBlockedPushPopup(false);
       setPushFeedback('Blocked in browser settings. Enable Notifications for this site to receive alerts.');
     }
     setTimeout(() => setPushFeedback(null), 4000);
@@ -772,31 +808,46 @@ export default function ProfileSettingsView({
             </div>
           </div>
 
-          {/* Currency Selector */}
-          <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+
+
+          {/* Currency Selection (Placed directly after Theme option with simplified primary dropdown) */}
+          <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/40">
             <div className="flex items-center gap-3 min-w-0">
               <span className="w-8 h-8 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
                 <Coins className="w-4 h-4" />
               </span>
-              <span className="text-sm font-semibold text-slate-800 truncate">Currency</span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-800 truncate">
+                    Currency Selection
+                  </span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200/80">
+                    {activeCurrencyObj?.symbol} {activeCurrencyObj?.code}
+                  </span>
+                </div>
+                <span className="block text-[11px] text-slate-500 truncate mt-0.5">
+                  {activeCurrencyObj?.flag} {activeCurrencyObj?.country} · {activeCurrencyObj?.name}
+                </span>
+              </div>
             </div>
-            <div className="relative shrink-0">
+
+            <div className="relative w-full sm:w-56 shrink-0">
               <select
-                aria-label="Select default currency"
+                aria-label="Select currency and country"
                 value={activeCurrencyObj?.code || 'INR'}
                 onChange={(e) => {
                   const found = currencies.find((c) => c.code === e.target.value);
                   if (found) onCurrencyChange(found.symbol);
                 }}
-                className="bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-xl py-1.5 pl-2.5 pr-7 text-xs font-bold text-slate-800 appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-100"
+                className="w-full bg-white hover:bg-slate-50 border border-slate-200/90 rounded-xl py-2.5 pl-3.5 pr-9 text-xs font-bold text-slate-800 appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-100 shadow-xs transition-colors"
               >
                 {currencies.map((c) => (
                   <option key={c.code} value={c.code}>
-                    {c.flag} {c.code} ({c.symbol})
+                    {c.flag} {c.country} — {c.code} ({c.symbol})
                   </option>
                 ))}
               </select>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           </div>
 
@@ -916,6 +967,14 @@ export default function ProfileSettingsView({
                   >
                     Test Alert
                   </button>
+                ) : notificationPermission === 'denied' ? (
+                  <button
+                    type="button"
+                    onClick={() => setSkipBlockedPushPopup(false)}
+                    className="px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200/80 text-amber-800 border border-amber-200 text-xs font-extrabold transition-colors cursor-pointer"
+                  >
+                    Unblock Guide
+                  </button>
                 ) : notificationPermission !== 'unsupported' ? (
                   <button
                     type="button"
@@ -927,61 +986,6 @@ export default function ProfileSettingsView({
                 ) : null}
               </div>
             </div>
-
-            {/* Dynamic Onboarding Walkthrough for Blocked Browser Permissions */}
-            {notificationPermission === 'denied' && (
-              <div className="mt-3 p-3.5 bg-amber-50/90 border border-amber-200/90 rounded-2xl space-y-3 shadow-xs">
-                <div className="flex items-start gap-2.5">
-                  <span className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5">
-                    <Lock className="w-4 h-4" />
-                  </span>
-                  <div className="space-y-1 min-w-0">
-                    <h5 className="text-xs font-extrabold text-amber-900">
-                      Browser Notification Permission Blocked
-                    </h5>
-                    <p className="text-[11px] text-amber-800 leading-relaxed">
-                      Notifications are currently blocked by your browser. Follow these quick steps to unblock them:
-                    </p>
-                  </div>
-                </div>
-
-                <div className="bg-white/90 rounded-xl p-3 border border-amber-200/60 space-y-2 text-[11px] text-slate-700 font-medium">
-                  <div className="flex items-start gap-2">
-                    <span className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">1</span>
-                    <p><strong className="text-slate-900">Click the Lock or Site Settings icon</strong> in your browser's address bar (next to the URL).</p>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">2</span>
-                    <p>Locate <strong className="text-slate-900">Notifications</strong> in the site settings or permissions panel.</p>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">3</span>
-                    <p>Change the setting from <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-bold">Block</span> to <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">Allow</span> (or Reset Permission).</p>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">4</span>
-                    <p>Refresh this page and click <strong className="text-slate-900">Allow Push</strong> above.</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-0.5">
-                  <span className="text-[10px] font-semibold text-amber-700/80">
-                    Auto-dismisses once allowed
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if ('Notification' in window) {
-                        setNotificationPermission(Notification.permission);
-                      }
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold transition-colors cursor-pointer"
-                  >
-                    Check Status Now
-                  </button>
-                </div>
-              </div>
-            )}
 
             {pushFeedback && (
               <p className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200/80 rounded-xl px-3 py-1.5">
@@ -1213,6 +1217,126 @@ export default function ProfileSettingsView({
           </div>
         </div>
       </section>
+
+      {/* Popup Modal for Blocked Offline Push Reminders with Cross (X) Button to Skip */}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <AnimatePresence>
+            {notificationPermission === 'denied' && !skipBlockedPushPopup && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="blocked-push-popup-title"
+                onClick={() => setSkipBlockedPushPopup(true)}
+                className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs"
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.94, y: 14 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.94, y: 14 }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-md bg-white rounded-3xl border border-slate-200/90 shadow-2xl p-6 space-y-4 relative overflow-hidden"
+                >
+                  {/* Top Header with Cross (X) Button for Skip */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <span className="w-11 h-11 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 border border-amber-200">
+                        <Lock className="w-5 h-5" />
+                      </span>
+                      <div className="min-w-0">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-extrabold uppercase tracking-wider mb-1">
+                          Permission Blocked
+                        </span>
+                        <h3
+                          id="blocked-push-popup-title"
+                          className="text-base sm:text-lg font-extrabold text-slate-900 leading-snug"
+                        >
+                          Enable Browser Push Reminders
+                        </h3>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setSkipBlockedPushPopup(true)}
+                      aria-label="Skip and close popup"
+                      title="Skip for now"
+                      className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                    >
+                      <X className="w-4.5 h-4.5" />
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Offline Push Reminders are currently blocked in your browser settings. Follow these quick steps to allow notifications, or use the close button to skip for now:
+                  </p>
+
+                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-2.5 text-xs text-slate-700 font-medium">
+                    <div className="flex items-start gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 flex items-center justify-center font-extrabold text-[11px] shrink-0 mt-0.5">
+                        1
+                      </span>
+                      <p>
+                        Click the <strong className="text-slate-900">Lock / Site Settings icon</strong> on the left side of your browser&apos;s address bar.
+                      </p>
+                    </div>
+                    <div className="flex items-start gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 flex items-center justify-center font-extrabold text-[11px] shrink-0 mt-0.5">
+                        2
+                      </span>
+                      <p>
+                        Find <strong className="text-slate-900">Notifications</strong> in the permissions menu.
+                      </p>
+                    </div>
+                    <div className="flex items-start gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 flex items-center justify-center font-extrabold text-[11px] shrink-0 mt-0.5">
+                        3
+                      </span>
+                      <p>
+                        Change the setting from{' '}
+                        <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-bold">
+                          Block
+                        </span>{' '}
+                        to{' '}
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">
+                          Allow
+                        </span>
+                        .
+                      </p>
+                    </div>
+                    <div className="flex items-start gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 flex items-center justify-center font-extrabold text-[11px] shrink-0 mt-0.5">
+                        4
+                      </span>
+                      <p>
+                        Once switched to <strong className="text-slate-900">Allow</strong>, this popup automatically closes.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setSkipBlockedPushPopup(true)}
+                      className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      Skip for Now
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleEnablePushNotifications}
+                      className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold shadow-md transition-all cursor-pointer shrink-0"
+                    >
+                      Verify Permission Now
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 /** @type {import('import').NextConfig} */
 const nextConfig = {
   reactStrictMode: false,
+  distDir: process.env.NODE_ENV === 'production' && !process.env.VERCEL ? 'build' : '.next',
   allowedDevOrigins: ['ais-dev-e6ozjhcsj3jcjn2wushno5-901334434410.asia-southeast1.run.app'],
   eslint: {
     ignoreDuringBuilds: true,
