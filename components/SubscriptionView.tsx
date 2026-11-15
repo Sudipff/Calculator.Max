@@ -2,11 +2,9 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft,
   ArrowRight,
   Check,
   Cloud,
-  Globe,
   HardDrive,
   RefreshCw,
   Settings,
@@ -18,6 +16,7 @@ import { getCalculationHistory } from '@/lib/historyStorage';
 import { getLocalNotes, getLocalTasks, getLocalTaskLists } from '@/lib/notesTasksStorage';
 import { useTheme } from '@/components/ThemeProvider';
 import type { CurrencyOption } from './ProfileSettingsView';
+import BackupSettingsView from './BackupSettingsView';
 
 export type SubscriptionPlanId = 'starter' | 'pro' | 'team' | 'enterprise';
 
@@ -149,20 +148,25 @@ interface SubscriptionViewProps {
   onClose: () => void;
   onOpenAuthModal: (mode?: 'signin' | 'update_password') => void;
   onStorageSynced?: (usedBytes: number, limitBytes: number, planId: SubscriptionPlanId) => void;
+  onBackupViewChange?: (isOpen: boolean) => void;
+  closeBackupSignal?: number;
 }
 
 export default function SubscriptionView({
   currentUser,
   currency,
   currencies,
-  onCurrencyChange,
   onClose,
   onOpenAuthModal,
   onStorageSynced,
+  onBackupViewChange,
+  closeBackupSignal = 0,
 }: SubscriptionViewProps) {
   const { isDark } = useTheme();
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
+  const [showBackupSettings, setShowBackupSettings] = useState(false);
+  const prevCloseBackupSignalRef = useRef(closeBackupSignal);
   const [activePlanId, setActivePlanId] = useState<SubscriptionPlanId>(
     currentUser ? 'pro' : 'starter'
   );
@@ -186,7 +190,38 @@ export default function SubscriptionView({
   const [cloudSyncedAt, setCloudSyncedAt] = useState<string | null>(null);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
   const [activeScrollIndex, setActiveScrollIndex] = useState<number>(0);
-  const [showCountrySelector, setShowCountrySelector] = useState<boolean>(false);
+
+  useEffect(() => {
+    onBackupViewChange?.(showBackupSettings);
+    return () => {
+      onBackupViewChange?.(false);
+    };
+  }, [onBackupViewChange, showBackupSettings]);
+
+  useEffect(() => {
+    if (closeBackupSignal === prevCloseBackupSignalRef.current) return;
+    prevCloseBackupSignalRef.current = closeBackupSignal;
+    if (showBackupSettings) {
+      setShowBackupSettings(false);
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      }
+    }
+  }, [closeBackupSignal, showBackupSettings]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showBackupSettings) {
+          setShowBackupSettings(false);
+        } else {
+          onClose();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose, showBackupSettings]);
 
   const activeCurrencyObj = useMemo(
     () => currencies.find((c) => c.symbol === currency) || currencies[0],
@@ -419,6 +454,20 @@ export default function SubscriptionView({
   const activePlanSpec =
     SUBSCRIPTION_PLANS.find((p) => p.id === activePlanId) || SUBSCRIPTION_PLANS[0];
 
+  if (showBackupSettings) {
+    return (
+      <BackupSettingsView
+        currentUser={currentUser}
+        onBack={() => {
+          setShowBackupSettings(false);
+          if (typeof window !== 'undefined') {
+            window.scrollTo({ top: 0, behavior: 'auto' });
+          }
+        }}
+      />
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -427,32 +476,11 @@ export default function SubscriptionView({
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
       className="w-full max-w-3xl mx-auto px-2 sm:px-4 pb-10 space-y-5"
     >
-      {/* Top Header Bar: Back Button + "Subscription" Title + Settings Icon */}
-      <div className="flex items-center justify-between gap-3 pt-1">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Back to Profile Settings"
-            title="Back to Profile Settings"
-            className="min-w-[42px] min-h-[42px] rounded-2xl bg-white/90 hover:bg-slate-100 border border-slate-200/80 text-slate-800 flex items-center justify-center shadow-2xs transition-colors cursor-pointer shrink-0"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight truncate">
-            Subscription
-          </h2>
-        </div>
-
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Return to Profile Settings"
-          title="Profile Settings"
-          className="min-w-[42px] min-h-[42px] rounded-2xl bg-white/90 hover:bg-slate-100 border border-slate-200/80 text-slate-600 hover:text-slate-900 flex items-center justify-center shadow-2xs transition-colors cursor-pointer shrink-0"
-        >
-          <Settings className="w-5 h-5" />
-        </button>
+      {/* Top Header Bar: Clean "Subscription" Title (Back arrow and settings icon removed) */}
+      <div className="flex items-center justify-between gap-3 pt-1 px-1">
+        <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight truncate">
+          Subscription
+        </h2>
       </div>
 
       {/* User Identity Horizontal Card (Matching Reference Photo) */}
@@ -520,7 +548,7 @@ export default function SubscriptionView({
           </button>
         </div>
 
-        <div className="bg-white/95 rounded-3xl border border-slate-200/80 shadow-[0_4px_20px_rgba(15,23,42,0.05)] p-4 sm:p-5 space-y-3.5">
+        <div className="bg-white/95 rounded-3xl border border-slate-200/80 shadow-[0_4px_20px_rgba(15,23,42,0.05)] p-4 sm:p-5 space-y-3">
           {/* Storage Usage Readout Row */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
@@ -540,97 +568,57 @@ export default function SubscriptionView({
             </span>
           </div>
 
-          {/* 10MB Per-User Cloud Storage Progress Bar */}
-          <div
-            role="progressbar"
-            aria-label="Cloud storage usage out of 10MB limit"
-            aria-valuemin={0}
-            aria-valuemax={10}
-            aria-valuenow={Number(usedMbNumber)}
-            className="w-full h-3.5 rounded-full bg-slate-200/90 overflow-hidden p-0.5 shadow-inner"
-          >
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: `${progressBarPercent}%` }}
-              transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-              className={`h-full rounded-full ${
-                rawPercent >= 90
-                  ? 'bg-gradient-to-r from-rose-600 to-amber-500'
-                  : 'bg-gradient-to-r from-blue-600 via-blue-500 to-sky-400'
-              }`}
-            />
+          {/* 10MB Per-User Cloud Storage Progress Bar + Right-Aligned "10 MB Per-User Cloud Limit" Opposite the Storage Bar */}
+          <div className="flex items-center justify-between gap-3">
+            <div
+              role="progressbar"
+              aria-label="Cloud storage usage out of 10MB limit"
+              aria-valuemin={0}
+              aria-valuemax={10}
+              aria-valuenow={Number(usedMbNumber)}
+              className="flex-1 h-3.5 rounded-full bg-slate-200/90 overflow-hidden p-0.5 shadow-inner"
+            >
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${progressBarPercent}%` }}
+                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                className={`h-full rounded-full ${
+                  rawPercent >= 90
+                    ? 'bg-gradient-to-r from-rose-600 to-amber-500'
+                    : 'bg-gradient-to-r from-blue-600 via-blue-500 to-sky-400'
+                }`}
+              />
+            </div>
+
+            <span className="text-[11px] sm:text-xs font-semibold text-slate-600 text-right whitespace-nowrap shrink-0">
+              10 MB Per-User Cloud Limit
+            </span>
           </div>
 
-          {/* Cloud Item & Byte Breakdown */}
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 tabular-nums pt-0.5">
-            <span>
+          {/* Cloud Item & Byte Breakdown + Settings Icon for Backup Management */}
+          <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 tabular-nums pt-0.5">
+            <span className="min-w-0 leading-relaxed">
               Calculations: {counts.calculations} ({(breakdown.calculationsBytes / 1024).toFixed(1)} KB)
               {' · '}
               Notes: {counts.notes} ({(breakdown.notesBytes / 1024).toFixed(1)} KB)
               {' · '}
               Tasks: {counts.tasks} ({(breakdown.tasksBytes / 1024).toFixed(1)} KB)
             </span>
-            <span className="font-semibold text-slate-600">
-              10 MB Per-User Cloud Limit
-            </span>
-          </div>
 
-          {/* Divider + Country/Region Row inside Storage Status Card (Matching Reference Photo) */}
-          <div className="pt-2.5 border-t border-slate-200/80 space-y-2.5">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-xs sm:text-sm font-semibold text-slate-800">
-                  Country/Region
-                </span>
-                <span className="text-xs text-slate-500 truncate">
-                  · {activeCurrencyObj?.flag} {activeCurrencyObj?.country} ({activeCurrencyObj?.code})
-                </span>
-              </div>
-
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setShowCountrySelector((prev) => !prev)}
-                  aria-label="Change Country or Region"
-                  title="Select Country / Region"
-                  className="min-w-[36px] min-h-[36px] rounded-xl bg-slate-100 hover:bg-blue-50 text-blue-600 flex items-center justify-center transition-colors cursor-pointer"
-                >
-                  <Globe className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowCountrySelector((prev) => !prev)}
-                  aria-label="Configure regional currency settings"
-                  title="Region Settings"
-                  className="min-w-[36px] min-h-[36px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors cursor-pointer"
-                >
-                  <Settings className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {showCountrySelector && (
-              <div className="pt-1">
-                <select
-                  aria-label="Select Country and Region"
-                  value={activeCurrencyObj?.code || 'INR'}
-                  onChange={(e) => {
-                    const found = currencies.find((c) => c.code === e.target.value);
-                    if (found) {
-                      onCurrencyChange(found.symbol);
-                      setShowCountrySelector(false);
-                    }
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200"
-                >
-                  {currencies.map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.flag} {c.country} — {c.name} ({c.symbol})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                setShowBackupSettings(true);
+                if (typeof window !== 'undefined') {
+                  window.scrollTo({ top: 0, behavior: 'auto' });
+                }
+              }}
+              aria-label="Open Backup Management settings"
+              title="Backup Management"
+              className="min-w-[36px] min-h-[36px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </section>

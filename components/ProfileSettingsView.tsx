@@ -28,7 +28,6 @@ import {
   KeyRound,
   ExternalLink,
   Lock,
-  Globe,
   X,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -71,6 +70,8 @@ interface ProfileSettingsViewProps {
   onRestoreBackup?: (payload: BackupPayload) => number;
   onUserUpdated?: (user: any) => void;
   calculationsCount: number;
+  onSubOverlayChange?: (hasOverlay: boolean) => void;
+  closeSubViewSignal?: number;
 }
 
 type ExpandedAccountPanel = 'profile_info' | 'security' | 'subscriptions' | null;
@@ -90,9 +91,13 @@ export default function ProfileSettingsView({
   onRestoreBackup,
   onUserUpdated,
   calculationsCount,
+  onSubOverlayChange,
+  closeSubViewSignal = 0,
 }: ProfileSettingsViewProps) {
   const [expandedAccount, setExpandedAccount] = useState<ExpandedAccountPanel>(null);
   const [showSubscriptionView, setShowSubscriptionView] = useState(false);
+  const [showBackupSettingsView, setShowBackupSettingsView] = useState(false);
+  const [closeBackupSignal, setCloseBackupSignal] = useState(0);
   const [activePlanLabel, setActivePlanLabel] = useState<SubscriptionPlanId>(
     currentUser ? 'pro' : 'starter'
   );
@@ -121,6 +126,56 @@ export default function ProfileSettingsView({
   const [privacyLoading, setPrivacyLoading] = useState(false);
   const [confirmEraseData, setConfirmEraseData] = useState(false);
   const restoreInputRef = useRef<HTMLInputElement | null>(null);
+  const prevCloseSignalRef = useRef<number>(closeSubViewSignal);
+
+  const hasSubOverlay = Boolean(
+    showSubscriptionView || expandedAccount !== null || showBackupPanel || confirmEraseData
+  );
+
+  useEffect(() => {
+    onSubOverlayChange?.(hasSubOverlay);
+    return () => {
+      onSubOverlayChange?.(false);
+    };
+  }, [hasSubOverlay, onSubOverlayChange]);
+
+  useEffect(() => {
+    if (closeSubViewSignal === prevCloseSignalRef.current) return;
+    prevCloseSignalRef.current = closeSubViewSignal;
+
+    if (showSubscriptionView && showBackupSettingsView) {
+      setCloseBackupSignal((n) => n + 1);
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      }
+      return;
+    }
+    if (showSubscriptionView) {
+      setShowSubscriptionView(false);
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      }
+      return;
+    }
+    if (confirmEraseData) {
+      setConfirmEraseData(false);
+      return;
+    }
+    if (showBackupPanel) {
+      setShowBackupPanel(false);
+      return;
+    }
+    if (expandedAccount !== null) {
+      setExpandedAccount(null);
+    }
+  }, [
+    closeSubViewSignal,
+    confirmEraseData,
+    expandedAccount,
+    showBackupPanel,
+    showBackupSettingsView,
+    showSubscriptionView,
+  ]);
 
   useEffect(() => {
     const initialName =
@@ -514,11 +569,16 @@ export default function ProfileSettingsView({
         currency={currency}
         currencies={currencies}
         onCurrencyChange={onCurrencyChange}
-        onClose={() => setShowSubscriptionView(false)}
+        onClose={() => {
+          setShowBackupSettingsView(false);
+          setShowSubscriptionView(false);
+        }}
         onOpenAuthModal={onOpenAuthModal}
         onStorageSynced={(_used, _limit, planId) => {
           setActivePlanLabel(planId);
         }}
+        onBackupViewChange={(isOpen) => setShowBackupSettingsView(isOpen)}
+        closeBackupSignal={closeBackupSignal}
       />
     );
   }
@@ -820,44 +880,34 @@ export default function ProfileSettingsView({
 
 
 
-          {/* Currency Selection (Placed directly after Theme option with simplified primary dropdown) */}
-          <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/40">
+          {/* Currency Selection (Streamlined compact side dropdown without country name text) */}
+          <div className="px-4 py-3.5 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <span className="w-8 h-8 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
                 <Coins className="w-4 h-4" />
               </span>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-slate-800 truncate">
-                    Currency Selection
-                  </span>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200/80">
-                    {activeCurrencyObj?.symbol} {activeCurrencyObj?.code}
-                  </span>
-                </div>
-                <span className="block text-[11px] text-slate-500 truncate mt-0.5">
-                  {activeCurrencyObj?.flag} {activeCurrencyObj?.country} · {activeCurrencyObj?.name}
-                </span>
-              </div>
+              <span className="text-sm font-semibold text-slate-800 truncate">
+                Currency Selection
+              </span>
             </div>
 
-            <div className="relative w-full sm:w-56 shrink-0">
+            <div className="relative shrink-0">
               <select
-                aria-label="Select currency and country"
+                aria-label="Select currency"
                 value={activeCurrencyObj?.code || 'INR'}
                 onChange={(e) => {
                   const found = currencies.find((c) => c.code === e.target.value);
                   if (found) onCurrencyChange(found.symbol);
                 }}
-                className="w-full bg-white hover:bg-slate-50 border border-slate-200/90 rounded-xl py-2.5 pl-3.5 pr-9 text-xs font-bold text-slate-800 appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-100 shadow-xs transition-colors"
+                className="bg-slate-100 hover:bg-slate-200/80 rounded-xl py-1.5 pl-3 pr-7 text-xs font-bold text-slate-700 appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 transition-colors"
               >
                 {currencies.map((c) => (
                   <option key={c.code} value={c.code}>
-                    {c.flag} {c.country} — {c.code} ({c.symbol})
+                    {c.symbol} {c.code}
                   </option>
                 ))}
               </select>
-              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <ChevronDown className="w-3.5 h-3.5 text-slate-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           </div>
 

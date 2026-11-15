@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/client';
+import { getBackupPermissions } from './backupPermissions';
 
 export interface CalculationDetails {
   id?: string;
@@ -465,6 +466,10 @@ export async function flushOfflineCalculationsQueue(
   userId?: string | null
 ): Promise<{ syncedCount: number; pendingCount: number }> {
   if (!userId || typeof window === 'undefined') {
+    return { syncedCount: 0, pendingCount: getPendingCalculationSyncCount(userId) };
+  }
+
+  if (!getBackupPermissions(userId).calculatorHistory) {
     return { syncedCount: 0, pendingCount: getPendingCalculationSyncCount(userId) };
   }
 

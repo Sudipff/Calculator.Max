@@ -63,6 +63,7 @@ import {
   HistoryItem,
 } from '../lib/historyStorage';
 import { getLocalNotes, getLocalTasks, saveLocalNotes, saveLocalTasks } from '../lib/notesTasksStorage';
+import { getBackupPermissions } from '../lib/backupPermissions';
 import type { NoteItem } from '../lib/types/notes-tasks';
 import { exportAllHistoryPDF, exportSingleItemPDF } from '../lib/pdfExport';
 import { sanitizeCsvCell } from '../lib/validation';
@@ -766,13 +767,18 @@ export default function RetailCalc() {
 
   const handleTabChange = useCallback(
     (newTab: ActiveTab) => {
-      if (newTab === activeTab) return;
+      if (newTab === activeTab) {
+        if (isNoteFullScreen || isManagerSubOverlayOpen) {
+          setNoteEditorCloseSignal((n) => n + 1);
+        }
+        return;
+      }
       const currentIdx = TAB_ORDER[activeTab] ?? 0;
       const newIdx = TAB_ORDER[newTab] ?? 0;
       setDirection(newIdx > currentIdx ? 1 : -1);
       triggerVibration('click');
 
-      if (newTab !== 'notes' && newTab !== 'tasks') {
+      if (newTab !== 'notes' && newTab !== 'tasks' && newTab !== 'profile') {
         setIsNoteFullScreen(false);
         setIsManagerSubOverlayOpen(false);
       }
@@ -792,7 +798,7 @@ export default function RetailCalc() {
         window.scrollTo({ top: 0, behavior: 'auto' });
       }
     },
-    [activeTab, pushHistoryGuard]
+    [activeTab, isManagerSubOverlayOpen, isNoteFullScreen, pushHistoryGuard]
   );
 
   const handleStepBackHierarchy = useCallback((): boolean => {
@@ -1172,12 +1178,16 @@ export default function RetailCalc() {
       savedAmount = parseSavedAmountFromText(type, details, result);
     }
 
+    const backupPerms = getBackupPermissions(userId);
+    const allowHistoryBackup = backupPerms.calculatorHistory;
+
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    const initialStatus: 'syncing' | 'local' = currentUser
-      ? isOnline
-        ? 'syncing'
-        : 'local'
-      : 'local';
+    const initialStatus: 'syncing' | 'local' =
+      currentUser && allowHistoryBackup
+        ? isOnline
+          ? 'syncing'
+          : 'local'
+        : 'local';
 
     const initialItem: HistoryItem = {
       id: tempId,
@@ -1195,7 +1205,7 @@ export default function RetailCalc() {
     const updatedHistory = saveCalculationHistory(initialItem, userId);
     setHistory(updatedHistory);
 
-    if (currentUser) {
+    if (currentUser && allowHistoryBackup) {
       if (!isOnline) {
         // Enqueue into offline sync outbox queue for automatic sync when connected
         enqueueCalculationOfflineSync(
@@ -2661,6 +2671,8 @@ export default function RetailCalc() {
                     }}
                     onUserUpdated={(updatedUser) => setCurrentUser(updatedUser)}
                     calculationsCount={history.length}
+                    onSubOverlayChange={(hasOverlay) => setIsManagerSubOverlayOpen(hasOverlay)}
+                    closeSubViewSignal={noteEditorCloseSignal}
                   />
                 </section>
               )}

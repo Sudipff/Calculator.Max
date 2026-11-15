@@ -1,6 +1,7 @@
 import { NoteItem, TaskItem, TaskList, TaskPriority } from './types/notes-tasks';
 import { createClient } from '@/utils/supabase/client';
 import { syncRemindersToDeviceStore } from './reminderService';
+import { getBackupPermissions } from './backupPermissions';
 
 const NOTES_STORAGE_PREFIX = 'retailcalc_notes_';
 const TASKS_STORAGE_PREFIX = 'retailcalc_tasks_';
@@ -346,6 +347,10 @@ export async function upsertNoteToSupabase(
   userId?: string | null
 ): Promise<{ success: boolean; syncStatus: 'synced' | 'unsynced'; error?: any }> {
   if (!userId) {
+    return { success: false, syncStatus: 'unsynced' };
+  }
+
+  if (!getBackupPermissions(userId).notes) {
     return { success: false, syncStatus: 'unsynced' };
   }
 
@@ -787,6 +792,10 @@ export async function upsertTaskToSupabase(
     return { success: false, syncStatus: 'unsynced' };
   }
 
+  if (!getBackupPermissions(userId).tasks) {
+    return { success: false, syncStatus: 'unsynced' };
+  }
+
   if (isOfflineNow()) {
     enqueueOfflineOperation('upsert_task', task.id, userId);
     return { success: false, syncStatus: 'unsynced' };
@@ -1074,37 +1083,57 @@ export async function flushOfflineSyncQueue(
     const localTasks = getLocalTasksRaw(userId);
     const localLists = getLocalTaskLists(userId);
 
-    // Ensure every local unsynced note or task is represented in the work set
+    const backupPerms = getBackupPermissions(userId);
+
+    // Ensure every local unsynced note or task is represented in the work set (when permitted)
     const opMap = new Map<string, OfflineSyncOperation>();
     queue.forEach((op) => opMap.set(op.opKey, op));
 
-    localNotes.forEach((n) => {
-      const delKey = `delete_note:${n.id}`;
-      if (n.syncStatus === 'unsynced' && !opMap.has(delKey)) {
-        opMap.set(`upsert_note:${n.id}`, {
-          opKey: `upsert_note:${n.id}`,
-          type: 'upsert_note',
-          entityId: n.id,
-          updatedAt: n.updatedAt || new Date().toISOString(),
-        });
-      }
-    });
+    if (backupPerms.notes) {
+      localNotes.forEach((n) => {
+        const delKey = `delete_note:${n.id}`;
+        if (n.syncStatus === 'unsynced' && !opMap.has(delKey)) {
+          opMap.set(`upsert_note:${n.id}`, {
+            opKey: `upsert_note:${n.id}`,
+            type: 'upsert_note',
+            entityId: n.id,
+            updatedAt: n.updatedAt || new Date().toISOString(),
+          });
+        }
+      });
+    }
 
-    localTasks.forEach((t) => {
-      const delKey = `delete_task:${t.id}`;
-      if (t.syncStatus === 'unsynced' && !opMap.has(delKey)) {
-        opMap.set(`upsert_task:${t.id}`, {
-          opKey: `upsert_task:${t.id}`,
-          type: 'upsert_task',
-          entityId: t.id,
-          updatedAt: t.updatedAt || new Date().toISOString(),
-        });
-      }
-    });
+    if (backupPerms.tasks) {
+      localTasks.forEach((t) => {
+        const delKey = `delete_task:${t.id}`;
+        if (t.syncStatus === 'unsynced' && !opMap.has(delKey)) {
+          opMap.set(`upsert_task:${t.id}`, {
+            opKey: `upsert_task:${t.id}`,
+            type: 'upsert_task',
+            entityId: t.id,
+            updatedAt: t.updatedAt || new Date().toISOString(),
+          });
+        }
+      });
+    }
 
-    const ops = Array.from(opMap.values());
+    const ops = Array.from(opMap.values()).filter((op) => {
+      if ((op.type === 'upsert_note' || op.type === 'delete_note') && !backupPerms.notes) {
+        return false;
+      }
+      if (
+        (op.type === 'upsert_task' ||
+          op.type === 'delete_task' ||
+          op.type === 'upsert_task_list' ||
+          op.type === 'delete_task_list') &&
+        !backupPerms.tasks
+      ) {
+        return false;
+      }
+      return true;
+    });
     if (ops.length === 0) {
-      return { syncedCount: 0, pendingCount: 0 };
+      return { syncedCount: 0, pendingCount: queue.length };
     }
 
     const remainingQueue: OfflineSyncOperation[] = [];
