@@ -76,6 +76,7 @@ export async function POST(req: NextRequest) {
       labels: note.labels,
       reminder_at: note.reminderAt,
       is_emergency: note.isEmergency,
+      source_history: note.sourceHistory,
       updated_at: new Date().toISOString(),
     };
 
@@ -101,11 +102,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('notes')
       .upsert(noteRow)
       .select()
       .single();
+
+    if (
+      error &&
+      (error.code === 'PGRST204' ||
+        error.code === '42703' ||
+        String(error.message || '').toLowerCase().includes('source_history'))
+    ) {
+      const { source_history: _omittedSource, ...legacyRow } = noteRow;
+      void _omittedSource;
+      const retry = await supabase.from('notes').upsert(legacyRow).select().single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       const isQuotaErr = /quota exceeded/i.test(error.message || '');

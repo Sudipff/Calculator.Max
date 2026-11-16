@@ -25,9 +25,10 @@ import {
   CloudOff,
   User,
   ChevronRight,
+  History,
 } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
-import { NoteItem, NOTE_COLORS } from '@/lib/types/notes-tasks';
+import { NoteItem, NOTE_COLORS, type SourceHistoryMeta } from '@/lib/types/notes-tasks';
 import {
   fetchNotes,
   getLocalNotes,
@@ -56,6 +57,7 @@ interface NotesViewProps {
   closeEditorSignal?: number;
   refreshSignal?: number;
   onOpenProfile?: () => void;
+  onReturnToHistory?: (source: SourceHistoryMeta, note: NoteItem) => Promise<void> | void;
 }
 
 function getCompactNoteSurface(colorId: string, isDark = false): { bg: string; border: string } {
@@ -140,11 +142,13 @@ function getTagColorClass(label: string): string {
 
 export default function NotesView({
   currentUser,
+  triggerVibration,
   onFullScreenChange,
   onSubOverlayChange,
   closeEditorSignal = 0,
   refreshSignal = 0,
   onOpenProfile,
+  onReturnToHistory,
 }: NotesViewProps) {
   const { isDark } = useTheme();
   const [isMounted, setIsMounted] = useState(false);
@@ -163,6 +167,7 @@ export default function NotesView({
     { type: 'single'; note: NoteItem } | { type: 'batch'; ids: string[] } | null
   >(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isReturningToHistory, setIsReturningToHistory] = useState(false);
 
   // Unified Full-Page Note Editing View State
   const [editingNote, setEditingNote] = useState<NoteItem | null>(null);
@@ -388,6 +393,7 @@ export default function NotesView({
       ...note,
       checklistItems: note.checklistItems.map((ci) => ({ ...ci })),
       labels: [...note.labels],
+      sourceHistory: note.sourceHistory ? { ...note.sourceHistory } : null,
     });
     setIsNewDraft(false);
     setHasSavedCurrentNote(true);
@@ -616,12 +622,66 @@ export default function NotesView({
     setEditingNote(updatedNote);
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
+    setHasUnsavedChanges(false);
     setShowThreeDotMenu(false);
 
     if (currentUser?.id) {
       const res = await upsertNoteToSupabase(updatedNote, currentUser.id);
       setNotes((prev) => prev.map((n) => (n.id === updatedNote.id ? { ...n, syncStatus: res.syncStatus } : n)));
       setEditingNote((prev) => (prev && prev.id === updatedNote.id ? { ...prev, syncStatus: res.syncStatus } : prev));
+    }
+  };
+
+  const handleReturnNoteToHistory = async () => {
+    if (!editingNote?.sourceHistory || isReturningToHistory) return;
+
+    const source = editingNote.sourceHistory;
+    const noteSnapshot = editingNote;
+
+    const restoredCandidate = {
+      id: source.id || 'item-' + Date.now(),
+      type: source.type,
+      details: source.details,
+      result: source.result,
+      savedAmount: source.savedAmount,
+      isFavorite: Boolean(source.isFavorite),
+      createdAt: source.createdAt || new Date().toISOString(),
+      timestamp:
+        source.timestamp ||
+        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    const quota = checkStorageQuotaBeforeAdd(currentUser?.id, restoredCandidate, noteSnapshot);
+    if (!quota.allowed) {
+      triggerStorageFullPopup(quota.snapshot, currentUser?.id);
+      return;
+    }
+
+    setIsReturningToHistory(true);
+    try {
+      const updated = notes.filter((n) => n.id !== noteSnapshot.id);
+      setNotes(updated);
+      saveLocalNotes(updated, currentUser?.id);
+      setSelectedNoteIds((prev) => prev.filter((id) => id !== noteSnapshot.id));
+      setShowThreeDotMenu(false);
+      setEditingNote(null);
+      setIsNewDraft(false);
+      setHasSavedCurrentNote(false);
+      setHasUnsavedChanges(false);
+
+      if (currentUser?.id) {
+        await deleteNoteFromSupabase(noteSnapshot.id, currentUser.id);
+      }
+      refreshLocalStorageSnapshot(currentUser?.id);
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('calcmax:notes-tasks-updated'));
+      }
+
+      triggerVibration?.('success');
+      await onReturnToHistory?.(source, noteSnapshot);
+    } finally {
+      setIsReturningToHistory(false);
     }
   };
 
@@ -1496,15 +1556,15 @@ export default function NotesView({
                 <span>{!hasSavedCurrentNote || hasUnsavedChanges ? 'Save' : 'Saved'}</span>
               </button>
 
-              {/* Three-Dot Color Palette Menu (Appears once saved) */}
-              {hasSavedCurrentNote && !hasUnsavedChanges && (
+              {/* Three-Dot Options & Color Palette Menu (Inside Note Edit View) */}
+              {hasSavedCurrentNote && (
                 <div ref={threeDotMenuRef} className="relative">
                   <button
                     type="button"
                     onClick={() => setShowThreeDotMenu((prev) => !prev)}
                     aria-label="More options and color palette"
                     aria-expanded={showThreeDotMenu}
-                    title="Color Palette & Options"
+                    title="Options & Color Palette"
                     className={`min-h-[40px] min-w-[40px] rounded-xl border flex items-center justify-center transition-colors cursor-pointer shrink-0 active:scale-95 ${
                       showThreeDotMenu
                         ? 'bg-slate-900 text-white border-slate-900'
@@ -1550,7 +1610,7 @@ export default function NotesView({
                         })}
                       </div>
 
-                      <div className="pt-2 border-t border-slate-100">
+                      <div className="pt-2 border-t border-slate-100 space-y-1">
                         <button
                           type="button"
                           onClick={() => {
@@ -1564,6 +1624,20 @@ export default function NotesView({
                             <span>{editingNote.isChecklist ? 'Switch to Text Note' : 'Switch to Checklist'}</span>
                           </span>
                         </button>
+
+                        {editingNote.sourceHistory && (
+                          <button
+                            type="button"
+                            onClick={() => void handleReturnNoteToHistory()}
+                            disabled={isReturningToHistory}
+                            className="w-full min-h-[38px] px-2.5 py-2 rounded-xl text-xs font-semibold text-blue-700 hover:bg-blue-50 flex items-center justify-between cursor-pointer transition-colors disabled:opacity-50"
+                          >
+                            <span className="flex items-center gap-2">
+                              <History className="w-3.5 h-3.5 text-blue-600" />
+                              <span>{isReturningToHistory ? 'Returning...' : 'Return to History'}</span>
+                            </span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}

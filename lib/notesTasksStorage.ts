@@ -322,7 +322,7 @@ async function pushNoteDirectlyToSupabase(
 ): Promise<{ success: boolean; error?: any }> {
   try {
     const supabase = createClient();
-    const { error } = await supabase.from('notes').upsert({
+    const basePayload = {
       id: note.id,
       user_id: userId,
       title: note.title,
@@ -335,7 +335,24 @@ async function pushNoteDirectlyToSupabase(
       reminder_at: note.reminderAt || null,
       is_emergency: !!note.isEmergency,
       updated_at: note.updatedAt || new Date().toISOString(),
+    };
+
+    let { error } = await supabase.from('notes').upsert({
+      ...basePayload,
+      source_history: note.sourceHistory || null,
     });
+
+    // Fallback gracefully if SQL migration for `source_history` hasn't been executed yet
+    if (
+      error &&
+      (error.code === 'PGRST204' ||
+        error.code === '42703' ||
+        String(error.message || '').toLowerCase().includes('source_history'))
+    ) {
+      const retryRes = await supabase.from('notes').upsert(basePayload);
+      error = retryRes.error;
+    }
+
     return { success: !error, error };
   } catch (err) {
     return { success: false, error: err };
@@ -491,24 +508,35 @@ export async function fetchNotes(userId?: string | null): Promise<NoteItem[]> {
       .order('updated_at', { ascending: false });
 
     if (!error && Array.isArray(data)) {
+      const localById = new Map<string, NoteItem>(localAfterFlush.map((ln) => [ln.id, ln]));
       const mappedCloud: NoteItem[] = data
         .filter((n: any) => !pendingDeleteIds.has(n.id))
-        .map((n: any) => ({
-          id: n.id,
-          userId: n.user_id,
-          title: n.title || '',
-          content: n.content || '',
-          color: n.color || 'default',
-          isPinned: !!n.is_pinned,
-          isChecklist: !!n.is_checklist,
-          checklistItems: Array.isArray(n.checklist_items) ? n.checklist_items : [],
-          labels: Array.isArray(n.labels) ? n.labels : [],
-          reminderAt: n.reminder_at || null,
-          isEmergency: !!n.is_emergency,
-          syncStatus: 'synced' as const,
-          createdAt: n.created_at || new Date().toISOString(),
-          updatedAt: n.updated_at || new Date().toISOString(),
-        }));
+        .map((n: any) => {
+          const hasSourceCol = Object.prototype.hasOwnProperty.call(n, 'source_history');
+          const resolvedSourceHistory = hasSourceCol
+            ? n.source_history && typeof n.source_history === 'object'
+              ? n.source_history
+              : null
+            : localById.get(n.id)?.sourceHistory || null;
+
+          return {
+            id: n.id,
+            userId: n.user_id,
+            title: n.title || '',
+            content: n.content || '',
+            color: n.color || 'default',
+            isPinned: !!n.is_pinned,
+            isChecklist: !!n.is_checklist,
+            checklistItems: Array.isArray(n.checklist_items) ? n.checklist_items : [],
+            labels: Array.isArray(n.labels) ? n.labels : [],
+            reminderAt: n.reminder_at || null,
+            isEmergency: !!n.is_emergency,
+            sourceHistory: resolvedSourceHistory,
+            syncStatus: 'synced' as const,
+            createdAt: n.created_at || new Date().toISOString(),
+            updatedAt: n.updated_at || new Date().toISOString(),
+          };
+        });
 
       const mergedById = new Map<string, NoteItem>();
       mappedCloud.forEach((cloudNote) => mergedById.set(cloudNote.id, cloudNote));
@@ -698,7 +726,7 @@ async function upsertSingleTaskRowWithFallback(
   parentIdOverride?: string | null
 ): Promise<{ success: boolean; error?: any }> {
   const priority = task.priority || (task.isStarred ? 'high' : 'medium');
-  const payloadWithPriority: Record<string, any> = {
+  const fullPayload: Record<string, any> = {
     id: task.id,
     user_id: userId,
     list_id: task.listId || null,
@@ -708,31 +736,48 @@ async function upsertSingleTaskRowWithFallback(
     completed: !!task.completed,
     is_starred: !!task.isStarred,
     priority,
+    source_history: task.sourceHistory || null,
     due_date: task.dueDate || null,
     reminder_at: task.reminderAt || null,
     updated_at: task.updatedAt || new Date().toISOString(),
   };
 
-  let { error } = await supabase.from('tasks').upsert(payloadWithPriority);
+  let workingPayload = { ...fullPayload };
+  let { error } = await supabase.from('tasks').upsert(workingPayload);
 
-  // Fallback if SQL migration for `priority` column hasn't been run on Supabase yet
-  if (
-    error &&
-    (error.code === 'PGRST204' ||
+  // Fallback up to 2 times if SQL migration for `priority` or `source_history` hasn't been run yet
+  for (let attempt = 0; attempt < 2 && error; attempt++) {
+    const errMsg = String(error.message || '').toLowerCase();
+    const isSchemaColErr =
+      error.code === 'PGRST204' ||
       error.code === '42703' ||
-      String(error.message || '').toLowerCase().includes('priority'))
-  ) {
-    const { priority: _omitted, ...legacyPayload } = payloadWithPriority;
-    void _omitted;
-    const retryRes = await supabase.from('tasks').upsert(legacyPayload);
+      errMsg.includes('priority') ||
+      errMsg.includes('source_history');
+
+    if (!isSchemaColErr) break;
+
+    if (errMsg.includes('source_history') && 'source_history' in workingPayload) {
+      const { source_history: _omittedSource, ...rest } = workingPayload;
+      void _omittedSource;
+      workingPayload = rest;
+    } else if (errMsg.includes('priority') && 'priority' in workingPayload) {
+      const { priority: _omittedPri, ...rest } = workingPayload;
+      void _omittedPri;
+      workingPayload = rest;
+    } else {
+      const { source_history: _omittedSource, priority: _omittedPri, ...rest } = workingPayload;
+      void _omittedSource;
+      void _omittedPri;
+      workingPayload = rest;
+    }
+
+    const retryRes = await supabase.from('tasks').upsert(workingPayload);
     error = retryRes.error;
   }
 
   // Fallback if foreign key on list_id failed
-  if (error && error.code === '23503' && payloadWithPriority.list_id) {
-    const { priority: _omitted, ...legacyPayload } = payloadWithPriority;
-    void _omitted;
-    const fkRetry = await supabase.from('tasks').upsert({ ...legacyPayload, list_id: null });
+  if (error && error.code === '23503' && workingPayload.list_id) {
+    const fkRetry = await supabase.from('tasks').upsert({ ...workingPayload, list_id: null });
     error = fkRetry.error;
   }
 
@@ -946,28 +991,39 @@ export async function fetchTasks(userId?: string | null): Promise<TaskItem[]> {
       .order('created_at', { ascending: false });
 
     if (!error && Array.isArray(data)) {
+      const localById = new Map<string, TaskItem>(localAfterFlush.map((lt) => [lt.id, lt]));
       const allItems: TaskItem[] = data
         .filter((t: any) => !pendingDeleteIds.has(t.id))
-        .map((t: any) => ({
-          id: t.id,
-          userId: t.user_id,
-          listId: t.list_id || 'default-my-tasks',
-          parentId: t.parent_id || null,
-          title: t.title || '',
-          description: t.description || '',
-          completed: !!t.completed,
-          isStarred: !!t.is_starred,
-          priority: resolveTaskPriority(
-            { id: t.id, isStarred: !!t.is_starred, priority: t.priority },
-            pMap
-          ),
-          dueDate: t.due_date || null,
-          reminderAt: t.reminder_at || null,
-          syncStatus: 'synced' as const,
-          createdAt: t.created_at || new Date().toISOString(),
-          updatedAt: t.updated_at || new Date().toISOString(),
-          subtasks: [],
-        }));
+        .map((t: any) => {
+          const hasSourceCol = Object.prototype.hasOwnProperty.call(t, 'source_history');
+          const resolvedSourceHistory = hasSourceCol
+            ? t.source_history && typeof t.source_history === 'object'
+              ? t.source_history
+              : null
+            : localById.get(t.id)?.sourceHistory || null;
+
+          return {
+            id: t.id,
+            userId: t.user_id,
+            listId: t.list_id || 'default-my-tasks',
+            parentId: t.parent_id || null,
+            title: t.title || '',
+            description: t.description || '',
+            completed: !!t.completed,
+            isStarred: !!t.is_starred,
+            priority: resolveTaskPriority(
+              { id: t.id, isStarred: !!t.is_starred, priority: t.priority },
+              pMap
+            ),
+            sourceHistory: resolvedSourceHistory,
+            dueDate: t.due_date || null,
+            reminderAt: t.reminder_at || null,
+            syncStatus: 'synced' as const,
+            createdAt: t.created_at || new Date().toISOString(),
+            updatedAt: t.updated_at || new Date().toISOString(),
+            subtasks: [],
+          };
+        });
 
       const topLevel: TaskItem[] = [];
       const subtaskMap: Record<string, TaskItem[]> = {};

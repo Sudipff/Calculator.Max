@@ -80,7 +80,7 @@ import {
   triggerStorageFullPopup,
 } from '../lib/storageSyncClient';
 import { getBackupPermissions } from '../lib/backupPermissions';
-import type { NoteItem } from '../lib/types/notes-tasks';
+import type { NoteItem, SourceHistoryMeta } from '../lib/types/notes-tasks';
 import { exportAllHistoryPDF, exportSingleItemPDF } from '../lib/pdfExport';
 import { sanitizeCsvCell } from '../lib/validation';
 
@@ -1297,6 +1297,100 @@ export default function RetailCalc() {
       });
     }
   };
+
+  const handleRestoreToHistory = useCallback(
+    async (source: SourceHistoryMeta) => {
+      const userId = currentUser?.id;
+      const backupPerms = getBackupPermissions(userId);
+      const allowHistoryBackup = backupPerms.calculatorHistory;
+      const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+
+      const initialStatus: 'syncing' | 'local' =
+        currentUser && allowHistoryBackup ? (isOnline ? 'syncing' : 'local') : 'local';
+
+      const restoredId =
+        source.id || 'item-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+
+      const restoredItem: HistoryItem = {
+        id: restoredId,
+        type: source.type,
+        details: source.details,
+        result: source.result,
+        savedAmount: source.savedAmount,
+        isFavorite: Boolean(source.isFavorite),
+        createdAt: source.createdAt || new Date().toISOString(),
+        timestamp:
+          source.timestamp ||
+          (source.createdAt
+            ? new Date(source.createdAt).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+        syncStatus: initialStatus,
+        dbId: null,
+      };
+
+      const updatedHistory = saveCalculationHistory(restoredItem, userId);
+      setHistory(updatedHistory);
+      refreshLocalStorageSnapshot(userId);
+
+      setIsNoteFullScreen(false);
+      setIsManagerSubOverlayOpen(false);
+      setHistoryRefreshNotice('Returned to History');
+      setTimeout(() => setHistoryRefreshNotice(null), 2200);
+      handleTabChange('history');
+
+      if (currentUser && allowHistoryBackup) {
+        if (!isOnline) {
+          enqueueCalculationOfflineSync(
+            {
+              opKey: `upsert_calculation:${restoredId}`,
+              type: 'upsert_calculation',
+              item: restoredItem,
+            },
+            userId
+          );
+          return;
+        }
+
+        const res = await syncSingleCalculationToCloud(restoredItem, currentUser.id);
+        const finalStatus: 'synced' | 'local' | 'error' = res.success
+          ? 'synced'
+          : navigator.onLine
+          ? 'error'
+          : 'local';
+        const finalDbId = res.success ? res.dbId || `cloud-${Date.now()}` : null;
+
+        if (!res.success) {
+          enqueueCalculationOfflineSync(
+            {
+              opKey: `upsert_calculation:${restoredId}`,
+              type: 'upsert_calculation',
+              item: { ...restoredItem, syncStatus: finalStatus },
+            },
+            userId
+          );
+        }
+
+        setHistory((prev) => {
+          const syncedList = prev.map((item) =>
+            item.id === restoredId
+              ? {
+                  ...item,
+                  dbId: finalDbId,
+                  syncStatus: finalStatus,
+                }
+              : item
+          );
+          setCalculationHistory(syncedList, userId);
+          return syncedList;
+        });
+        refreshLocalStorageSnapshot(userId);
+      }
+    },
+    [currentUser, handleTabChange]
+  );
 
   const retrySyncItem = async (itemToSync: HistoryItem) => {
     if (!currentUser) {
@@ -2535,6 +2629,7 @@ export default function RetailCalc() {
                     closeEditorSignal={noteEditorCloseSignal}
                     refreshSignal={notesRefreshSignal}
                     onOpenProfile={() => handleTabChange('profile')}
+                    onReturnToHistory={(source) => handleRestoreToHistory(source)}
                   />
                 </section>
               )}
@@ -2550,6 +2645,7 @@ export default function RetailCalc() {
                     closeEditorSignal={noteEditorCloseSignal}
                     refreshSignal={tasksRefreshSignal}
                     onOpenProfile={() => handleTabChange('profile')}
+                    onReturnToHistory={(source) => handleRestoreToHistory(source)}
                   />
                 </section>
               )}

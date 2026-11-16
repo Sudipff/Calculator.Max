@@ -77,6 +77,65 @@ export function validateCalculationPayload(body: unknown): {
   return { valid: true, data: { type, details, result } };
 }
 
+export interface ValidatedSourceHistory {
+  id?: string;
+  dbId?: string | number | null;
+  type: string;
+  details: string;
+  result: string;
+  savedAmount?: number;
+  isFavorite?: boolean;
+  createdAt?: string;
+  timestamp?: string;
+}
+
+export function sanitizeSourceHistory(input: unknown): ValidatedSourceHistory | null {
+  if (!input || typeof input !== 'object') return null;
+  const raw = input as Record<string, unknown>;
+  const type = sanitizePlainText(raw.type, 40);
+  const details = sanitizePlainText(raw.details, 2000);
+  const result = sanitizePlainText(raw.result, 500);
+  if (!type || !details || !result) return null;
+
+  const id = raw.id !== undefined ? validateResourceId(raw.id, 128) || undefined : undefined;
+  const dbId =
+    typeof raw.dbId === 'number' && Number.isFinite(raw.dbId)
+      ? raw.dbId
+      : typeof raw.dbId === 'string'
+      ? validateResourceId(raw.dbId, 128)
+      : null;
+
+  const savedAmount =
+    typeof raw.savedAmount === 'number' && Number.isFinite(raw.savedAmount)
+      ? raw.savedAmount
+      : undefined;
+
+  let createdAt: string | undefined;
+  if (typeof raw.createdAt === 'string' && raw.createdAt.trim()) {
+    const parsed = new Date(raw.createdAt);
+    if (!isNaN(parsed.getTime())) {
+      createdAt = parsed.toISOString();
+    }
+  }
+
+  const timestamp =
+    typeof raw.timestamp === 'string' && raw.timestamp.trim()
+      ? sanitizePlainText(raw.timestamp, 40)
+      : undefined;
+
+  return {
+    ...(id ? { id } : {}),
+    dbId,
+    type,
+    details,
+    result,
+    ...(savedAmount !== undefined ? { savedAmount } : {}),
+    ...(raw.isFavorite !== undefined ? { isFavorite: Boolean(raw.isFavorite) } : {}),
+    ...(createdAt ? { createdAt } : {}),
+    ...(timestamp ? { timestamp } : {}),
+  };
+}
+
 export function validateNotePayload(body: unknown): {
   valid: true;
   data: {
@@ -90,6 +149,7 @@ export function validateNotePayload(body: unknown): {
     labels: string[];
     reminderAt: string | null;
     isEmergency: boolean;
+    sourceHistory: ValidatedSourceHistory | null;
   };
 } | {
   valid: false;
@@ -132,6 +192,7 @@ export function validateNotePayload(body: unknown): {
   }
 
   const color = sanitizePlainText(raw.color || 'default', 30) || 'default';
+  const sourceHistory = sanitizeSourceHistory(raw.sourceHistory);
 
   return {
     valid: true,
@@ -146,6 +207,7 @@ export function validateNotePayload(body: unknown): {
       labels,
       reminderAt,
       isEmergency: Boolean(raw.isEmergency),
+      sourceHistory,
     },
   };
 }
@@ -167,6 +229,7 @@ export function validateTaskOrListPayload(body: unknown): {
     isStarred: boolean;
     dueDate: string | null;
     reminderAt: string | null;
+    sourceHistory: ValidatedSourceHistory | null;
   };
 } | {
   valid: false;
@@ -224,6 +287,8 @@ export function validateTaskOrListPayload(body: unknown): {
     reminderAt = parsed.toISOString();
   }
 
+  const sourceHistory = sanitizeSourceHistory(raw.sourceHistory);
+
   return {
     valid: true,
     kind: 'task',
@@ -237,6 +302,7 @@ export function validateTaskOrListPayload(body: unknown): {
       isStarred: Boolean(raw.isStarred),
       dueDate,
       reminderAt,
+      sourceHistory,
     },
   };
 }

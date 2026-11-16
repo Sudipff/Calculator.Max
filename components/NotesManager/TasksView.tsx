@@ -28,9 +28,10 @@ import {
   CloudOff,
   User,
   ChevronRight,
+  History,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { TaskItem, TaskList, TaskPriority } from '@/lib/types/notes-tasks';
+import { TaskItem, TaskList, TaskPriority, type SourceHistoryMeta } from '@/lib/types/notes-tasks';
 import {
   fetchTasks,
   getLocalTasks,
@@ -66,6 +67,7 @@ interface TasksViewProps {
   closeEditorSignal?: number;
   refreshSignal?: number;
   onOpenProfile?: () => void;
+  onReturnToHistory?: (source: SourceHistoryMeta, task: TaskItem) => Promise<void> | void;
 }
 
 type TaskFilterTab = 'all' | 'active' | 'completed' | 'priority';
@@ -135,6 +137,7 @@ export default function TasksView({
   closeEditorSignal = 0,
   refreshSignal = 0,
   onOpenProfile,
+  onReturnToHistory,
 }: TasksViewProps) {
   const { isDark } = useTheme();
   const [isMounted, setIsMounted] = useState(false);
@@ -156,6 +159,7 @@ export default function TasksView({
     { type: 'single'; task: TaskItem } | { type: 'batch'; ids: string[] } | null
   >(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isReturningToHistory, setIsReturningToHistory] = useState(false);
 
   // Reliable Notification Toggle State
   const [alertsEnabled, setAlertsEnabled] = useState<boolean>(true);
@@ -179,6 +183,7 @@ export default function TasksView({
   const [detailSubtaskTitle, setDetailSubtaskTitle] = useState('');
   const [isAddingNoteInDetail, setIsAddingNoteInDetail] = useState(false);
   const [detailQuickNote, setDetailQuickNote] = useState('');
+  const [showDetailMenu, setShowDetailMenu] = useState(false);
 
   // New List Modal
   const [showNewListModal, setShowNewListModal] = useState(false);
@@ -190,20 +195,24 @@ export default function TasksView({
 
   // Long-press refs
   const managerMenuRef = useRef<HTMLDivElement | null>(null);
+  const detailMenuRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isLongPressFiredRef = useRef<boolean>(false);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
-    if (!showManagerMenu) return;
+    if (!showManagerMenu && !showDetailMenu) return;
     const onOutsideClick = (event: MouseEvent) => {
-      if (managerMenuRef.current && !managerMenuRef.current.contains(event.target as Node)) {
+      if (showManagerMenu && managerMenuRef.current && !managerMenuRef.current.contains(event.target as Node)) {
         setShowManagerMenu(false);
+      }
+      if (showDetailMenu && detailMenuRef.current && !detailMenuRef.current.contains(event.target as Node)) {
+        setShowDetailMenu(false);
       }
     };
     document.addEventListener('mousedown', onOutsideClick);
     return () => document.removeEventListener('mousedown', onOutsideClick);
-  }, [showManagerMenu]);
+  }, [showManagerMenu, showDetailMenu]);
 
   useEffect(() => {
     setIsMounted(true);
@@ -269,6 +278,8 @@ export default function TasksView({
     if (closeEditorSignal > 0) {
       if (confirmDeleteTarget) {
         setConfirmDeleteTarget(null);
+      } else if (showDetailMenu) {
+        setShowDetailMenu(false);
       } else if (showNewListModal) {
         setShowNewListModal(false);
       } else if (isCreateModalOpen) {
@@ -343,6 +354,7 @@ export default function TasksView({
     const pri = resolvePriority(task);
     setDetailTaskId(task.id);
     setIsEditingDetail(false);
+    setShowDetailMenu(false);
     setEditTitle(task.title);
     setEditDesc(task.description || '');
     setEditPriority(pri);
@@ -522,8 +534,60 @@ export default function TasksView({
     if (isEditingDetail) {
       void handleSaveDetailChanges();
     }
+    setShowDetailMenu(false);
     setDetailTaskId(null);
     setIsEditingDetail(false);
+  };
+
+  const handleReturnTaskToHistory = async () => {
+    if (!detailTask?.sourceHistory || isReturningToHistory) return;
+
+    const source = detailTask.sourceHistory;
+    const taskSnapshot = detailTask;
+
+    const restoredCandidate = {
+      id: source.id || 'item-' + Date.now(),
+      type: source.type,
+      details: source.details,
+      result: source.result,
+      savedAmount: source.savedAmount,
+      isFavorite: Boolean(source.isFavorite),
+      createdAt: source.createdAt || new Date().toISOString(),
+      timestamp:
+        source.timestamp ||
+        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    const quota = checkStorageQuotaBeforeAdd(currentUser?.id, restoredCandidate, taskSnapshot);
+    if (!quota.allowed) {
+      triggerStorageFullPopup(quota.snapshot, currentUser?.id);
+      return;
+    }
+
+    setIsReturningToHistory(true);
+    try {
+      const updated = tasks.filter((t) => t.id !== taskSnapshot.id);
+      setTasks(updated);
+      saveLocalTasks(updated, currentUser?.id);
+      setSelectedTaskIds((prev) => prev.filter((id) => id !== taskSnapshot.id));
+      setShowDetailMenu(false);
+      setIsEditingDetail(false);
+      setDetailTaskId(null);
+
+      if (currentUser?.id) {
+        await deleteTaskFromSupabase(taskSnapshot.id, currentUser.id);
+      }
+      refreshLocalStorageSnapshot(currentUser?.id);
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('calcmax:notes-tasks-updated'));
+      }
+
+      triggerVibration?.('success');
+      await onReturnToHistory?.(source, taskSnapshot);
+    } finally {
+      setIsReturningToHistory(false);
+    }
   };
 
   // Append quick note in Detail View
@@ -1396,14 +1460,15 @@ export default function TasksView({
           }}
           className="fixed inset-0 z-[99999] w-screen h-[100dvh] flex flex-col overscroll-none touch-manipulation"
         >
-          {/* Minimal Detail Top Bar: < Back on left, Edit/Save + Delete on right */}
+          {/* Minimal Detail Top Bar: < Back on left, Delete + Edit/Save + Three-Dot Menu on right */}
           <div className="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-black/10 px-4 sm:px-6 py-3 flex items-center justify-between gap-2 shrink-0 pt-[max(0.75rem,env(safe-area-inset-top))]">
             <button
               type="button"
               onClick={() => {
                 if (isEditingDetail) {
-                  handleSaveDetailChanges();
+                  void handleSaveDetailChanges();
                 }
+                setShowDetailMenu(false);
                 setDetailTaskId(null);
               }}
               className="w-10 h-10 rounded-full hover:bg-black/5 text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
@@ -1441,6 +1506,80 @@ export default function TasksView({
                   Edit
                 </button>
               )}
+
+              {/* Three-Dot Menu within Task Edit View */}
+              <div ref={detailMenuRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowDetailMenu((prev) => !prev)}
+                  aria-label="Task edit options"
+                  aria-expanded={showDetailMenu}
+                  title="Task Options"
+                  className={`min-h-[40px] min-w-[40px] rounded-xl border flex items-center justify-center transition-colors cursor-pointer shrink-0 active:scale-95 ${
+                    showDetailMenu
+                      ? 'bg-slate-900 text-white border-slate-900'
+                      : 'bg-white border-slate-200/90 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <MoreVertical className="w-4 h-4" />
+                </button>
+
+                {showDetailMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl border border-slate-200 shadow-2xl py-1.5 z-50">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDetailMenu(false);
+                        void handleToggleComplete(detailTask.id);
+                      }}
+                      className="w-full px-3.5 py-2.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 text-slate-500" />
+                      <span>{detailTask.completed ? 'Mark as Active' : 'Mark Completed'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDetailMenu(false);
+                        if (isEditingDetail) {
+                          void handleSaveDetailChanges();
+                        } else {
+                          setIsEditingDetail(true);
+                        }
+                      }}
+                      className="w-full px-3.5 py-2.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                    >
+                      {isEditingDetail ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Save Changes</span>
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="w-3.5 h-3.5 text-slate-500" />
+                          <span>Edit Details</span>
+                        </>
+                      )}
+                    </button>
+
+                    {detailTask.sourceHistory && (
+                      <>
+                        <div className="my-1 border-t border-slate-100" />
+                        <button
+                          type="button"
+                          onClick={() => void handleReturnTaskToHistory()}
+                          disabled={isReturningToHistory}
+                          className="w-full px-3.5 py-2.5 text-left text-xs font-semibold text-blue-700 hover:bg-blue-50 flex items-center gap-2 cursor-pointer transition-colors disabled:opacity-50"
+                        >
+                          <History className="w-3.5 h-3.5 text-blue-600" />
+                          <span>{isReturningToHistory ? 'Returning...' : 'Return to History'}</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 

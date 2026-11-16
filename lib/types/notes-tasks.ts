@@ -4,6 +4,18 @@ export interface ChecklistItem {
   completed: boolean;
 }
 
+export interface SourceHistoryMeta {
+  id?: string;
+  dbId?: string | number | null;
+  type: string;
+  details: string;
+  result: string;
+  savedAmount?: number;
+  isFavorite?: boolean;
+  createdAt?: string;
+  timestamp?: string;
+}
+
 export interface NoteItem {
   id: string;
   userId?: string;
@@ -16,6 +28,7 @@ export interface NoteItem {
   labels: string[];
   reminderAt?: string | null;
   isEmergency?: boolean;
+  sourceHistory?: SourceHistoryMeta | null;
   syncStatus?: 'synced' | 'unsynced';
   createdAt: string;
   updatedAt: string;
@@ -35,6 +48,7 @@ export interface TaskItem {
   priority?: TaskPriority;
   dueDate?: string | null;
   reminderAt?: string | null;
+  sourceHistory?: SourceHistoryMeta | null;
   syncStatus?: 'synced' | 'unsynced';
   createdAt: string;
   updatedAt: string;
