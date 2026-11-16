@@ -42,6 +42,11 @@ import {
 } from '@/lib/reminderService';
 import { useTheme } from '@/components/ThemeProvider';
 import { OfflineWifiIndicator } from '@/components/PwaRuntime';
+import {
+  checkStorageQuotaBeforeAdd,
+  refreshLocalStorageSnapshot,
+  triggerStorageFullPopup,
+} from '@/lib/storageSyncClient';
 
 interface NotesViewProps {
   currentUser: any;
@@ -344,6 +349,12 @@ export default function NotesView({
   }, [refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openNewNoteEditor = () => {
+    const quota = checkStorageQuotaBeforeAdd(currentUser?.id);
+    if (!quota.allowed) {
+      triggerStorageFullPopup(quota.snapshot, currentUser?.id);
+      return;
+    }
+
     const nowIso = new Date().toISOString();
     const blankDraft: NoteItem = {
       id: 'note-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
@@ -443,6 +454,7 @@ export default function NotesView({
 
     setIsDeleting(false);
     setConfirmDeleteTarget(null);
+    refreshLocalStorageSnapshot(currentUser?.id);
   };
 
   // Batch Selection Handlers
@@ -551,6 +563,14 @@ export default function NotesView({
       updatedAt: new Date().toISOString(),
     };
 
+    if (isNewDraft && !hasSavedCurrentNote) {
+      const quota = checkStorageQuotaBeforeAdd(currentUser?.id, noteToSave);
+      if (!quota.allowed) {
+        triggerStorageFullPopup(quota.snapshot, currentUser?.id);
+        return;
+      }
+    }
+
     const updated = [
       noteToSave,
       ...notes.filter((n) => n.id !== noteToSave.id),
@@ -558,6 +578,7 @@ export default function NotesView({
 
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
+    refreshLocalStorageSnapshot(currentUser?.id);
     setIsNewDraft(false);
     setHasSavedCurrentNote(true);
     setHasUnsavedChanges(false);
@@ -975,31 +996,20 @@ export default function NotesView({
         createPortal(
           <>
             <AnimatePresence>
-              {!editingNote &&
-                (refreshNotice || (currentUser?.id && notes.some((n) => n.syncStatus === 'unsynced'))) && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10, scale: 0.94 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 8, scale: 0.94 }}
-                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                    className="fixed bottom-20 left-4 sm:left-6 z-[85] pointer-events-none"
-                  >
-                    {refreshNotice ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
-                        <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
-                        <span>{refreshNotice}</span>
-                      </span>
-                    ) : (
-                      <span
-                        className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-amber-200/80 shadow-xs"
-                        title="Saved offline — will sync automatically when connected"
-                      >
-                        <CloudOff className="w-2.5 h-2.5 text-amber-600 shrink-0" />
-                        <span>Pending Sync</span>
-                      </span>
-                    )}
-                  </motion.div>
-                )}
+              {!editingNote && refreshNotice && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.94 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.94 }}
+                  transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                  className="fixed bottom-20 left-4 sm:left-6 z-[85] pointer-events-none"
+                >
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
+                    <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                    <span>{refreshNotice}</span>
+                  </span>
+                </motion.div>
+              )}
             </AnimatePresence>
 
             {!editingNote && selectedNoteIds.length === 0 && (

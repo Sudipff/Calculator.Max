@@ -49,7 +49,14 @@ import TasksView from '../components/NotesManager/TasksView';
 import HistoryView from '../components/HistoryView';
 import HistoryPreviewModal from '../components/HistoryPreviewModal';
 import ProfileSettingsView, { type BackupPayload } from '../components/ProfileSettingsView';
+import StorageFullModal from '../components/StorageFullModal';
 import { createClient } from '@/utils/supabase/client';
+import {
+  evaluateBasicArithmetic,
+  computeDiscount,
+  computeWeightQuantity,
+  convertRetailUnit,
+} from '../lib/basicCalculators';
 import {
   getCalculationHistory,
   saveCalculationHistory,
@@ -64,8 +71,14 @@ import {
   HistoryItem,
 } from '../lib/historyStorage';
 import { getLocalNotes, getLocalTasks, saveLocalNotes, saveLocalTasks } from '../lib/notesTasksStorage';
-import { hasCompletedInitialCloudSync } from '../lib/subscriptionPlans';
-import { fetchAndCacheStorageSnapshot } from '../lib/storageSyncClient';
+import { hasCompletedInitialCloudSync, type StorageSnapshot } from '../lib/subscriptionPlans';
+import {
+  buildLocalStorageSnapshot,
+  checkStorageQuotaBeforeAdd,
+  fetchAndCacheStorageSnapshot,
+  refreshLocalStorageSnapshot,
+  triggerStorageFullPopup,
+} from '../lib/storageSyncClient';
 import { getBackupPermissions } from '../lib/backupPermissions';
 import type { NoteItem } from '../lib/types/notes-tasks';
 import { exportAllHistoryPDF, exportSingleItemPDF } from '../lib/pdfExport';
@@ -106,21 +119,7 @@ const CURRENCIES = [
   { symbol: '¥', code: 'JPY', name: 'Japanese Yen', country: 'Japan', flag: '🇯🇵' },
 ];
 
-const safeEvaluate = (expr: string): number => {
-  try {
-    if (!expr || typeof expr !== 'string') return NaN;
-    const cleaned = expr.replace(/,/g, '').trim();
-    if (!cleaned) return NaN;
-    if (/^[0-9+\-*/. ()]+$/.test(cleaned)) {
-      const result = new Function('return ' + cleaned)();
-      return typeof result === 'number' && !isNaN(result) ? result : parseFloat(cleaned);
-    }
-    return parseFloat(cleaned);
-  } catch (e) {
-    // ignore
-  }
-  return parseFloat(expr ? expr.toString().replace(/,/g, '') : '');
-};
+const safeEvaluate = evaluateBasicArithmetic;
 
 interface ToolInfoItem {
   id: ActiveTab;
@@ -359,6 +358,7 @@ export default function RetailCalc() {
   >(null);
   const [previewHistoryItem, setPreviewHistoryItem] = useState<HistoryItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [storageFullSnapshot, setStorageFullSnapshot] = useState<StorageSnapshot | null>(null);
 
   useEffect(() => {
     if (!previewHistoryItem) return;
@@ -657,7 +657,7 @@ export default function RetailCalc() {
     };
   }, [currentUser?.id]);
 
-  // Reactive listener for background offline calculation sync completions
+  // Reactive listener for background offline calculation sync completions + Storage Full & Notes/Tasks updates
   useEffect(() => {
     const handleHistorySyncUpdated = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
@@ -667,9 +667,26 @@ export default function RetailCalc() {
         setHistory(fresh);
       }
     };
+    const handleStorageFull = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      const snap: StorageSnapshot =
+        detail?.snapshot || buildLocalStorageSnapshot(currentUser?.id);
+      setStorageFullSnapshot(snap);
+      triggerVibration('error');
+    };
+    const handleNotesTasksUpdated = () => {
+      const targetUid = currentUser?.id;
+      setDashboardNotes(getLocalNotes(targetUid));
+      setDashboardTasksCount(getLocalTasks(targetUid).length);
+    };
+
     window.addEventListener('calcmax:history-sync-updated', handleHistorySyncUpdated);
+    window.addEventListener('calcmax:storage-full', handleStorageFull);
+    window.addEventListener('calcmax:notes-tasks-updated', handleNotesTasksUpdated);
     return () => {
       window.removeEventListener('calcmax:history-sync-updated', handleHistorySyncUpdated);
+      window.removeEventListener('calcmax:storage-full', handleStorageFull);
+      window.removeEventListener('calcmax:notes-tasks-updated', handleNotesTasksUpdated);
     };
   }, [currentUser?.id]);
 
@@ -1218,9 +1235,17 @@ export default function RetailCalc() {
       savedAmount,
     };
 
+    // Enforce plan storage limit before adding new History entry
+    const quota = checkStorageQuotaBeforeAdd(userId, initialItem);
+    if (!quota.allowed) {
+      triggerStorageFullPopup(quota.snapshot, userId);
+      return;
+    }
+
     // Always immediately save locally first
     const updatedHistory = saveCalculationHistory(initialItem, userId);
     setHistory(updatedHistory);
+    refreshLocalStorageSnapshot(userId);
 
     if (currentUser && allowHistoryBackup) {
       if (!isOnline) {
@@ -1395,18 +1420,17 @@ export default function RetailCalc() {
     setDiscPriceErr(priceInvalid);
     setDiscErr(discInvalid);
 
-    if (!priceInvalid && !discInvalid) {
+    const computed = !priceInvalid && !discInvalid ? computeDiscount(price, disc) : null;
+    if (computed) {
       triggerVibration('success');
-      const saved = (price * disc) / 100;
-      const final = price - saved;
-      setDiscountSaved(saved);
-      setFinalPrice(final);
+      setDiscountSaved(computed.saved);
+      setFinalPrice(computed.finalPrice);
 
       saveHistoryItem(
         'Discount',
-        `Original Item Price: ${currency}${price.toFixed(2)} | Discount Percentage: ${disc}%`,
-        `Discounted Final Price: ${currency}${final.toFixed(2)} | Total Savings: ${currency}${saved.toFixed(2)} (${disc}% off)`,
-        saved
+        `Original Item Price: ${currency}${computed.originalPrice.toFixed(2)} | Discount Percentage: ${computed.discountPercent}%`,
+        `Discounted Final Price: ${currency}${computed.finalPrice.toFixed(2)} | Total Savings: ${currency}${computed.saved.toFixed(2)} (${computed.discountPercent}% off)`,
+        computed.saved
       );
     } else {
       triggerVibration('error');
@@ -1423,30 +1447,20 @@ export default function RetailCalc() {
     setWeightPriceErr(priceKgInvalid);
     setWeightBudgetErr(budgetInvalid);
 
-    if (!priceKgInvalid && !budgetInvalid) {
-      triggerVibration('success');
-      if (unitSystem === 'imperial') {
-        const ounces = (bdgt / priceKg) * 16;
-        setQuantityGrams(ounces);
-        const formattedQty =
-          ounces >= 16 ? `${(ounces / 16).toFixed(2)} lb` : `${ounces.toFixed(1)} oz`;
-        saveHistoryItem(
-          'Weight',
-          `Price Rate: ${currency}${priceKg.toFixed(2)} / lb | Shopping Budget: ${currency}${bdgt.toFixed(2)}`,
-          `Calculated Purchase Quantity: ${formattedQty}`
-        );
-      } else {
-        const grams = (bdgt / priceKg) * 1000;
-        setQuantityGrams(grams);
+    const computed =
+      !priceKgInvalid && !budgetInvalid
+        ? computeWeightQuantity(priceKg, bdgt, unitSystem)
+        : null;
 
-        const formattedQty =
-          grams >= 1000 ? `${(grams / 1000).toFixed(2)} kg` : `${grams.toFixed(0)} grams`;
-        saveHistoryItem(
-          'Weight',
-          `Price Rate: ${currency}${priceKg.toFixed(2)} / kg | Shopping Budget: ${currency}${bdgt.toFixed(2)}`,
-          `Calculated Purchase Quantity: ${formattedQty}`
-        );
-      }
+    if (computed) {
+      triggerVibration('success');
+      setQuantityGrams(computed.quantityBaseUnit);
+      const unitLabel = computed.unitSystem === 'imperial' ? 'lb' : 'kg';
+      saveHistoryItem(
+        'Weight',
+        `Price Rate: ${currency}${computed.pricePerUnit.toFixed(2)} / ${unitLabel} | Shopping Budget: ${currency}${computed.budget.toFixed(2)}`,
+        `Calculated Purchase Quantity: ${computed.formattedQty}`
+      );
     } else {
       triggerVibration('error');
     }
@@ -1457,54 +1471,11 @@ export default function RetailCalc() {
     const isErr = isNaN(input) || unitInput.trim() === '';
     setUnitInputErr(isErr);
 
-    if (!isErr) {
+    const converted = !isErr ? convertRetailUnit(input, unitType) : null;
+    if (converted) {
       triggerVibration('success');
-      let res = '';
-      let details = '';
-      switch (unitType) {
-        case 'g_to_kg':
-          res = `${(input / 1000).toFixed(3)} kg`;
-          details = `Input Amount: ${input} grams | Conversion Type: Grams to Kilograms (g -> kg)`;
-          break;
-        case 'kg_to_g':
-          res = `${(input * 1000).toFixed(0)} grams`;
-          details = `Input Amount: ${input} kg | Conversion Type: Kilograms to Grams (kg -> g)`;
-          break;
-        case 'ml_to_l':
-          res = `${(input / 1000).toFixed(3)} Liters`;
-          details = `Input Amount: ${input} ml | Conversion Type: Milliliters to Liters (ml -> L)`;
-          break;
-        case 'l_to_ml':
-          res = `${(input * 1000).toFixed(0)} ml`;
-          details = `Input Amount: ${input} Liters | Conversion Type: Liters to Milliliters (L -> ml)`;
-          break;
-        case 'lb_to_kg':
-          res = `${(input * 0.45359237).toFixed(3)} kg`;
-          details = `Input Amount: ${input} lb | Conversion Type: Pounds to Kilograms (lb -> kg)`;
-          break;
-        case 'kg_to_lb':
-          res = `${(input * 2.20462262).toFixed(3)} lb`;
-          details = `Input Amount: ${input} kg | Conversion Type: Kilograms to Pounds (kg -> lb)`;
-          break;
-        case 'oz_to_g':
-          res = `${(input * 28.3495231).toFixed(2)} g`;
-          details = `Input Amount: ${input} oz | Conversion Type: Ounces to Grams (oz -> g)`;
-          break;
-        case 'ft_to_m':
-          res = `${(input * 0.3048).toFixed(3)} m`;
-          details = `Input Amount: ${input} ft | Conversion Type: Feet to Meters (ft -> m)`;
-          break;
-        case 'm_to_ft':
-          res = `${(input * 3.2808399).toFixed(3)} ft`;
-          details = `Input Amount: ${input} m | Conversion Type: Meters to Feet (m -> ft)`;
-          break;
-        case 'floz_to_ml':
-          res = `${(input * 29.5735296).toFixed(2)} mL`;
-          details = `Input Amount: ${input} fl oz | Conversion Type: Fluid Ounces to Milliliters (fl oz -> mL)`;
-          break;
-      }
-      setUnitResult(res);
-      saveHistoryItem('Unit', details, `Converted Result: ${res}`);
+      setUnitResult(converted.formattedResult);
+      saveHistoryItem('Unit', converted.details, `Converted Result: ${converted.formattedResult}`);
     } else {
       triggerVibration('error');
     }
@@ -1617,15 +1588,18 @@ export default function RetailCalc() {
         }
       }
     } finally {
+      refreshLocalStorageSnapshot(currentUser?.id);
       setIsDeleting(false);
       setDeleteConfirmTarget(null);
     }
   };
 
-  const executeDeleteHistoryItem = async (itemToDelete: HistoryItem) => {
-    setIsDeleting(true);
+  const executeDeleteHistoryItem = async (itemToDelete: HistoryItem, silent: boolean = false) => {
+    if (!silent) {
+      setIsDeleting(true);
+    }
     try {
-      triggerVibration('reset');
+      triggerVibration(silent ? 'success' : 'reset');
       const userId = currentUser?.id;
       const updated = deleteCalculationHistoryItem(itemToDelete, userId);
       setHistory(updated);
@@ -1731,8 +1705,11 @@ export default function RetailCalc() {
         }
       }
     } finally {
-      setIsDeleting(false);
-      setDeleteConfirmTarget(null);
+      refreshLocalStorageSnapshot(currentUser?.id);
+      if (!silent) {
+        setIsDeleting(false);
+        setDeleteConfirmTarget(null);
+      }
     }
   };
 
@@ -1819,6 +1796,7 @@ export default function RetailCalc() {
         }
       }
     } finally {
+      refreshLocalStorageSnapshot(currentUser?.id);
       setIsDeleting(false);
       setDeleteConfirmTarget(null);
     }
@@ -2597,7 +2575,16 @@ export default function RetailCalc() {
                     onDownloadAllPDF={(items) => handleDownloadAllPDF(items)}
                     onExportCSV={(items) => exportHistoryCSV(items)}
                     onRetrySyncItem={retrySyncItem}
+                    onRemoveItemSilent={(item) => executeDeleteHistoryItem(item, true)}
                     onOpenProfile={() => handleTabChange('profile')}
+                    onNavigateToNotes={() => {
+                      setNotesRefreshSignal((n) => n + 1);
+                      handleTabChange('notes');
+                    }}
+                    onNavigateToTasks={() => {
+                      setTasksRefreshSignal((n) => n + 1);
+                      handleTabChange('tasks');
+                    }}
                   />
                 </section>
               )}
@@ -3033,6 +3020,17 @@ export default function RetailCalc() {
         }
         currency={currency}
         onClose={() => setPreviewHistoryItem(null)}
+      />
+
+      {/* Detailed Storage Full Usage Modal with Direct History Link */}
+      <StorageFullModal
+        isOpen={!!storageFullSnapshot}
+        snapshot={storageFullSnapshot}
+        onClose={() => setStorageFullSnapshot(null)}
+        onManageStorage={() => {
+          setStorageFullSnapshot(null);
+          handleTabChange('history');
+        }}
       />
     </div>
   );

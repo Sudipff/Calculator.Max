@@ -45,6 +45,11 @@ import {
   deleteTaskListFromSupabase,
 } from '@/lib/notesTasksStorage';
 import {
+  checkStorageQuotaBeforeAdd,
+  refreshLocalStorageSnapshot,
+  triggerStorageFullPopup,
+} from '@/lib/storageSyncClient';
+import {
   checkAndFireDueReminders,
   playReminderChime,
   sendDeviceNotification,
@@ -463,8 +468,16 @@ export default function TasksView({
     };
 
     const updated = [newTask, ...tasks];
+
+    const quota = checkStorageQuotaBeforeAdd(currentUser?.id, newTask);
+    if (!quota.allowed) {
+      triggerStorageFullPopup(quota.snapshot, currentUser?.id);
+      return;
+    }
+
     setTasks(updated);
     saveLocalTasks(updated, currentUser?.id);
+    refreshLocalStorageSnapshot(currentUser?.id);
     triggerVibration?.('success');
     resetCreateModal();
 
@@ -637,6 +650,7 @@ export default function TasksView({
 
     setIsDeleting(false);
     setConfirmDeleteTarget(null);
+    refreshLocalStorageSnapshot(currentUser?.id);
   };
 
   // Batch Selection Handlers
@@ -677,6 +691,12 @@ export default function TasksView({
       updatedAt: new Date().toISOString(),
     };
 
+    const quota = checkStorageQuotaBeforeAdd(currentUser?.id, newSubtask);
+    if (!quota.allowed) {
+      triggerStorageFullPopup(quota.snapshot, currentUser?.id);
+      return;
+    }
+
     const updated = tasks.map((t) => {
       if (t.id === parentId) {
         return {
@@ -690,6 +710,7 @@ export default function TasksView({
 
     setTasks(updated);
     saveLocalTasks(updated, currentUser?.id);
+    refreshLocalStorageSnapshot(currentUser?.id);
     setDetailSubtaskTitle('');
     setIsAddingSubtaskInDetail(false);
 
@@ -756,9 +777,16 @@ export default function TasksView({
       updatedAt: new Date().toISOString(),
     };
 
+    const quota = checkStorageQuotaBeforeAdd(currentUser?.id, newList);
+    if (!quota.allowed) {
+      triggerStorageFullPopup(quota.snapshot, currentUser?.id);
+      return;
+    }
+
     const updatedLists = [...taskLists, newList];
     setTaskLists(updatedLists);
     saveLocalTaskLists(updatedLists, currentUser?.id);
+    refreshLocalStorageSnapshot(currentUser?.id);
     setActiveListId(newList.id);
     setNewListName('');
     setShowNewListModal(false);
@@ -1199,38 +1227,33 @@ export default function TasksView({
         createPortal(
           <>
             <AnimatePresence>
-              {!detailTask &&
-                !isCreateModalOpen &&
-                (refreshNotice || (currentUser?.id && tasks.some((t) => t.syncStatus === 'unsynced'))) && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10, scale: 0.94 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 8, scale: 0.94 }}
-                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                    className="fixed bottom-20 left-4 sm:left-6 z-[85] pointer-events-none"
-                  >
-                    {refreshNotice ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
-                        <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
-                        <span>{refreshNotice}</span>
-                      </span>
-                    ) : (
-                      <span
-                        className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-amber-200/80 shadow-xs"
-                        title="Saved locally — will sync automatically when online"
-                      >
-                        <CloudOff className="w-2.5 h-2.5 text-amber-600 shrink-0" />
-                        <span>Pending Sync</span>
-                      </span>
-                    )}
-                  </motion.div>
-                )}
+              {!detailTask && !isCreateModalOpen && refreshNotice && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.94 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.94 }}
+                  transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                  className="fixed bottom-20 left-4 sm:left-6 z-[85] pointer-events-none"
+                >
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
+                    <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                    <span>{refreshNotice}</span>
+                  </span>
+                </motion.div>
+              )}
             </AnimatePresence>
 
             {!detailTask && !isCreateModalOpen && selectedTaskIds.length === 0 && (
               <button
                 type="button"
-                onClick={() => setIsCreateModalOpen(true)}
+                onClick={() => {
+                  const quota = checkStorageQuotaBeforeAdd(currentUser?.id);
+                  if (!quota.allowed) {
+                    triggerStorageFullPopup(quota.snapshot, currentUser?.id);
+                    return;
+                  }
+                  setIsCreateModalOpen(true);
+                }}
                 aria-label="Create new task"
                 title="New Task"
                 className="fixed bottom-20 right-4 sm:right-6 z-[90] w-14 h-14 sm:w-16 sm:h-16 min-w-[56px] min-h-[56px] rounded-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white shadow-[0_10px_28px_rgba(15,23,42,0.36)] border-2 border-white/90 flex items-center justify-center transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"

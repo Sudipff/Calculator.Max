@@ -14,7 +14,7 @@ import {
   saveCachedStorageSnapshot,
 } from '@/lib/subscriptionPlans';
 
-function measureUtf8Bytes(data: unknown): number {
+export function measureUtf8Bytes(data: unknown): number {
   try {
     const raw = typeof data === 'string' ? data : JSON.stringify(data ?? '');
     return new TextEncoder().encode(raw).length;
@@ -59,6 +59,92 @@ export function buildLocalStorageSnapshot(uid?: string | null): StorageSnapshot 
     },
     syncedAt: cached?.syncedAt || null,
   };
+}
+
+/**
+ * Recomputes live local usage immediately after adding or deleting items
+ * so freed/added storage reflects instantly in quota checks & UI cards.
+ */
+export function refreshLocalStorageSnapshot(uid?: string | null): StorageSnapshot {
+  const cached = getCachedStorageSnapshot(uid);
+  const localCalcs = getCalculationHistory(uid);
+  const localNotes = getLocalNotes(uid);
+  const localTasks = getLocalTasks(uid);
+  const localLists = getLocalTaskLists(uid);
+
+  const calcBytes = localCalcs.length > 0 ? measureUtf8Bytes(localCalcs) : 0;
+  const notesBytes = localNotes.length > 0 ? measureUtf8Bytes(localNotes) : 0;
+  const tasksBytes =
+    (localTasks.length > 0 ? measureUtf8Bytes(localTasks) : 0) +
+    (localLists.length > 0 ? measureUtf8Bytes(localLists) : 0);
+
+  const resolvedPlan: SubscriptionPlanId = cached?.planId || getSavedPlanId(uid) || 'starter';
+  const limitBytes = cached?.limitBytes || getPlanLimitBytes(resolvedPlan);
+
+  const snapshot: StorageSnapshot = {
+    planId: resolvedPlan,
+    usedBytes: calcBytes + notesBytes + tasksBytes,
+    limitBytes,
+    breakdown: {
+      calculationsBytes: calcBytes,
+      notesBytes: notesBytes,
+      tasksBytes: tasksBytes,
+    },
+    counts: {
+      calculations: localCalcs.length,
+      notes: localNotes.length,
+      tasks: localTasks.length,
+    },
+    syncedAt: cached?.syncedAt || null,
+  };
+
+  saveCachedStorageSnapshot(uid, snapshot);
+  return snapshot;
+}
+
+export interface QuotaCheckResult {
+  allowed: boolean;
+  usedBytes: number;
+  limitBytes: number;
+  projectedBytes: number;
+  snapshot: StorageSnapshot;
+}
+
+export function checkStorageQuotaBeforeAdd(
+  uid?: string | null,
+  incomingPayload?: unknown,
+  freedPayload?: unknown
+): QuotaCheckResult {
+  const snapshot = buildLocalStorageSnapshot(uid);
+  const incomingBytes = incomingPayload !== undefined ? measureUtf8Bytes(incomingPayload) : 0;
+  const freedBytes = freedPayload !== undefined ? measureUtf8Bytes(freedPayload) : 0;
+  const effectiveBaseBytes = Math.max(0, snapshot.usedBytes - freedBytes);
+  const projectedBytes = effectiveBaseBytes + incomingBytes;
+  const allowed =
+    freedBytes > 0
+      ? projectedBytes <= snapshot.limitBytes
+      : snapshot.usedBytes < snapshot.limitBytes && projectedBytes <= snapshot.limitBytes;
+
+  return {
+    allowed,
+    usedBytes: snapshot.usedBytes,
+    limitBytes: snapshot.limitBytes,
+    projectedBytes,
+    snapshot,
+  };
+}
+
+export function triggerStorageFullPopup(
+  snapshot?: StorageSnapshot | null,
+  uid?: string | null
+): void {
+  if (typeof window === 'undefined') return;
+  const resolved = snapshot || buildLocalStorageSnapshot(uid);
+  window.dispatchEvent(
+    new CustomEvent('calcmax:storage-full', {
+      detail: { snapshot: resolved },
+    })
+  );
 }
 
 export async function fetchAndCacheStorageSnapshot(

@@ -29,6 +29,7 @@ import {
   ExternalLink,
   Lock,
   X,
+  Mail,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { createClient } from '@/utils/supabase/client';
@@ -1311,6 +1312,27 @@ export default function ProfileSettingsView({
                 </span>
               </span>
               <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            </a>
+
+            <a
+              href="mailto:sudipdebnathgff1@gmail.com?subject=Calculator%20Max%20Feedback"
+              aria-label="Send Feedback to sudipdebnathgff1@gmail.com"
+              className="relative z-10 flex items-center justify-between gap-3 px-3.5 py-2.5 min-h-[44px] rounded-xl bg-slate-50/90 hover:bg-indigo-50/80 border border-slate-200/70 hover:border-indigo-200 transition-colors cursor-pointer group"
+            >
+              <span className="flex items-center gap-3 min-w-0">
+                <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-600 to-blue-600 text-white flex items-center justify-center shrink-0">
+                  <Mail className="w-4 h-4" />
+                </span>
+                <span className="flex flex-col min-w-0">
+                  <span className="text-xs sm:text-sm font-semibold text-slate-900 group-hover:text-indigo-700 truncate">
+                    Feedback
+                  </span>
+                  <span className="text-[11px] text-slate-500 truncate">
+                    sudipdebnathgff1@gmail.com
+                  </span>
+                </span>
+              </span>
+              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-500 shrink-0" />
             </a>
           </div>
         </div>

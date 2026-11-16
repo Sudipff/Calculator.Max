@@ -157,6 +157,22 @@ export function formatUsedStorageShort(usedBytes: number): string {
   return `${(usedBytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+export function formatDetailedBytesLabel(bytes: number): string {
+  if (bytes <= 0) return '0 KB';
+  if (bytes >= 1024 * 1024 * 1024) {
+    const gb = bytes / (1024 * 1024 * 1024);
+    return `${Number.isInteger(gb) ? gb : gb.toFixed(1)} GB`;
+  }
+  if (bytes >= 1024 * 1024) {
+    const mb = bytes / (1024 * 1024);
+    return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${Math.round(bytes / 1024)} KB`;
+  }
+  return `${bytes} B`;
+}
+
 export function getPlanDisplayName(planId: SubscriptionPlanId): string {
   switch (planId) {
     case 'pro':

@@ -31,31 +31,17 @@ import {
   CartesianGrid,
 } from 'recharts';
 
+import {
+  computeEmiPlan,
+  type InterestMethod,
+} from '../lib/basicCalculators';
+
+export type { InterestMethod };
+
 interface EmiCalculatorProps {
   currency: string;
   triggerVibration: (type?: 'success' | 'error' | 'click' | 'reset') => void;
   onSaveHistory: (type: 'EMI', details: string, result: string) => void;
-}
-
-export type InterestMethod = 'reducing' | 'flat';
-
-interface ScheduleRow {
-  month: number;
-  emi: number;
-  principalPaid: number;
-  interestPaid: number;
-  balance: number;
-  totalPaidSoFar: number;
-}
-
-interface YearlySummary {
-  year: number;
-  startMonth: number;
-  endMonth: number;
-  emiPaid: number;
-  principalPaid: number;
-  interestPaid: number;
-  endingBalance: number;
 }
 
 export default function EmiCalculator({ currency, triggerVibration, onSaveHistory }: EmiCalculatorProps) {
@@ -112,176 +98,11 @@ export default function EmiCalculator({ currency, triggerVibration, onSaveHistor
     return list;
   }, [isPriceError, isDpError, isTenureError, isRateError]);
 
-  // Loan calculation values
-  const calculations = useMemo(() => {
-    if (price <= 0 || dp >= price || tenureVal <= 0 || annualRate < 0) {
-      return null;
-    }
-
-    const principal = Math.max(0, price - dp);
-    const months = Math.max(1, Math.round(tenureUnit === 'years' ? tenureVal * 12 : tenureVal));
-
-    if (months <= 0) return null;
-
-    let emi = 0;
-    let totalInterest = 0;
-    const schedule: ScheduleRow[] = [];
-
-    if (interestMethod === 'flat') {
-      // Flat Rate: Total Interest = Principal * (Rate/100) * (Years)
-      const tenureYears = months / 12;
-      totalInterest = principal * (annualRate / 100) * tenureYears;
-      const totalOutflow = principal + totalInterest;
-      emi = totalOutflow / months;
-
-      const monthlyPrincipalPortion = principal / months;
-      const monthlyInterestPortion = totalInterest / months;
-
-      let currentBalance = principal;
-      let cumPaid = 0;
-      for (let m = 1; m <= months; m++) {
-        const principalThisMonth = m === months ? currentBalance : monthlyPrincipalPortion;
-        currentBalance = Math.max(0, currentBalance - principalThisMonth);
-        if (m === months) currentBalance = 0;
-        cumPaid += emi;
-        schedule.push({
-          month: m,
-          emi,
-          principalPaid: principalThisMonth,
-          interestPaid: monthlyInterestPortion,
-          balance: currentBalance,
-          totalPaidSoFar: cumPaid,
-        });
-      }
-    } else {
-      // Reducing Balance Rate
-      if (annualRate === 0) {
-        emi = principal / months;
-        totalInterest = 0;
-        let currentBalance = principal;
-        let cumPaid = 0;
-        for (let m = 1; m <= months; m++) {
-          const principalThisMonth = m === months ? currentBalance : emi;
-          currentBalance = Math.max(0, currentBalance - principalThisMonth);
-          if (m === months) currentBalance = 0;
-          cumPaid += emi;
-          schedule.push({
-            month: m,
-            emi,
-            principalPaid: principalThisMonth,
-            interestPaid: 0,
-            balance: currentBalance,
-            totalPaidSoFar: cumPaid,
-          });
-        }
-      } else {
-        const monthlyRate = annualRate / 12 / 100;
-        const compoundFactor = Math.pow(1 + monthlyRate, months);
-        emi = (principal * monthlyRate * compoundFactor) / (compoundFactor - 1);
-        totalInterest = emi * months - principal;
-
-        let currentBalance = principal;
-        let cumPaid = 0;
-        for (let m = 1; m <= months; m++) {
-          const interestForMonth = currentBalance * monthlyRate;
-          let principalForMonth = emi - interestForMonth;
-          if (m === months) {
-            principalForMonth = currentBalance;
-            currentBalance = 0;
-          } else {
-            currentBalance = Math.max(0, currentBalance - principalForMonth);
-          }
-          cumPaid += emi;
-          schedule.push({
-            month: m,
-            emi,
-            principalPaid: principalForMonth,
-            interestPaid: interestForMonth,
-            balance: currentBalance,
-            totalPaidSoFar: cumPaid,
-          });
-        }
-      }
-    }
-
-    const totalLoanOutflow = emi * months;
-    const overallTotalCost = totalLoanOutflow + dp;
-
-    const principalPercent = totalLoanOutflow > 0 ? (principal / totalLoanOutflow) * 100 : 100;
-    const interestPercent = totalLoanOutflow > 0 ? (totalInterest / totalLoanOutflow) * 100 : 0;
-
-    // Calculate counter-method comparison for informative comparison
-    let comparisonDiff = 0;
-    let flatAltInterest = 0;
-    let reducingAltInterest = 0;
-
-    if (annualRate > 0) {
-      const tenureYears = months / 12;
-      flatAltInterest = principal * (annualRate / 100) * tenureYears;
-
-      const monthlyRate = annualRate / 12 / 100;
-      const compoundFactor = Math.pow(1 + monthlyRate, months);
-      const reducingEmi = (principal * monthlyRate * compoundFactor) / (compoundFactor - 1);
-      reducingAltInterest = reducingEmi * months - principal;
-
-      comparisonDiff = Math.abs(flatAltInterest - reducingAltInterest);
-    }
-
-    // Yearly Aggregates
-    const yearlySummaries: YearlySummary[] = [];
-    const totalYears = Math.ceil(months / 12);
-    for (let y = 1; y <= totalYears; y++) {
-      const startM = (y - 1) * 12 + 1;
-      const endM = Math.min(y * 12, months);
-      const yearRows = schedule.filter((r) => r.month >= startM && r.month <= endM);
-
-      const yEmi = yearRows.reduce((acc, r) => acc + r.emi, 0);
-      const yPrinc = yearRows.reduce((acc, r) => acc + r.principalPaid, 0);
-      const yInt = yearRows.reduce((acc, r) => acc + r.interestPaid, 0);
-      const lastRow = yearRows[yearRows.length - 1];
-
-      yearlySummaries.push({
-        year: y,
-        startMonth: startM,
-        endMonth: endM,
-        emiPaid: yEmi,
-        principalPaid: yPrinc,
-        interestPaid: yInt,
-        endingBalance: lastRow ? lastRow.balance : 0,
-      });
-    }
-
-    const chartData = [
-      { name: 'Principal Amount', value: Math.round(principal), color: '#3B82F6' },
-      { name: 'Total Interest', value: Math.round(totalInterest), color: '#F97316' },
-    ];
-
-    // Amortization visual trend data
-    const amortizationTrendData = schedule.map((item) => ({
-      month: `M${item.month}`,
-      principalPaid: Math.round(item.principalPaid),
-      interestPaid: Math.round(item.interestPaid),
-      balance: Math.round(item.balance),
-    }));
-
-    return {
-      principal,
-      months,
-      emi,
-      totalInterest,
-      totalLoanOutflow,
-      overallTotalCost,
-      principalPercent: Math.round(principalPercent),
-      interestPercent: Math.round(interestPercent),
-      chartData,
-      schedule,
-      yearlySummaries,
-      amortizationTrendData,
-      comparisonDiff,
-      flatAltInterest,
-      reducingAltInterest,
-    };
-  }, [price, dp, annualRate, tenureVal, tenureUnit, interestMethod]);
+  // Loan calculation values (shared tested engine)
+  const calculations = useMemo(
+    () => computeEmiPlan(price, dp, annualRate, tenureVal, tenureUnit, interestMethod),
+    [price, dp, annualRate, tenureVal, tenureUnit, interestMethod]
+  );
 
   // Preset Handlers
   const handleInterestPreset = (rate: number) => {

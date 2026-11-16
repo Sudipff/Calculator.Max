@@ -313,6 +313,8 @@ export function safeEvaluateMath(
   if (allowAutoClose) {
     // Live preview while typing may strip trailing binary operators safely
     normalized = normalized.replace(/(?:\bmod\b|\byroot\b|[+\-*/^,\s])+$/i, '').trim();
+  } else if (/(?:\bmod\b|\byroot\b|[+\-*/^,])$/i.test(normalized)) {
+    throw new Error('Incomplete expression.');
   }
   if (!normalized) {
     throw new Error('Empty expression');
@@ -457,8 +459,13 @@ export function safeEvaluateMath(
   }
 
   // 3. High-precision Trigonometric, Angular, Hyperbolic, and Logarithmic Math
-  const fromRad = (rad: number): number =>
-    currentAngle === 'DEG' ? radToDegExact(rad) : sanitizeFloat(rad);
+  // Note: Preserve full 64-bit IEEE-754 intermediate precision; final result is sanitized once at exit.
+  const fromRad = (rad: number): number => {
+    if (!Number.isFinite(rad)) {
+      throw new Error('Result exceeds maximum limit (overflow).');
+    }
+    return currentAngle === 'DEG' ? rad * RAD_TO_DEG : rad;
+  };
 
   const snapTrigRad = (val: number, absAngleRad: number, allowZeroSnapNearPiMultiples: boolean): number => {
     if (!Number.isFinite(val)) {
@@ -471,7 +478,7 @@ export function safeEvaluateMath(
     if (!allowZeroSnapNearPiMultiples && Math.abs(val) < 1e-13) {
       return 0;
     }
-    return sanitizeFloat(val);
+    return Object.is(val, -0) ? 0 : val;
   };
 
   const clampUnitInterval = (x: number, fnLabel: string): number => {
@@ -493,7 +500,7 @@ export function safeEvaluateMath(
       if (norm === 210 || norm === 330) return -0.5;
       if (norm === 90) return 1;
       if (norm === 270) return -1;
-      return sanitizeFloat(Math.sin(degToRadExact(norm)));
+      return Math.sin(degToRadExact(norm));
     }
     return snapTrigRad(Math.sin(x), Math.abs(x), true);
   };
@@ -506,7 +513,7 @@ export function safeEvaluateMath(
       if (norm === 120 || norm === 240) return -0.5;
       if (norm === 0) return 1;
       if (norm === 180) return -1;
-      return sanitizeFloat(Math.cos(degToRadExact(norm)));
+      return Math.cos(degToRadExact(norm));
     }
     return snapTrigRad(Math.cos(x), Math.abs(x), false);
   };
@@ -520,7 +527,7 @@ export function safeEvaluateMath(
       if (norm === 0 || norm === 180) return 0;
       if (norm === 45 || norm === 225) return 1;
       if (norm === 135 || norm === 315) return -1;
-      return sanitizeFloat(Math.tan(degToRadExact(norm)));
+      return Math.tan(degToRadExact(norm));
     }
     const cosVal = Math.cos(x);
     if (Math.abs(cosVal) < 1e-13) {
@@ -554,57 +561,54 @@ export function safeEvaluateMath(
       case 'sinh': {
         const res = Math.sinh(x);
         if (!Number.isFinite(res)) throw new Error('Result exceeds maximum limit (overflow).');
-        return sanitizeFloat(res);
+        return res;
       }
       case 'cosh': {
         const res = Math.cosh(x);
         if (!Number.isFinite(res)) throw new Error('Result exceeds maximum limit (overflow).');
-        return sanitizeFloat(res);
+        return res;
       }
       case 'tanh':
-        return sanitizeFloat(Math.tanh(x));
+        return Math.tanh(x);
       case 'asinh':
-        return sanitizeFloat(Math.asinh(x));
+        return Math.asinh(x);
       case 'acosh':
         if (x < 1 - 1e-12) throw new Error('cosh⁻¹ input must be ≥ 1');
-        return sanitizeFloat(Math.acosh(Math.max(1, x)));
+        return Math.acosh(Math.max(1, x));
       case 'atanh':
         if (x <= -1 || x >= 1) throw new Error('tanh⁻¹ input must be strictly between -1 and 1');
-        return sanitizeFloat(Math.atanh(x));
+        return Math.atanh(x);
       case 'sqrt':
         if (x < 0) throw new Error('Square root of a negative number is undefined');
-        return sanitizeFloat(Math.sqrt(x));
+        return Math.sqrt(x);
       case 'cbrt':
-        return sanitizeFloat(Math.cbrt(x));
+        return Math.cbrt(x);
       case 'log': {
         if (x <= 0) throw new Error('Logarithm (log) is undefined for numbers ≤ 0');
-        const rawLog = Math.abs(x - 1) < 1e-4 ? Math.log1p(x - 1) / Math.LN10 : Math.log10(x);
-        return sanitizeFloat(rawLog);
+        return Math.abs(x - 1) < 1e-4 ? Math.log1p(x - 1) / Math.LN10 : Math.log10(x);
       }
       case 'log2': {
         if (x <= 0) throw new Error('Logarithm (log₂) is undefined for numbers ≤ 0');
-        const rawLog2 = Math.abs(x - 1) < 1e-4 ? Math.log1p(x - 1) / Math.LN2 : Math.log2(x);
-        return sanitizeFloat(rawLog2);
+        return Math.abs(x - 1) < 1e-4 ? Math.log1p(x - 1) / Math.LN2 : Math.log2(x);
       }
       case 'ln': {
         if (x <= 0) throw new Error('Natural logarithm (ln) is undefined for numbers ≤ 0');
-        const rawLn = Math.abs(x - 1) < 1e-4 ? Math.log1p(x - 1) : Math.log(x);
-        return sanitizeFloat(rawLn);
+        return Math.abs(x - 1) < 1e-4 ? Math.log1p(x - 1) : Math.log(x);
       }
       case 'exp': {
         const res = Math.exp(x);
         if (!Number.isFinite(res)) throw new Error('Result exceeds maximum limit (overflow).');
-        return sanitizeFloat(res);
+        return res;
       }
       case 'tenpow': {
         const res = Math.pow(10, x);
         if (!Number.isFinite(res)) throw new Error('Result exceeds maximum limit (overflow).');
-        return sanitizeFloat(res);
+        return res;
       }
       case 'twopow': {
         const res = Math.pow(2, x);
         if (!Number.isFinite(res)) throw new Error('Result exceeds maximum limit (overflow).');
-        return sanitizeFloat(res);
+        return res;
       }
       case 'abs':
         return Math.abs(x);
@@ -640,7 +644,7 @@ export function safeEvaluateMath(
     }
     // Eliminate subtractive cancellation floating-point residue (e.g. 0.1 + 0.2 - 0.3 = 5.5e-17)
     const maxMag = Math.max(Math.abs(a), Math.abs(b));
-    if (maxMag > 0 && Math.abs(raw) < maxMag * 1e-13) {
+    if (maxMag > 0 && Math.abs(raw) < maxMag * 1e-14) {
       return 0;
     }
     return raw;
@@ -972,6 +976,10 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
       const prev = state.currentInput;
       if (prev === '0') {
         nextInput = digit;
+      } else if (prev === '-0') {
+        nextInput = `-${digit}`;
+      } else if (prev.endsWith('(-0')) {
+        nextInput = `${prev.slice(0, -1)}${digit}`;
       } else if (
         prev.endsWith(')') ||
         prev.endsWith('π') ||
@@ -1021,7 +1029,9 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
       const lastNumberSegment = prev.split(/[^0-9.]/).pop() || '';
       let nextInput = prev;
       if (!lastNumberSegment.includes('.')) {
-        if (prev.endsWith('(')) {
+        if (prev === '-0' || prev.endsWith('(-0')) {
+          nextInput = `${prev}.`;
+        } else if (prev.endsWith('(')) {
           nextInput = `${prev}0.`;
         } else if (prev.endsWith(')') || prev.endsWith('π') || prev.endsWith('Ans') || (prev.endsWith('e') && !prev.endsWith('E'))) {
           nextInput = `${prev} × 0.`;
@@ -1209,7 +1219,7 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
         let nextInput = cleanedTarget;
         if (fnName === 'sq') nextInput = `${wrappedBase}^2`;
         else if (fnName === 'cube') nextInput = `${wrappedBase}^3`;
-        else if (fnName === 'reciprocal') nextInput = `1/${wrappedBase}`;
+        else if (fnName === 'reciprocal') nextInput = `(1/${wrappedBase})`;
         else if (fnName === 'factorial') nextInput = `${wrappedBase}!`;
 
         return {
@@ -1484,8 +1494,25 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
         };
       }
 
+      // If a result was just evaluated with '=', negate the result (keeping 0 as '0')
+      if (state.evaluatedResult !== null) {
+        if (state.evaluatedResult === '0') {
+          return { ...state, errorMessage: null };
+        }
+        const toggledRes = state.evaluatedResult.startsWith('-')
+          ? state.evaluatedResult.substring(1)
+          : `-${state.evaluatedResult}`;
+        return {
+          ...state,
+          currentInput: toggledRes,
+          evaluatedResult: toggledRes,
+          isNewInput: true,
+          errorMessage: null,
+        };
+      }
+
       // If right after a closed ')' while isNewInput is true, negate the parenthesized group
-      if (state.evaluatedResult === null && state.isNewInput && state.expression.trim().endsWith(')')) {
+      if (state.isNewInput && state.expression.trim().endsWith(')')) {
         const extracted = extractTrailingParenGroup(state.expression);
         if (extracted) {
           return {
@@ -1498,8 +1525,33 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
         }
       }
 
+      // Starting a new negative operand (fresh state or right after a binary operator / '(')
+      if (state.isNewInput) {
+        return {
+          ...state,
+          currentInput: '-0',
+          isNewInput: false,
+          errorMessage: null,
+        };
+      }
+
+      // Toggling '-0' cancels negative entry back to '0'
+      if (state.currentInput === '-0') {
+        return {
+          ...state,
+          currentInput: '0',
+          isNewInput: true,
+          errorMessage: null,
+        };
+      }
+
       if (state.currentInput === '0') {
-        return { ...state, errorMessage: null };
+        return {
+          ...state,
+          currentInput: '-0',
+          isNewInput: false,
+          errorMessage: null,
+        };
       }
 
       const expMatch = state.currentInput.match(/^(.*E)([+-]?)(\d*)$/);
@@ -1514,6 +1566,37 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
         };
       }
 
+      // Inside an open function or parenthesis like 'sin(' or 'sin(30', negate the inner operand
+      if (countUnclosedParens(state.currentInput) > 0) {
+        if (state.currentInput.endsWith('(')) {
+          return {
+            ...state,
+            currentInput: `${state.currentInput}-0`,
+            isNewInput: false,
+            errorMessage: null,
+          };
+        }
+        if (state.currentInput.endsWith('(-0')) {
+          return {
+            ...state,
+            currentInput: state.currentInput.slice(0, -2),
+            isNewInput: false,
+            errorMessage: null,
+          };
+        }
+        const innerMatch = state.currentInput.match(/^(.*?\()(-?)(.+)$/);
+        if (innerMatch) {
+          const [, prefixParen, signPart, restOperand] = innerMatch;
+          const nextInner = signPart === '-' ? restOperand : `-${restOperand}`;
+          return {
+            ...state,
+            currentInput: `${prefixParen}${nextInner}`,
+            isNewInput: false,
+            errorMessage: null,
+          };
+        }
+      }
+
       const toggled = state.currentInput.startsWith('-')
         ? state.currentInput.substring(1)
         : `-${state.currentInput}`;
@@ -1521,8 +1604,7 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
       return {
         ...state,
         currentInput: toggled,
-        evaluatedResult: state.evaluatedResult !== null ? toggled : null,
-        isNewInput: state.evaluatedResult !== null ? true : false,
+        isNewInput: false,
         errorMessage: null,
       };
     }
@@ -1655,10 +1737,18 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
       }
 
       const sliced = prev.slice(0, -1);
+      if (!sliced || sliced === '-') {
+        return {
+          ...state,
+          currentInput: '0',
+          isNewInput: true,
+          errorMessage: null,
+        };
+      }
       return {
         ...state,
-        currentInput: sliced || '0',
-        isNewInput: !sliced,
+        currentInput: sliced,
+        isNewInput: false,
         errorMessage: null,
       };
     }

@@ -7,6 +7,9 @@ import {
 import { checkRateLimit, getClientIp, requireAuth } from '@/lib/security';
 import { validateCalculationPayload, validateResourceId } from '@/lib/validation';
 import { logSecurityEvent } from '@/lib/auditLog';
+import { getSupabaseConfig } from '@/utils/supabase/config';
+import { createClient } from '@supabase/supabase-js';
+import { checkServerStorageQuotaForInsert } from '@/lib/serverStorageQuota';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,6 +51,32 @@ export async function POST(req: NextRequest) {
     }
 
     const { type, details, result } = validated.data;
+
+    const { url: supabaseUrl, key: supabaseKey } = getSupabaseConfig();
+    if (supabaseUrl && supabaseKey) {
+      const supabase = createClient(supabaseUrl, supabaseKey, {
+        global: auth.actor.token
+          ? { headers: { Authorization: `Bearer ${auth.actor.token}` } }
+          : undefined,
+      });
+      const incomingBytes = new TextEncoder().encode(
+        JSON.stringify({ user_id: auth.actor.uid, type, details, result })
+      ).length;
+      const quota = await checkServerStorageQuotaForInsert(supabase, auth.actor.uid, incomingBytes);
+      if (!quota.allowed) {
+        return NextResponse.json(
+          {
+            success: false,
+            storageFull: true,
+            usedBytes: quota.usedBytes,
+            limitBytes: quota.limitBytes,
+            error: 'Cloud storage quota exceeded. Free up storage or upgrade your plan.',
+          },
+          { status: 413 }
+        );
+      }
+    }
+
     const saved = await saveUserCalculation(
       auth.actor.uid,
       type,

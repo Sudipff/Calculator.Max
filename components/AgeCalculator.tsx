@@ -20,51 +20,11 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+import { computeAgeDetails } from '../lib/basicCalculators';
+
 interface AgeCalculatorProps {
   triggerVibration: (type?: 'success' | 'error' | 'click' | 'reset') => void;
   onSaveHistory: (type: string, details: string, result: string) => void;
-}
-
-// Helpers for Western & Chinese Zodiac
-const ZODIAC_SIGNS = [
-  { name: 'Capricorn', symbol: '♑', element: 'Earth', dates: 'Dec 22 - Jan 19' },
-  { name: 'Aquarius', symbol: '♒', element: 'Air', dates: 'Jan 20 - Feb 18' },
-  { name: 'Pisces', symbol: '♓', element: 'Water', dates: 'Feb 19 - Mar 20' },
-  { name: 'Aries', symbol: '♈', element: 'Fire', dates: 'Mar 21 - Apr 19' },
-  { name: 'Taurus', symbol: '♉', element: 'Earth', dates: 'Apr 20 - May 20' },
-  { name: 'Gemini', symbol: '♊', element: 'Air', dates: 'May 21 - Jun 20' },
-  { name: 'Cancer', symbol: '♋', element: 'Water', dates: 'Jun 21 - Jul 22' },
-  { name: 'Leo', symbol: '♌', element: 'Fire', dates: 'Jul 23 - Aug 22' },
-  { name: 'Virgo', symbol: '♍', element: 'Earth', dates: 'Aug 23 - Sep 22' },
-  { name: 'Libra', symbol: '♎', element: 'Air', dates: 'Sep 23 - Oct 22' },
-  { name: 'Scorpio', symbol: '♏', element: 'Water', dates: 'Oct 23 - Nov 21' },
-  { name: 'Sagittarius', symbol: '♐', element: 'Fire', dates: 'Nov 22 - Dec 21' },
-];
-
-const CHINESE_ZODIAC = [
-  'Rat', 'Ox', 'Tiger', 'Rabbit', 'Dragon', 'Snake',
-  'Horse', 'Goat', 'Monkey', 'Rooster', 'Dog', 'Pig'
-];
-
-function getWesternZodiac(month: number, day: number) {
-  // month: 1-indexed (1 = Jan, 12 = Dec)
-  if ((month === 1 && day <= 19) || (month === 12 && day >= 22)) return ZODIAC_SIGNS[0];
-  if ((month === 1 && day >= 20) || (month === 2 && day <= 18)) return ZODIAC_SIGNS[1];
-  if ((month === 2 && day >= 19) || (month === 3 && day <= 20)) return ZODIAC_SIGNS[2];
-  if ((month === 3 && day >= 21) || (month === 4 && day <= 19)) return ZODIAC_SIGNS[3];
-  if ((month === 4 && day >= 20) || (month === 5 && day <= 20)) return ZODIAC_SIGNS[4];
-  if ((month === 5 && day >= 21) || (month === 6 && day <= 20)) return ZODIAC_SIGNS[5];
-  if ((month === 6 && day >= 21) || (month === 7 && day <= 22)) return ZODIAC_SIGNS[6];
-  if ((month === 7 && day >= 23) || (month === 8 && day <= 22)) return ZODIAC_SIGNS[7];
-  if ((month === 8 && day >= 23) || (month === 9 && day <= 22)) return ZODIAC_SIGNS[8];
-  if ((month === 9 && day >= 23) || (month === 10 && day <= 22)) return ZODIAC_SIGNS[9];
-  if ((month === 10 && day >= 23) || (month === 11 && day <= 21)) return ZODIAC_SIGNS[10];
-  return ZODIAC_SIGNS[11];
-}
-
-function getChineseZodiac(year: number) {
-  const index = (year - 4) % 12;
-  return CHINESE_ZODIAC[(index + 12) % 12];
 }
 
 const formatDateToISO = (date: Date): string => {
@@ -106,122 +66,10 @@ export default function AgeCalculator({ triggerVibration, onSaveHistory }: AgeCa
     return null;
   }, [birthDate, targetDate]);
 
-  // Precise Age & Next Birthday Calculation
+  // Precise DST-safe Age & Next Birthday Calculation
   const calculation = useMemo(() => {
     if (validationError || !birthDate || !targetDate) return null;
-
-    const [bYear, bMonth, bDay] = birthDate.split('-').map(Number);
-    const [tYear, tMonth, tDay] = targetDate.split('-').map(Number);
-
-    const dob = new Date(bYear, bMonth - 1, bDay);
-    const target = new Date(tYear, tMonth - 1, tDay);
-
-    // 1. Exact Chronological Age (Years, Months, Days)
-    let years = tYear - bYear;
-    let months = tMonth - bMonth;
-    let days = tDay - bDay;
-
-    if (days < 0) {
-      months--;
-      // Days in the previous month of target date
-      const prevMonthLastDay = new Date(tYear, tMonth - 1, 0).getDate();
-      days += prevMonthLastDay;
-    }
-
-    if (months < 0) {
-      years--;
-      months += 12;
-    }
-
-    // 2. Total Cumulative Units
-    const diffTimeMs = target.getTime() - dob.getTime();
-    const totalDays = Math.floor(diffTimeMs / (1000 * 60 * 60 * 24));
-    const totalWeeks = Math.floor(totalDays / 7);
-    const remainingDaysAfterWeeks = totalDays % 7;
-    const totalMonths = years * 12 + months;
-    const totalHours = totalDays * 24;
-    const totalMinutes = totalHours * 60;
-    const totalSeconds = totalMinutes * 60;
-
-    // 3. Next Birthday Calculation
-    let nextBdayYear = tYear;
-    // Check if birthday has already passed this target year
-    let nextBday = new Date(nextBdayYear, bMonth - 1, bDay);
-    if (nextBday.getTime() < target.getTime()) {
-      nextBdayYear = tYear + 1;
-      nextBday = new Date(nextBdayYear, bMonth - 1, bDay);
-    }
-
-    // Is today the birthday?
-    const isBirthdayToday = bMonth === tMonth && bDay === tDay;
-
-    let nextBdayMonths = 0;
-    let nextBdayDays = 0;
-    let daysUntilNextBday = 0;
-
-    if (!isBirthdayToday) {
-      let nbMonths = nextBday.getMonth() - target.getMonth();
-      let nbDays = nextBday.getDate() - target.getDate();
-      let nbYears = nextBday.getFullYear() - target.getFullYear();
-
-      if (nbDays < 0) {
-        nbMonths--;
-        const prevMonthLastDay = new Date(nextBday.getFullYear(), nextBday.getMonth(), 0).getDate();
-        nbDays += prevMonthLastDay;
-      }
-      if (nbMonths < 0) {
-        nbYears--;
-        nbMonths += 12;
-      }
-
-      nextBdayMonths = nbMonths;
-      nextBdayDays = nbDays;
-      daysUntilNextBday = Math.ceil((nextBday.getTime() - target.getTime()) / (1000 * 60 * 60 * 24));
-    }
-
-    const nextBirthdayWeekday = nextBday.toLocaleDateString('en-US', { weekday: 'long' });
-    const bornWeekday = dob.toLocaleDateString('en-US', { weekday: 'long' });
-    const nextAge = years + 1;
-
-    // Half birthday
-    const halfBdayMonth = (bMonth + 6) % 12 || 12;
-    const halfBdayDate = new Date(tYear, halfBdayMonth - 1, bDay);
-
-    // Zodiac
-    const westernZodiac = getWesternZodiac(bMonth, bDay);
-    const chineseZodiac = getChineseZodiac(bYear);
-
-    // Formatted readable strings
-    const ageString = `${years} Year${years !== 1 ? 's' : ''}, ${months} Month${months !== 1 ? 's' : ''}, ${days} Day${days !== 1 ? 's' : ''}`;
-    const nextBdayString = isBirthdayToday
-      ? 'Happy Birthday! 🎉 Turning ' + years + ' today!'
-      : `${nextBdayMonths} month${nextBdayMonths !== 1 ? 's' : ''} and ${nextBdayDays} day${nextBdayDays !== 1 ? 's' : ''} left`;
-
-    return {
-      years,
-      months,
-      days,
-      ageString,
-      isBirthdayToday,
-      totalDays,
-      totalWeeks,
-      remainingDaysAfterWeeks,
-      totalMonths,
-      totalHours,
-      totalMinutes,
-      totalSeconds,
-      nextBdayMonths,
-      nextBdayDays,
-      daysUntilNextBday,
-      nextBirthdayDate: nextBday,
-      nextBirthdayWeekday,
-      nextAge,
-      nextBdayString,
-      bornWeekday,
-      westernZodiac,
-      chineseZodiac,
-      halfBdayDate: halfBdayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-    };
+    return computeAgeDetails(birthDate, targetDate);
   }, [birthDate, targetDate, validationError]);
 
   const handleCopy = () => {

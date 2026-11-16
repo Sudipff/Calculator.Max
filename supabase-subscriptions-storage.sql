@@ -129,7 +129,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.get_user_storage_usage() TO authenticated;
 
--- 4. Database Trigger to Enforce 10MB Per-User Storage Quota on Writes
+-- 4. Database Trigger to Enforce Per-User Storage Quota (Starter 10MB, Pro 10GB, Team 50GB, Enterprise 1TB)
 CREATE OR REPLACE FUNCTION public.enforce_user_10mb_storage_quota()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -140,13 +140,21 @@ DECLARE
   v_usage JSONB;
   v_used BIGINT;
   v_limit BIGINT;
+  v_incoming_delta BIGINT;
 BEGIN
   v_usage := public.get_user_storage_usage();
   v_used := COALESCE((v_usage->>'used_bytes')::BIGINT, 0);
   v_limit := COALESCE((v_usage->>'limit_bytes')::BIGINT, 10485760);
 
-  IF v_used + pg_column_size(NEW.*) > v_limit THEN
-    RAISE EXCEPTION 'Cloud storage quota exceeded. Upgrade your subscription plan or free up space.';
+  IF TG_OP = 'INSERT' THEN
+    IF v_used >= v_limit OR v_used + pg_column_size(NEW.*) > v_limit THEN
+      RAISE EXCEPTION 'STORAGE_QUOTA_EXCEEDED: Cloud storage quota exceeded. Manage storage or upgrade your subscription plan.';
+    END IF;
+  ELSIF TG_OP = 'UPDATE' THEN
+    v_incoming_delta := GREATEST(0, pg_column_size(NEW.*) - pg_column_size(OLD.*));
+    IF v_incoming_delta > 0 AND v_used + v_incoming_delta > v_limit THEN
+      RAISE EXCEPTION 'STORAGE_QUOTA_EXCEEDED: Cloud storage quota exceeded. Manage storage or upgrade your subscription plan.';
+    END IF;
   END IF;
 
   RETURN NEW;
@@ -173,6 +181,13 @@ BEGIN
     DROP TRIGGER IF EXISTS trg_enforce_quota_tasks ON public.tasks;
     CREATE TRIGGER trg_enforce_quota_tasks
       BEFORE INSERT OR UPDATE ON public.tasks
+      FOR EACH ROW EXECUTE FUNCTION public.enforce_user_10mb_storage_quota();
+  END IF;
+
+  IF to_regclass('public.task_lists') IS NOT NULL THEN
+    DROP TRIGGER IF EXISTS trg_enforce_quota_task_lists ON public.task_lists;
+    CREATE TRIGGER trg_enforce_quota_task_lists
+      BEFORE INSERT OR UPDATE ON public.task_lists
       FOR EACH ROW EXECUTE FUNCTION public.enforce_user_10mb_storage_quota();
   END IF;
 END $$;

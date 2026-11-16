@@ -11,6 +11,7 @@ import {
   Globe,
   CheckCircle2,
 } from 'lucide-react';
+import { convertCurrencyAmount } from '../lib/basicCalculators';
 
 export type VibrationType = 'click' | 'success' | 'error' | 'reset';
 
@@ -173,21 +174,19 @@ export default function CurrencyExchange({
     if (!cleaned) return null;
 
     const parsedAmount = parseFloat(cleaned);
-    if (isNaN(parsedAmount) || parsedAmount <= 0) return null;
-
-    const fromRate = rates[fromCurrency] || STATIC_RATES[fromCurrency] || 1;
-    const toRate = rates[toCurrency] || STATIC_RATES[toCurrency] || 1;
-
-    const usdValue = parsedAmount / fromRate;
-    const finalAmount = usdValue * toRate;
-    const effectiveRate = toRate / fromRate;
+    const effectiveRates: Record<string, number> = {
+      ...STATIC_RATES,
+      ...rates,
+    };
+    const conv = convertCurrencyAmount(parsedAmount, fromCurrency, toCurrency, effectiveRates);
+    if (!conv) return null;
 
     const fromItem = CURRENCY_LIST.find((c) => c.code === fromCurrency) || CURRENCY_LIST[0];
     const toItem = CURRENCY_LIST.find((c) => c.code === toCurrency) || CURRENCY_LIST[1];
 
     return {
-      convertedAmount: finalAmount,
-      exchangeRate: effectiveRate,
+      convertedAmount: conv.convertedAmount,
+      exchangeRate: conv.exchangeRate,
       fromSymbol: fromItem.symbol,
       toSymbol: toItem.symbol,
       fromCode: fromItem.code,

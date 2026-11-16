@@ -3,6 +3,7 @@ import { getSupabaseConfig } from '@/utils/supabase/config';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, requireAuth } from '@/lib/security';
 import { validateNotePayload, validateResourceId } from '@/lib/validation';
+import { checkServerStorageQuotaForInsert } from '@/lib/serverStorageQuota';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,27 +64,55 @@ export async function POST(req: NextRequest) {
         : undefined,
     });
 
+    const noteRow = {
+      id: note.id,
+      user_id: auth.actor.uid,
+      title: note.title,
+      content: note.content,
+      color: note.color,
+      is_pinned: note.isPinned,
+      is_checklist: note.isChecklist,
+      checklist_items: note.checklistItems,
+      labels: note.labels,
+      reminder_at: note.reminderAt,
+      is_emergency: note.isEmergency,
+      updated_at: new Date().toISOString(),
+    };
+
+    const incomingBytes = new TextEncoder().encode(JSON.stringify(noteRow)).length;
+    const quota = await checkServerStorageQuotaForInsert(
+      supabase,
+      auth.actor.uid,
+      incomingBytes,
+      'notes',
+      note.id
+    );
+
+    if (!quota.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          storageFull: true,
+          usedBytes: quota.usedBytes,
+          limitBytes: quota.limitBytes,
+          error: 'Cloud storage quota exceeded. Free up storage or upgrade your plan.',
+        },
+        { status: 413 }
+      );
+    }
+
     const { data, error } = await supabase
       .from('notes')
-      .upsert({
-        id: note.id,
-        user_id: auth.actor.uid,
-        title: note.title,
-        content: note.content,
-        color: note.color,
-        is_pinned: note.isPinned,
-        is_checklist: note.isChecklist,
-        checklist_items: note.checklistItems,
-        labels: note.labels,
-        reminder_at: note.reminderAt,
-        is_emergency: note.isEmergency,
-        updated_at: new Date().toISOString(),
-      })
+      .upsert(noteRow)
       .select()
       .single();
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+      const isQuotaErr = /quota exceeded/i.test(error.message || '');
+      return NextResponse.json(
+        { success: false, storageFull: isQuotaErr, error: error.message },
+        { status: isQuotaErr ? 413 : 400 }
+      );
     }
 
     return NextResponse.json({ success: true, note: data });

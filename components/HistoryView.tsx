@@ -29,9 +29,25 @@ import {
   User,
   ChevronRight,
   CheckSquare,
+  StickyNote,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { HistoryItem, parseSavedAmountFromText } from '../lib/historyStorage';
+import {
+  getLocalNotes,
+  saveLocalNotes,
+  upsertNoteToSupabase,
+  getLocalTasks,
+  saveLocalTasks,
+  upsertTaskToSupabase,
+  getLocalTaskLists,
+} from '../lib/notesTasksStorage';
+import {
+  checkStorageQuotaBeforeAdd,
+  refreshLocalStorageSnapshot,
+  triggerStorageFullPopup,
+} from '../lib/storageSyncClient';
+import type { NoteItem, TaskItem } from '../lib/types/notes-tasks';
 import { OfflineWifiIndicator } from '@/components/PwaRuntime';
 
 export type HistoryCategoryFilter =
@@ -59,7 +75,10 @@ interface HistoryViewProps {
   onDownloadAllPDF: (items: HistoryItem[]) => void;
   onExportCSV: (items: HistoryItem[]) => void;
   onRetrySyncItem: (item: HistoryItem) => void;
+  onRemoveItemSilent?: (item: HistoryItem) => Promise<void> | void;
   onOpenProfile?: () => void;
+  onNavigateToNotes?: () => void;
+  onNavigateToTasks?: () => void;
 }
 
 interface CategoryVisual {
@@ -250,7 +269,10 @@ export default function HistoryView({
   onDownloadAllPDF,
   onExportCSV,
   onRetrySyncItem,
+  onRemoveItemSilent,
   onOpenProfile,
+  onNavigateToNotes,
+  onNavigateToTasks,
 }: HistoryViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<HistoryCategoryFilter>('all');
@@ -258,6 +280,188 @@ export default function HistoryView({
   const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isRefreshingLocal, setIsRefreshingLocal] = useState(false);
+  const [transferringState, setTransferringState] = useState<{
+    itemId: string;
+    kind: 'note' | 'task';
+  } | null>(null);
+  const [toastNotice, setToastNotice] = useState<{
+    id: number;
+    message: 'Saved Note' | 'Saved Task';
+    kind: 'note' | 'task';
+  } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      if (navTimerRef.current) clearTimeout(navTimerRef.current);
+    };
+  }, []);
+
+  const showActionToast = (message: 'Saved Note' | 'Saved Task', kind: 'note' | 'task') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToastNotice({ id: Date.now(), message, kind });
+    toastTimerRef.current = setTimeout(() => {
+      setToastNotice(null);
+    }, 1800);
+  };
+
+  const handleAddHistoryToNote = async (
+    item: HistoryItem,
+    cleanResult: string,
+    displayTime: string,
+    visualLabel: string,
+    itemSavings: number
+  ) => {
+    setOpenCardMenuId(null);
+    if (transferringState) return;
+
+    const uid = currentUser?.id;
+    const nowIso = new Date().toISOString();
+    const lines = [
+      item.details,
+      '',
+      `Result: ${cleanResult}`,
+      ...(itemSavings > 0
+        ? [
+            `Saved: ${currency}${itemSavings.toLocaleString(undefined, {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 2,
+            })}`,
+          ]
+        : []),
+      `Recorded: ${displayTime}`,
+    ];
+
+    const newNote: NoteItem = {
+      id: 'note-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+      userId: uid,
+      title: `${visualLabel} Calculation`,
+      content: lines.join('\n'),
+      color: 'sky',
+      isPinned: false,
+      isChecklist: false,
+      checklistItems: [],
+      labels: [visualLabel],
+      reminderAt: null,
+      isEmergency: false,
+      syncStatus: 'unsynced',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    const quota = checkStorageQuotaBeforeAdd(uid, newNote, item);
+    if (!quota.allowed) {
+      triggerStorageFullPopup(quota.snapshot, uid);
+      return;
+    }
+
+    const existingNotes = getLocalNotes(uid);
+    const updatedNotes = [newNote, ...existingNotes];
+    saveLocalNotes(updatedNotes, uid);
+
+    // Immediately remove from History and trigger smooth exit + navigation animation
+    setTransferringState({ itemId: item.id, kind: 'note' });
+    const removePromise = Promise.resolve(onRemoveItemSilent?.(item));
+    refreshLocalStorageSnapshot(uid);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('calcmax:notes-tasks-updated'));
+    }
+
+    showActionToast('Saved Note', 'note');
+
+    if (navTimerRef.current) clearTimeout(navTimerRef.current);
+    navTimerRef.current = setTimeout(() => {
+      setTransferringState(null);
+      onNavigateToNotes?.();
+    }, 260);
+
+    if (uid) {
+      await removePromise;
+      void upsertNoteToSupabase(newNote, uid);
+    }
+  };
+
+  const handleAddHistoryToTask = async (
+    item: HistoryItem,
+    cleanResult: string,
+    displayTime: string,
+    visualLabel: string,
+    itemSavings: number
+  ) => {
+    setOpenCardMenuId(null);
+    if (transferringState) return;
+
+    const uid = currentUser?.id;
+    const nowIso = new Date().toISOString();
+    const lists = getLocalTaskLists(uid);
+    const targetListId = lists[0]?.id || 'default-my-tasks';
+
+    const descLines = [
+      item.details,
+      ...(itemSavings > 0
+        ? [
+            `Saved: ${currency}${itemSavings.toLocaleString(undefined, {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 2,
+            })}`,
+          ]
+        : []),
+      `Recorded: ${displayTime}`,
+    ];
+
+    const newTask: TaskItem = {
+      id: 'task-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+      userId: uid,
+      listId: targetListId,
+      parentId: null,
+      title: `${visualLabel}: ${cleanResult}`,
+      description: descLines.join('\n'),
+      completed: false,
+      isStarred: false,
+      priority: 'medium',
+      dueDate: null,
+      reminderAt: null,
+      syncStatus: 'unsynced',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      subtasks: [],
+    };
+
+    const quota = checkStorageQuotaBeforeAdd(uid, newTask, item);
+    if (!quota.allowed) {
+      triggerStorageFullPopup(quota.snapshot, uid);
+      return;
+    }
+
+    const existingTasks = getLocalTasks(uid);
+    const updatedTasks = [newTask, ...existingTasks];
+    saveLocalTasks(updatedTasks, uid);
+
+    // Immediately remove from History and trigger smooth exit + navigation animation
+    setTransferringState({ itemId: item.id, kind: 'task' });
+    const removePromise = Promise.resolve(onRemoveItemSilent?.(item));
+    refreshLocalStorageSnapshot(uid);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('calcmax:notes-tasks-updated'));
+    }
+
+    showActionToast('Saved Task', 'task');
+
+    if (navTimerRef.current) clearTimeout(navTimerRef.current);
+    navTimerRef.current = setTimeout(() => {
+      setTransferringState(null);
+      onNavigateToTasks?.();
+    }, 260);
+
+    if (uid) {
+      await removePromise;
+      void upsertTaskToSupabase(newTask, uid);
+    }
+  };
 
   // Batch Selection State (Activated by Long-Press)
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
@@ -575,8 +779,31 @@ export default function HistoryView({
           </div>
         </div>
 
-        {/* Shortened Search Bar + Three-Dot Overflow Menu */}
-        <div className="flex items-center gap-2">
+        {/* Shortened Search Bar + Three-Dot Overflow Menu + Centered Toast Above Search Bar */}
+        <div className="relative flex items-center gap-2">
+          <AnimatePresence>
+            {toastNotice && (
+              <motion.div
+                key={toastNotice.id}
+                initial={{ opacity: 0, y: 6, scale: 0.94 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 4, scale: 0.94 }}
+                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                role="status"
+                aria-live="polite"
+                className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
+              >
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/95 text-white text-[11px] font-bold shadow-lg border border-slate-700/80 whitespace-nowrap">
+                  <Check
+                    className={`w-3 h-3 stroke-[2.75] shrink-0 ${
+                      toastNotice.kind === 'note' ? 'text-emerald-400' : 'text-indigo-400'
+                    }`}
+                  />
+                  <span>{toastNotice.message}</span>
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <div className="relative flex-1 min-w-0">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
@@ -829,7 +1056,7 @@ export default function HistoryView({
       )}
 
       {/* Empty States or Chronological Date-Grouped Cards */}
-      {history.length === 0 ? (
+      {history.length === 0 && !transferringState ? (
         <div className="bg-white border border-slate-200/80 rounded-3xl p-8 sm:p-10 text-center shadow-xs">
           <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-3 text-slate-400 border border-slate-100">
             <Clock className="w-6 h-6" />
@@ -839,7 +1066,7 @@ export default function HistoryView({
             Results from your Scientific Calculator, EMI, Discount, and Unit tools will be organized here by date.
           </p>
         </div>
-      ) : filteredHistory.length === 0 ? (
+      ) : filteredHistory.length === 0 && !transferringState ? (
         <div className="bg-white border border-slate-200/80 rounded-3xl p-8 text-center shadow-xs space-y-2">
           <p className="text-sm font-bold text-slate-700">
             {searchQuery
@@ -859,31 +1086,41 @@ export default function HistoryView({
         </div>
       ) : (
         <div className="space-y-6">
-          {groupedHistory.map((group) => (
-            <section key={group.key} aria-label={group.label} className="space-y-3">
-              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 px-0.5">
-                {group.label}
-              </h3>
+          <AnimatePresence mode="popLayout">
+            {groupedHistory.map((group) => (
+              <motion.section
+                key={group.key}
+                layout
+                exit={{ opacity: 0, scale: 0.96, y: -8 }}
+                transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                aria-label={group.label}
+                className="space-y-3"
+              >
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 px-0.5">
+                  {group.label}
+                </h3>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {group.items.map(({ item, displayTime }) => {
-                  const visual = getCategoryVisual(item.type);
-                  const IconComponent = visual.Icon;
-                  const cleanResult = formatCleanResult(item.result);
-                  const itemSavings =
-                    item.savedAmount !== undefined
-                      ? item.savedAmount
-                      : parseSavedAmountFromText(item.type, item.details, item.result);
-                  const isMenuOpen = openCardMenuId === item.id;
-                  const isSelected = selectedItemIds.includes(item.id);
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <AnimatePresence mode="popLayout">
+                    {group.items.map(({ item, displayTime }) => {
+                      const visual = getCategoryVisual(item.type);
+                      const IconComponent = visual.Icon;
+                      const cleanResult = formatCleanResult(item.result);
+                      const itemSavings =
+                        item.savedAmount !== undefined
+                          ? item.savedAmount
+                          : parseSavedAmountFromText(item.type, item.details, item.result);
+                      const isMenuOpen = openCardMenuId === item.id;
+                      const isSelected = selectedItemIds.includes(item.id);
 
-                  return (
-                    <motion.article
-                      key={item.id}
-                      layout="position"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.16 }}
+                      return (
+                        <motion.article
+                          key={item.id}
+                          layout="position"
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.9, x: 28 }}
+                          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
                       onTouchStart={(e) =>
                         handleStartLongPress(item.id, e.touches[0]?.clientX, e.touches[0]?.clientY)
                       }
@@ -973,7 +1210,7 @@ export default function HistoryView({
                                 animate={{ opacity: 1, scale: 1, y: 0 }}
                                 exit={{ opacity: 0, scale: 0.95, y: -4 }}
                                 transition={{ duration: 0.12 }}
-                                className="absolute right-0 top-full mt-1 w-44 bg-white rounded-2xl border border-slate-200 shadow-xl py-1.5 z-30"
+                                className="absolute right-0 top-full mt-1 w-48 bg-white rounded-2xl border border-slate-200 shadow-xl py-1.5 z-30"
                               >
                                 <button
                                   type="button"
@@ -1016,6 +1253,40 @@ export default function HistoryView({
                                 >
                                   <Eye className="w-3.5 h-3.5 text-slate-400" />
                                   <span>View Details</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleAddHistoryToNote(
+                                      item,
+                                      cleanResult,
+                                      displayTime,
+                                      visual.label,
+                                      itemSavings
+                                    )
+                                  }
+                                  className="w-full px-3.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-emerald-50/70 flex items-center gap-2 cursor-pointer"
+                                >
+                                  <StickyNote className="w-3.5 h-3.5 text-emerald-600" />
+                                  <span>Add to Note</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleAddHistoryToTask(
+                                      item,
+                                      cleanResult,
+                                      displayTime,
+                                      visual.label,
+                                      itemSavings
+                                    )
+                                  }
+                                  className="w-full px-3.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-indigo-50/70 flex items-center gap-2 cursor-pointer"
+                                >
+                                  <CheckSquare className="w-3.5 h-3.5 text-indigo-600" />
+                                  <span>Add to Task</span>
                                 </button>
 
                                 <button
@@ -1134,9 +1405,11 @@ export default function HistoryView({
                     </motion.article>
                   );
                 })}
+                  </AnimatePresence>
               </div>
-            </section>
+            </motion.section>
           ))}
+          </AnimatePresence>
         </div>
       )}
 

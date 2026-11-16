@@ -3,6 +3,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Target, Calendar, Plus, Trash2, CheckCircle2, RotateCcw, AlertCircle, ShoppingBag, TrendingUp, DollarSign, Award, Clock, BarChart3, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import {
+  computeWishlistDaysRemaining,
+  computeWishlistPlan,
+} from '../lib/basicCalculators';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 export interface WishlistItem {
@@ -85,58 +89,16 @@ export default function WishlistPlanner({ currency, triggerVibration, onSaveHist
   const isSavedError = savedAmount !== '' && (saved < 0 || (target > 0 && saved > target));
   const isDurationError = mode === 'duration' && durationValue !== '' && durationVal <= 0;
 
-  // Calculate target days remaining based on mode
-  const daysRemaining = useMemo(() => {
-    if (mode === 'date') {
-      if (!targetDate) return 0;
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const targetD = new Date(targetDate);
-      targetD.setHours(0, 0, 0, 0);
-      const diffTime = targetD.getTime() - today.getTime();
-      return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
-    } else {
-      if (durationVal <= 0) return 0;
-      if (durationUnit === 'days') return durationVal;
-      if (durationUnit === 'weeks') return durationVal * 7;
-      if (durationUnit === 'months') return Math.round(durationVal * 30.4375);
-      return 0;
-    }
-  }, [mode, targetDate, durationVal, durationUnit]);
+  // Calculate target days remaining based on mode (UTC calendar-safe)
+  const daysRemaining = useMemo(
+    () => computeWishlistDaysRemaining(mode, targetDate, durationVal, durationUnit),
+    [mode, targetDate, durationVal, durationUnit]
+  );
 
   // Main savings breakdown
   const plan = useMemo(() => {
-    if (target <= 0 || isSavedError) return null;
-
-    const remaining = Math.max(0, target - saved);
-    const progressPercent = Math.min(100, Math.round((saved / target) * 100));
-
-    if (remaining === 0) {
-      return {
-        remaining: 0,
-        progressPercent: 100,
-        daily: 0,
-        weekly: 0,
-        monthly: 0,
-        days: daysRemaining,
-        isCompleted: true,
-      };
-    }
-
-    const days = daysRemaining > 0 ? daysRemaining : 1;
-    const daily = remaining / days;
-    const weekly = daily * 7;
-    const monthly = daily * 30.4375;
-
-    return {
-      remaining,
-      progressPercent,
-      daily,
-      weekly,
-      monthly,
-      days: daysRemaining,
-      isCompleted: false,
-    };
+    if (isSavedError) return null;
+    return computeWishlistPlan(target, saved, daysRemaining);
   }, [target, saved, daysRemaining, isSavedError]);
 
   // Recharts Bar Chart Scenario Comparison Data
