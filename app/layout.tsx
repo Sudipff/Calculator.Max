@@ -77,6 +77,7 @@ export default function RootLayout({
   return (
     <html lang="en" data-theme="light" suppressHydrationWarning className="h-full w-full">
       <head>
+        <meta name="google-site-verification" content="zLnAfNCPiMfQANuiwxvayjzk3slcniqnV0SRY1bwCxM" />
         <link rel="icon" type="image/svg+xml" href="/icon.svg" />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
