@@ -108,6 +108,83 @@ export function computeWeightQuantity(
   };
 }
 
+export type WeightTargetUnit = 'kg' | 'g' | 'lb' | 'oz';
+
+export interface WeightCostCalculationResult {
+  pricePerUnit: number;
+  targetWeight: number;
+  targetUnit: WeightTargetUnit;
+  unitSystem: WeightUnitSystem;
+  normalizedMainUnits: number;
+  totalCost: number;
+  formattedWeight: string;
+}
+
+export function computeWeightPrice(
+  pricePerUnitInput: string | number,
+  targetWeightInput: string | number,
+  targetUnit: WeightTargetUnit = 'kg',
+  unitSystem: WeightUnitSystem = 'metric'
+): WeightCostCalculationResult | null {
+  const pricePerUnit =
+    typeof pricePerUnitInput === 'number'
+      ? pricePerUnitInput
+      : evaluateBasicArithmetic(pricePerUnitInput);
+  const targetWeight =
+    typeof targetWeightInput === 'number'
+      ? targetWeightInput
+      : evaluateBasicArithmetic(targetWeightInput);
+
+  if (!Number.isFinite(pricePerUnit) || pricePerUnit <= 0) return null;
+  if (!Number.isFinite(targetWeight) || targetWeight <= 0) return null;
+
+  let normalizedMainUnits = targetWeight;
+  if (unitSystem === 'imperial') {
+    switch (targetUnit) {
+      case 'lb':
+        normalizedMainUnits = targetWeight;
+        break;
+      case 'oz':
+        normalizedMainUnits = targetWeight / 16;
+        break;
+      case 'kg':
+        normalizedMainUnits = targetWeight * 2.20462262185;
+        break;
+      case 'g':
+        normalizedMainUnits = (targetWeight / 1000) * 2.20462262185;
+        break;
+    }
+  } else {
+    switch (targetUnit) {
+      case 'kg':
+        normalizedMainUnits = targetWeight;
+        break;
+      case 'g':
+        normalizedMainUnits = targetWeight / 1000;
+        break;
+      case 'lb':
+        normalizedMainUnits = targetWeight * 0.45359237;
+        break;
+      case 'oz':
+        normalizedMainUnits = (targetWeight / 16) * 0.45359237;
+        break;
+    }
+  }
+
+  const totalCost = Number((pricePerUnit * normalizedMainUnits).toPrecision(13));
+  const formattedWeight = `${targetWeight} ${targetUnit}`;
+
+  return {
+    pricePerUnit,
+    targetWeight,
+    targetUnit,
+    unitSystem,
+    normalizedMainUnits,
+    totalCost,
+    formattedWeight,
+  };
+}
+
 export type RetailUnitConversionType =
   | 'g_to_kg'
   | 'kg_to_g'

@@ -25,6 +25,7 @@ import {
   evaluateBasicArithmetic,
   computeDiscount,
   computeWeightQuantity,
+  computeWeightPrice,
   convertRetailUnit,
   computeEmiPlan,
   computeAgeDetails,
@@ -137,6 +138,34 @@ test('Weight & Price Calculator: metric (grams/kg) and imperial (oz/lb)', () => 
   assert.equal(computeWeightQuantity(0, 100, 'metric'), null);
   assert.equal(computeWeightQuantity(100, 0, 'metric'), null);
   assert.equal(computeWeightQuantity(-10, 50, 'imperial'), null);
+
+  // Target weight -> total price calculations
+  const wpKg = computeWeightPrice(400, 1.5, 'kg', 'metric');
+  assert.ok(wpKg);
+  assert.equal(wpKg.totalCost, 600);
+  assert.equal(wpKg.formattedWeight, '1.5 kg');
+
+  const wpGrams = computeWeightPrice(400, 250, 'g', 'metric');
+  assert.ok(wpGrams);
+  assert.equal(wpGrams.totalCost, 100);
+  assert.equal(wpGrams.formattedWeight, '250 g');
+
+  const wpOz = computeWeightPrice(10, 4, 'oz', 'imperial');
+  assert.ok(wpOz);
+  assert.equal(wpOz.totalCost, 2.5);
+
+  const wpLb = computeWeightPrice(8, 2.5, 'lb', 'imperial');
+  assert.ok(wpLb);
+  assert.equal(wpLb.totalCost, 20);
+
+  // Cross-system unit conversion accuracy (1 lb = 0.45359237 kg at 100/kg)
+  const wpLbToKg = computeWeightPrice(100, 1, 'lb', 'metric');
+  assert.ok(wpLbToKg);
+  approxEqual(wpLbToKg.totalCost, 45.359237, 1e-6);
+
+  assert.equal(computeWeightPrice(0, 250, 'g', 'metric'), null);
+  assert.equal(computeWeightPrice(100, 0, 'kg', 'metric'), null);
+  assert.equal(computeWeightPrice(100, -5, 'kg', 'metric'), null);
 });
 
 test('Retail Unit Converter: all 10 unit conversions and roundtrip consistency', () => {

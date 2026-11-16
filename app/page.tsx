@@ -55,7 +55,9 @@ import {
   evaluateBasicArithmetic,
   computeDiscount,
   computeWeightQuantity,
+  computeWeightPrice,
   convertRetailUnit,
+  type WeightTargetUnit,
 } from '../lib/basicCalculators';
 import {
   getCalculationHistory,
@@ -377,7 +379,11 @@ export default function RetailCalc() {
 
   const [pricePerKg, setPricePerKg] = useState('');
   const [budget, setBudget] = useState('');
+  const [weightMode, setWeightMode] = useState<'quantity' | 'price'>('quantity');
+  const [targetWeight, setTargetWeight] = useState('');
+  const [targetWeightUnit, setTargetWeightUnit] = useState<WeightTargetUnit>('kg');
   const [quantityGrams, setQuantityGrams] = useState<number | null>(null);
+  const [calculatedWeightPrice, setCalculatedWeightPrice] = useState<number | null>(null);
 
   const [unitInput, setUnitInput] = useState('');
   const [unitType, setUnitType] = useState('g_to_kg');
@@ -719,6 +725,7 @@ export default function RetailCalc() {
       setUnitSystem(savedUnitSys);
       if (savedUnitSys === 'imperial') {
         setUnitType('lb_to_kg');
+        setTargetWeightUnit('lb');
       }
     }
 
@@ -1450,6 +1457,7 @@ export default function RetailCalc() {
   const [discErr, setDiscErr] = useState(false);
   const [weightPriceErr, setWeightPriceErr] = useState(false);
   const [weightBudgetErr, setWeightBudgetErr] = useState(false);
+  const [weightTargetErr, setWeightTargetErr] = useState(false);
   const [unitInputErr, setUnitInputErr] = useState(false);
 
   const handleToggleFavoriteHistory = useCallback(
@@ -1540,12 +1548,39 @@ export default function RetailCalc() {
 
   const calculateWeight = () => {
     const priceKg = safeEvaluate(pricePerKg);
-    const bdgt = safeEvaluate(budget);
-
     const priceKgInvalid = isNaN(priceKg) || priceKg <= 0 || pricePerKg.trim() === '';
-    const budgetInvalid = isNaN(bdgt) || bdgt <= 0 || budget.trim() === '';
-
     setWeightPriceErr(priceKgInvalid);
+
+    if (weightMode === 'price') {
+      const targetWt = safeEvaluate(targetWeight);
+      const targetInvalid = isNaN(targetWt) || targetWt <= 0 || targetWeight.trim() === '';
+      setWeightBudgetErr(false);
+      setWeightTargetErr(targetInvalid);
+
+      const computedCost =
+        !priceKgInvalid && !targetInvalid
+          ? computeWeightPrice(priceKg, targetWt, targetWeightUnit, unitSystem)
+          : null;
+
+      if (computedCost) {
+        triggerVibration('success');
+        setQuantityGrams(null);
+        setCalculatedWeightPrice(computedCost.totalCost);
+        const unitLabel = computedCost.unitSystem === 'imperial' ? 'lb' : 'kg';
+        saveHistoryItem(
+          'Weight',
+          `Price Rate: ${currency}${computedCost.pricePerUnit.toFixed(2)} / ${unitLabel} | Target Weight: ${computedCost.formattedWeight}`,
+          `Calculated Total Price: ${currency}${computedCost.totalCost.toFixed(2)}`
+        );
+      } else {
+        triggerVibration('error');
+      }
+      return;
+    }
+
+    const bdgt = safeEvaluate(budget);
+    const budgetInvalid = isNaN(bdgt) || bdgt <= 0 || budget.trim() === '';
+    setWeightTargetErr(false);
     setWeightBudgetErr(budgetInvalid);
 
     const computed =
@@ -1555,6 +1590,7 @@ export default function RetailCalc() {
 
     if (computed) {
       triggerVibration('success');
+      setCalculatedWeightPrice(null);
       setQuantityGrams(computed.quantityBaseUnit);
       const unitLabel = computed.unitSystem === 'imperial' ? 'lb' : 'kg';
       saveHistoryItem(
@@ -1596,9 +1632,12 @@ export default function RetailCalc() {
     triggerVibration('reset');
     setPricePerKg('');
     setBudget('');
+    setTargetWeight('');
     setQuantityGrams(null);
+    setCalculatedWeightPrice(null);
     setWeightPriceErr(false);
     setWeightBudgetErr(false);
+    setWeightTargetErr(false);
   };
 
   const resetUnit = () => {
@@ -2084,87 +2123,173 @@ export default function RetailCalc() {
           <div>
             <h2 className="font-bold text-lg text-slate-800 leading-tight">Price by Weight</h2>
             <p className="text-xs text-slate-500">
-              Calculate quantity based on price per {unitSystem === 'imperial' ? 'lb' : 'kg'} and budget
+              {weightMode === 'quantity'
+                ? `Calculate quantity based on price per ${unitSystem === 'imperial' ? 'lb' : 'kg'} and budget`
+                : `Calculate total cost based on price per ${unitSystem === 'imperial' ? 'lb' : 'kg'} and target weight`}
             </p>
           </div>
         </div>
       </div>
 
       <div className="space-y-4">
-        <div className="flex gap-4">
-          <div className="flex-1">
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex justify-between items-center">
-              <span>Price per {unitSystem === 'imperial' ? 'Lb' : 'Kg'}</span>
-              {weightPriceErr && (
-                <span className="text-red-500 text-[10px] lowercase font-semibold flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> invalid
-                </span>
-              )}
-            </label>
-            <motion.div
-              animate={weightPriceErr ? { x: [-4, 4, -4, 4, 0] } : {}}
-              transition={{ duration: 0.3 }}
-              className="relative"
-            >
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">
-                {currency}
-              </span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={pricePerKg}
-                onChange={(e) => {
-                  setPricePerKg(e.target.value);
-                  if (weightPriceErr) setWeightPriceErr(false);
-                }}
-                className={`w-full border rounded-2xl py-3.5 pl-8 pr-4 font-semibold text-slate-800 focus:ring-2 transition-all outline-none ${
-                  weightPriceErr
-                    ? 'bg-red-50/50 border-red-300 focus:ring-red-100 text-red-900'
-                    : 'bg-slate-50 border-none focus:ring-orange-200'
-                }`}
-                placeholder="0"
-              />
-            </motion.div>
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex justify-between items-center">
+            <span>Price per {unitSystem === 'imperial' ? 'Lb' : 'Kg'}</span>
             {weightPriceErr && (
-              <p className="text-[10px] text-red-500 font-medium mt-1">Enter a price &gt; 0</p>
+              <span className="text-red-500 text-[10px] lowercase font-semibold flex items-center gap-1">
+                <AlertCircle className="w-3 h-3" /> invalid
+              </span>
+            )}
+          </label>
+          <motion.div
+            animate={weightPriceErr ? { x: [-4, 4, -4, 4, 0] } : {}}
+            transition={{ duration: 0.3 }}
+            className="relative"
+          >
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">
+              {currency}
+            </span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={pricePerKg}
+              onChange={(e) => {
+                setPricePerKg(e.target.value);
+                if (weightPriceErr) setWeightPriceErr(false);
+              }}
+              className={`w-full border rounded-2xl py-3.5 pl-8 pr-4 font-semibold text-slate-800 focus:ring-2 transition-all outline-none ${
+                weightPriceErr
+                  ? 'bg-red-50/50 border-red-300 focus:ring-red-100 text-red-900'
+                  : 'bg-slate-50 border-none focus:ring-orange-200'
+              }`}
+              placeholder="0"
+            />
+          </motion.div>
+          {weightPriceErr && (
+            <p className="text-[10px] text-red-500 font-medium mt-1">Enter a price &gt; 0</p>
+          )}
+        </div>
+
+        <div className="flex gap-3 items-start">
+          <div className="flex-1 min-w-0">
+            {weightMode === 'quantity' ? (
+              <>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex justify-between items-center gap-1">
+                  <span className="truncate">Your Budget</span>
+                  {weightBudgetErr && (
+                    <span className="text-red-500 text-[10px] lowercase font-semibold flex items-center gap-1 shrink-0">
+                      <AlertCircle className="w-3 h-3" /> invalid
+                    </span>
+                  )}
+                </label>
+                <motion.div
+                  animate={weightBudgetErr ? { x: [-4, 4, -4, 4, 0] } : {}}
+                  transition={{ duration: 0.3 }}
+                  className="relative"
+                >
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">
+                    {currency}
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={budget}
+                    onChange={(e) => {
+                      setBudget(e.target.value);
+                      if (weightBudgetErr) setWeightBudgetErr(false);
+                    }}
+                    className={`w-full border rounded-2xl py-3.5 pl-8 pr-4 font-semibold text-slate-800 focus:ring-2 transition-all outline-none ${
+                      weightBudgetErr
+                        ? 'bg-red-50/50 border-red-300 focus:ring-red-100 text-red-900'
+                        : 'bg-slate-50 border-none focus:ring-orange-200'
+                    }`}
+                    placeholder="0"
+                  />
+                </motion.div>
+                {weightBudgetErr && (
+                  <p className="text-[10px] text-red-500 font-medium mt-1">Enter budget &gt; 0</p>
+                )}
+              </>
+            ) : (
+              <>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex justify-between items-center gap-1">
+                  <span className="truncate">Target Weight</span>
+                  {weightTargetErr && (
+                    <span className="text-red-500 text-[10px] lowercase font-semibold flex items-center gap-1 shrink-0">
+                      <AlertCircle className="w-3 h-3" /> invalid
+                    </span>
+                  )}
+                </label>
+                <motion.div
+                  animate={weightTargetErr ? { x: [-4, 4, -4, 4, 0] } : {}}
+                  transition={{ duration: 0.3 }}
+                  className="relative flex items-center"
+                >
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={targetWeight}
+                    onChange={(e) => {
+                      setTargetWeight(e.target.value);
+                      if (weightTargetErr) setWeightTargetErr(false);
+                    }}
+                    className={`w-full border rounded-2xl py-3.5 pl-4 pr-16 font-semibold text-slate-800 focus:ring-2 transition-all outline-none ${
+                      weightTargetErr
+                        ? 'bg-red-50/50 border-red-300 focus:ring-red-100 text-red-900'
+                        : 'bg-slate-50 border-none focus:ring-orange-200'
+                    }`}
+                    placeholder="0"
+                  />
+                  <select
+                    aria-label="Target weight unit"
+                    value={targetWeightUnit}
+                    onChange={(e) => {
+                      setTargetWeightUnit(e.target.value as WeightTargetUnit);
+                      setCalculatedWeightPrice(null);
+                    }}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 bg-white border border-slate-200/80 rounded-xl px-2 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-200 cursor-pointer"
+                  >
+                    <option value="kg">kg</option>
+                    <option value="g">g</option>
+                    <option value="lb">lb</option>
+                    <option value="oz">oz</option>
+                  </select>
+                </motion.div>
+                {weightTargetErr && (
+                  <p className="text-[10px] text-red-500 font-medium mt-1">Enter weight &gt; 0</p>
+                )}
+              </>
             )}
           </div>
-          <div className="flex-1">
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex justify-between items-center">
-              <span>Your Budget</span>
-              {weightBudgetErr && (
-                <span className="text-red-500 text-[10px] lowercase font-semibold flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> invalid
-                </span>
-              )}
-            </label>
-            <motion.div
-              animate={weightBudgetErr ? { x: [-4, 4, -4, 4, 0] } : {}}
-              transition={{ duration: 0.3 }}
-              className="relative"
+
+          <div className="w-[44%] sm:w-44 shrink-0">
+            <label
+              htmlFor={isGrid ? 'weight-mode-grid' : 'weight-mode-single'}
+              className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 truncate"
             >
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">
-                {currency}
-              </span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={budget}
+              Mode
+            </label>
+            <div className="relative">
+              <select
+                id={isGrid ? 'weight-mode-grid' : 'weight-mode-single'}
+                aria-label="Price by weight calculation mode"
+                value={weightMode}
                 onChange={(e) => {
-                  setBudget(e.target.value);
-                  if (weightBudgetErr) setWeightBudgetErr(false);
+                  const nextMode = e.target.value as 'quantity' | 'price';
+                  setWeightMode(nextMode);
+                  setQuantityGrams(null);
+                  setCalculatedWeightPrice(null);
+                  setWeightBudgetErr(false);
+                  setWeightTargetErr(false);
+                  triggerVibration('click');
                 }}
-                className={`w-full border rounded-2xl py-3.5 pl-8 pr-4 font-semibold text-slate-800 focus:ring-2 transition-all outline-none ${
-                  weightBudgetErr
-                    ? 'bg-red-50/50 border-red-300 focus:ring-red-100 text-red-900'
-                    : 'bg-slate-50 border-none focus:ring-orange-200'
-                }`}
-                placeholder="0"
-              />
-            </motion.div>
-            {weightBudgetErr && (
-              <p className="text-[10px] text-red-500 font-medium mt-1">Enter budget &gt; 0</p>
-            )}
+                className="w-full bg-slate-50 border-none rounded-2xl py-3.5 pl-3.5 pr-8 text-xs sm:text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-orange-200 appearance-none cursor-pointer outline-none"
+              >
+                <option value="quantity">Qty for Budget</option>
+                <option value="price">Cost for Weight</option>
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+            </div>
           </div>
         </div>
 
@@ -2173,7 +2298,7 @@ export default function RetailCalc() {
             onClick={calculateWeight}
             className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-3.5 rounded-2xl transition-all shadow-md active:scale-[0.98] cursor-pointer"
           >
-            Calculate Quantity
+            {weightMode === 'quantity' ? 'Calculate Quantity' : 'Calculate Price'}
           </button>
           <button
             onClick={resetWeight}
@@ -2185,7 +2310,7 @@ export default function RetailCalc() {
         </div>
 
         <AnimatePresence>
-          {quantityGrams !== null && (
+          {weightMode === 'quantity' && quantityGrams !== null && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
@@ -2205,6 +2330,34 @@ export default function RetailCalc() {
                       : quantityGrams >= 1000
                       ? `${(quantityGrams / 1000).toFixed(2)} kg`
                       : `${quantityGrams.toFixed(0)} g`}
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+          {weightMode === 'price' && calculatedWeightPrice !== null && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="pt-4 border-t border-slate-100 mt-4 overflow-hidden"
+            >
+              <div className="bg-orange-50 rounded-2xl p-4 flex justify-between items-center border border-orange-100/50">
+                <div>
+                  <p className="text-orange-800/60 text-xs font-bold uppercase tracking-wider mb-1">
+                    Total Cost
+                  </p>
+                  <p className="text-2xl font-black text-orange-600">
+                    {currency}
+                    {calculatedWeightPrice.toFixed(2)}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-orange-800/60 text-xs font-bold uppercase tracking-wider mb-1">
+                    Target Weight
+                  </p>
+                  <p className="text-sm font-bold text-orange-700">
+                    {targetWeight.trim()} {targetWeightUnit}
                   </p>
                 </div>
               </div>
@@ -2699,7 +2852,9 @@ export default function RetailCalc() {
                     onUnitSystemChange={(sys) => {
                       setUnitSystem(sys);
                       setUnitType(sys === 'imperial' ? 'lb_to_kg' : 'g_to_kg');
+                      setTargetWeightUnit(sys === 'imperial' ? 'lb' : 'kg');
                       setQuantityGrams(null);
+                      setCalculatedWeightPrice(null);
                       setUnitResult(null);
                       triggerVibration('click');
                     }}
