@@ -272,11 +272,13 @@ export default function TasksView({
     };
   }, [hasOpenSubOverlay, onSubOverlayChange]);
 
+  const lastCloseSignalRef = useRef(closeEditorSignal);
   const handleCloseDetailFromBackRef = useRef<(() => void) | null>(null);
 
   // Close overlays cleanly when back navigation fires so user returns to Tasks Manager
   useEffect(() => {
-    if (closeEditorSignal > 0) {
+    if (closeEditorSignal > lastCloseSignalRef.current) {
+      lastCloseSignalRef.current = closeEditorSignal;
       if (confirmDeleteTarget) {
         setConfirmDeleteTarget(null);
       } else if (showDetailMenu) {
@@ -591,6 +593,8 @@ export default function TasksView({
 
       triggerVibration?.('success');
       await onReturnToHistory?.(source, taskSnapshot);
+      setRefreshNotice('Returned to History');
+      setTimeout(() => setRefreshNotice(null), 2200);
     } finally {
       setIsReturningToHistory(false);
     }
@@ -1470,13 +1474,7 @@ export default function TasksView({
           <div className="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-black/10 px-4 sm:px-6 py-3 flex items-center justify-between gap-2 shrink-0 pt-[max(0.75rem,env(safe-area-inset-top))]">
             <button
               type="button"
-              onClick={() => {
-                if (isEditingDetail) {
-                  void handleSaveDetailChanges();
-                }
-                setShowDetailMenu(false);
-                setDetailTaskId(null);
-              }}
+              onClick={() => handleCloseDetailFromBackRef.current?.()}
               className="w-10 h-10 rounded-full hover:bg-black/5 text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
               aria-label="Back to tasks"
               title="Back to tasks"

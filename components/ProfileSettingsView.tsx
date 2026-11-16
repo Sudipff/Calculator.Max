@@ -132,7 +132,7 @@ export default function ProfileSettingsView({
   const [lastSyncedText, setLastSyncedText] = useState('Ready to sync');
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default');
-  const [skipBlockedPushPopup, setSkipBlockedPushPopup] = useState(false);
+  const [skipBlockedPushPopup, setSkipBlockedPushPopup] = useState(true);
   const [pushFeedback, setPushFeedback] = useState<string | null>(null);
   const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
   const [privacyLoading, setPrivacyLoading] = useState(false);

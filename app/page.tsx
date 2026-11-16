@@ -1347,7 +1347,6 @@ export default function RetailCalc() {
       setIsManagerSubOverlayOpen(false);
       setHistoryRefreshNotice('Returned to History');
       setTimeout(() => setHistoryRefreshNotice(null), 2200);
-      handleTabChange('history');
 
       if (currentUser && allowHistoryBackup) {
         if (!isOnline) {
@@ -1397,7 +1396,7 @@ export default function RetailCalc() {
         refreshLocalStorageSnapshot(userId);
       }
     },
-    [currentUser, handleTabChange]
+    [currentUser]
   );
 
   const retrySyncItem = async (itemToSync: HistoryItem) => {
@@ -2681,14 +2680,6 @@ export default function RetailCalc() {
                     onRetrySyncItem={retrySyncItem}
                     onRemoveItemSilent={(item) => executeDeleteHistoryItem(item, true)}
                     onOpenProfile={() => handleTabChange('profile')}
-                    onNavigateToNotes={() => {
-                      setNotesRefreshSignal((n) => n + 1);
-                      handleTabChange('notes');
-                    }}
-                    onNavigateToTasks={() => {
-                      setTasksRefreshSignal((n) => n + 1);
-                      handleTabChange('tasks');
-                    }}
                   />
                 </section>
               )}

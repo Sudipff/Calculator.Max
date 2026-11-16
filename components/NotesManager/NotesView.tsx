@@ -253,9 +253,11 @@ export default function NotesView({
     };
   }, [hasOpenSubOverlay, onSubOverlayChange]);
 
+  const lastCloseSignalRef = useRef(closeEditorSignal);
   const handleCloseEditorRef = useRef<(() => void) | null>(null);
   useEffect(() => {
-    if (closeEditorSignal > 0) {
+    if (closeEditorSignal > lastCloseSignalRef.current) {
+      lastCloseSignalRef.current = closeEditorSignal;
       if (confirmDeleteTarget) {
         setConfirmDeleteTarget(null);
       } else if (showThreeDotMenu) {
@@ -686,6 +688,8 @@ export default function NotesView({
 
       triggerVibration?.('success');
       await onReturnToHistory?.(source, noteSnapshot);
+      setRefreshNotice('Returned to History');
+      setTimeout(() => setRefreshNotice(null), 2200);
     } finally {
       setIsReturningToHistory(false);
     }

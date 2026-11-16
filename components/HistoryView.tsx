@@ -77,8 +77,6 @@ interface HistoryViewProps {
   onRetrySyncItem: (item: HistoryItem) => void;
   onRemoveItemSilent?: (item: HistoryItem) => Promise<void> | void;
   onOpenProfile?: () => void;
-  onNavigateToNotes?: () => void;
-  onNavigateToTasks?: () => void;
 }
 
 interface CategoryVisual {
@@ -271,8 +269,6 @@ export default function HistoryView({
   onRetrySyncItem,
   onRemoveItemSilent,
   onOpenProfile,
-  onNavigateToNotes,
-  onNavigateToTasks,
 }: HistoryViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<HistoryCategoryFilter>('all');
@@ -372,7 +368,7 @@ export default function HistoryView({
     const updatedNotes = [newNote, ...existingNotes];
     saveLocalNotes(updatedNotes, uid);
 
-    // Immediately remove from History and trigger smooth exit + navigation animation
+    // Immediately remove from History cleanly, stay on History view, and show confirmation toast
     setTransferringState({ itemId: item.id, kind: 'note' });
     const removePromise = Promise.resolve(onRemoveItemSilent?.(item));
     refreshLocalStorageSnapshot(uid);
@@ -386,7 +382,6 @@ export default function HistoryView({
     if (navTimerRef.current) clearTimeout(navTimerRef.current);
     navTimerRef.current = setTimeout(() => {
       setTransferringState(null);
-      onNavigateToNotes?.();
     }, 260);
 
     if (uid) {
@@ -462,7 +457,7 @@ export default function HistoryView({
     const updatedTasks = [newTask, ...existingTasks];
     saveLocalTasks(updatedTasks, uid);
 
-    // Immediately remove from History and trigger smooth exit + navigation animation
+    // Immediately remove from History cleanly, stay on History view, and show confirmation toast
     setTransferringState({ itemId: item.id, kind: 'task' });
     const removePromise = Promise.resolve(onRemoveItemSilent?.(item));
     refreshLocalStorageSnapshot(uid);
@@ -476,7 +471,6 @@ export default function HistoryView({
     if (navTimerRef.current) clearTimeout(navTimerRef.current);
     navTimerRef.current = setTimeout(() => {
       setTransferringState(null);
-      onNavigateToTasks?.();
     }, 260);
 
     if (uid) {
