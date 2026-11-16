@@ -58,6 +58,7 @@ import {
 } from '@/lib/reminderService';
 import { useTheme } from '@/components/ThemeProvider';
 import { OfflineWifiIndicator } from '@/components/PwaRuntime';
+import { resolveTaskSourceHistory } from '@/lib/historyProvenance';
 
 interface TasksViewProps {
   currentUser: any;
@@ -539,10 +540,15 @@ export default function TasksView({
     setIsEditingDetail(false);
   };
 
-  const handleReturnTaskToHistory = async () => {
-    if (!detailTask?.sourceHistory || isReturningToHistory) return;
+  const activeTaskSourceHistory = useMemo(
+    () => resolveTaskSourceHistory(detailTask),
+    [detailTask]
+  );
 
-    const source = detailTask.sourceHistory;
+  const handleReturnTaskToHistory = async () => {
+    if (!detailTask || !activeTaskSourceHistory || isReturningToHistory) return;
+
+    const source = activeTaskSourceHistory;
     const taskSnapshot = detailTask;
 
     const restoredCandidate = {
@@ -1563,7 +1569,7 @@ export default function TasksView({
                       )}
                     </button>
 
-                    {detailTask.sourceHistory && (
+                    {activeTaskSourceHistory && (
                       <>
                         <div className="my-1 border-t border-slate-100" />
                         <button

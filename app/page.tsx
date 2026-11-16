@@ -1334,6 +1334,14 @@ export default function RetailCalc() {
       const updatedHistory = saveCalculationHistory(restoredItem, userId);
       setHistory(updatedHistory);
       refreshLocalStorageSnapshot(userId);
+      if (userId) {
+        if (source.dbId) {
+          clearCalculationOfflineOp(`delete_calculation:${source.dbId}`, userId);
+        }
+        if (source.id) {
+          clearCalculationOfflineOp(`delete_calculation:${source.id}`, userId);
+        }
+      }
 
       setIsNoteFullScreen(false);
       setIsManagerSubOverlayOpen(false);

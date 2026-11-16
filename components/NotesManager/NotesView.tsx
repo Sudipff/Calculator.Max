@@ -48,6 +48,7 @@ import {
   refreshLocalStorageSnapshot,
   triggerStorageFullPopup,
 } from '@/lib/storageSyncClient';
+import { resolveNoteSourceHistory } from '@/lib/historyProvenance';
 
 interface NotesViewProps {
   currentUser: any;
@@ -632,10 +633,15 @@ export default function NotesView({
     }
   };
 
-  const handleReturnNoteToHistory = async () => {
-    if (!editingNote?.sourceHistory || isReturningToHistory) return;
+  const activeNoteSourceHistory = useMemo(
+    () => resolveNoteSourceHistory(editingNote),
+    [editingNote]
+  );
 
-    const source = editingNote.sourceHistory;
+  const handleReturnNoteToHistory = async () => {
+    if (!editingNote || !activeNoteSourceHistory || isReturningToHistory) return;
+
+    const source = activeNoteSourceHistory;
     const noteSnapshot = editingNote;
 
     const restoredCandidate = {
@@ -1625,7 +1631,7 @@ export default function NotesView({
                           </span>
                         </button>
 
-                        {editingNote.sourceHistory && (
+                        {activeNoteSourceHistory && (
                           <button
                             type="button"
                             onClick={() => void handleReturnNoteToHistory()}
