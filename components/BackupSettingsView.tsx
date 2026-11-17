@@ -22,6 +22,7 @@ interface BackupSettingsViewProps {
 interface BackupToggleSpec {
   key: keyof BackupPermissions;
   title: string;
+  toastSubject: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
   iconBgClass: string;
@@ -31,6 +32,7 @@ const BACKUP_ITEMS: BackupToggleSpec[] = [
   {
     key: 'calculatorHistory',
     title: 'Calculator History',
+    toastSubject: 'History backup',
     description: 'Automatically back up calculator activity',
     icon: Calculator,
     iconBgClass: 'bg-blue-100 text-blue-600',
@@ -38,6 +40,7 @@ const BACKUP_ITEMS: BackupToggleSpec[] = [
   {
     key: 'notes',
     title: 'Notes',
+    toastSubject: 'Notes backup',
     description: 'Securely back up all your saved notes',
     icon: FileText,
     iconBgClass: 'bg-amber-100 text-amber-600',
@@ -45,6 +48,7 @@ const BACKUP_ITEMS: BackupToggleSpec[] = [
   {
     key: 'tasks',
     title: 'Tasks',
+    toastSubject: 'Task backup',
     description: 'Prevent data loss for your task lists',
     icon: CheckSquare,
     iconBgClass: 'bg-emerald-100 text-emerald-600',
@@ -93,14 +97,17 @@ export default function BackupSettingsView({
       ...(permissions || DEFAULT_BACKUP_PERMISSIONS),
       [key]: nextValue,
     };
+    const spec = BACKUP_ITEMS.find((item) => item.key === key);
+    const subject = spec?.toastSubject || 'Backup';
 
     setPermissions(nextPerms);
     showNotification({
-      id: 'backup-prefs',
-      message: 'Saving backup preferences...',
-      type: 'sync',
-      duration: 0,
+      id: `backup-prefs-${key}`,
+      message: `${subject} ${nextValue ? 'on' : 'off'}`,
+      type: nextValue ? 'success' : 'info',
+      duration: 2000,
     });
+
     try {
       await updateBackupPermissionsInCloud(nextPerms, userId);
       if (nextValue && userId) {
@@ -110,19 +117,8 @@ export default function BackupSettingsView({
           void flushOfflineSyncQueue(userId);
         }
       }
-      showNotification({
-        id: 'backup-prefs',
-        message: 'Backup preferences saved',
-        type: 'success',
-        duration: 1800,
-      });
     } catch {
-      showNotification({
-        id: 'backup-prefs',
-        message: 'Saved backup preferences locally',
-        type: 'info',
-        duration: 2000,
-      });
+      // Local preferences remain saved via updateBackupPermissionsInCloud
     }
   };
 
