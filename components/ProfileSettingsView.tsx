@@ -48,6 +48,7 @@ import { fetchAndCacheStorageSnapshot } from '../lib/storageSyncClient';
 import { OfflineWifiIndicator } from './PwaRuntime';
 import SubscriptionView, { type SubscriptionPlanId } from './SubscriptionView';
 import { showNotification } from '@/lib/notifications';
+import { getAuthProviderInfo } from '@/lib/authProvider';
 
 export interface CurrencyOption {
   symbol: string;
@@ -125,6 +126,7 @@ export default function ProfileSettingsView({
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default');
   const [skipBlockedPushPopup, setSkipBlockedPushPopup] = useState(true);
   const prevCloseSignalRef = useRef<number>(closeSubViewSignal);
+  const authProvider = getAuthProviderInfo(currentUser);
 
   const hasSubOverlay = Boolean(
     showSubscriptionView || expandedAccount !== null
@@ -739,14 +741,22 @@ export default function ProfileSettingsView({
                   <span>AES-256-GCM at rest · TLS 1.3 · Signed HttpOnly cookies</span>
                 </div>
                 {currentUser ? (
-                  <button
-                    type="button"
-                    onClick={() => onOpenAuthModal('update_password')}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition-colors cursor-pointer"
-                  >
-                    <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>Change Account Password</span>
-                  </button>
+                  authProvider.isEmailPassword ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenAuthModal('update_password')}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition-colors cursor-pointer"
+                    >
+                      <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Change Account Password</span>
+                    </button>
+                  ) : (
+                    <p className="text-[11px] font-medium text-slate-500">
+                      {authProvider.isGoogle
+                        ? 'Signed in with Google · Password management is handled by your Google Account.'
+                        : 'Demo session · Sign in with email and password to manage an account password.'}
+                    </p>
+                  )
                 ) : (
                   <button
                     type="button"

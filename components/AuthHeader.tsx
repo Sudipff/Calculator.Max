@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { createClient } from '@/utils/supabase/client';
 import { type User as SupabaseUser } from '@supabase/supabase-js';
+import { getAuthProviderInfo } from '@/lib/authProvider';
 
 import {
   LogIn,
@@ -98,7 +99,11 @@ export default function AuthHeader({
   useEffect(() => {
     if (openSignal > 0) {
       if (requestedAuthTab === 'update_password') {
-        setActiveTab('update_password');
+        if (!user || getAuthProviderInfo(user).isEmailPassword) {
+          setActiveTab('update_password');
+        } else {
+          setActiveTab('google');
+        }
       } else if (!user) {
         setActiveTab('google');
       }
@@ -1060,18 +1065,20 @@ export default function AuthHeader({
                       <span>Return to Application</span>
                       <ArrowRight className="w-4 h-4" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab('update_password');
-                        setError(null);
-                        setSuccessMsg(null);
-                      }}
-                      className="px-5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl border border-indigo-200 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <KeyRound className="w-4 h-4" />
-                      <span>Change Password</span>
-                    </button>
+                    {getAuthProviderInfo(user).isEmailPassword && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('update_password');
+                          setError(null);
+                          setSuccessMsg(null);
+                        }}
+                        className="px-5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl border border-indigo-200 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <KeyRound className="w-4 h-4" />
+                        <span>Change Password</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={triggerSignOutFlow}

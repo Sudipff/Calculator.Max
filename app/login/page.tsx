@@ -20,6 +20,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
+import { getAuthProviderInfo } from '@/lib/authProvider';
 
 type AuthTab = 'google' | 'email_login' | 'email_signup' | 'demo' | 'forgot_password' | 'update_password';
 
@@ -659,18 +660,20 @@ export default function LoginPage() {
                   <span>Go to Calculator</span>
                   <ArrowRight className="w-4 h-4" />
                 </Link>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('update_password');
-                    setError(null);
-                    setSuccessMsg(null);
-                  }}
-                  className="px-5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <KeyRound className="w-4 h-4" />
-                  <span>Change Password</span>
-                </button>
+                {getAuthProviderInfo(currentUser).isEmailPassword && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('update_password');
+                      setError(null);
+                      setSuccessMsg(null);
+                    }}
+                    className="px-5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <KeyRound className="w-4 h-4" />
+                    <span>Change Password</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowSignOutConfirm(true)}
