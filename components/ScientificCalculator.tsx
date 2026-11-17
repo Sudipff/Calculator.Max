@@ -775,7 +775,7 @@ export default function ScientificCalculator({
         </div>
 
         {/* Display Area: Fading 2-Calculation Preview Above + Active Input / Result Display */}
-        <div className="flex-1 min-h-[210px] sm:min-h-[240px] flex flex-col justify-end overflow-hidden px-1 pb-4 pt-1">
+        <div className="flex-1 min-h-[168px] sm:min-h-[210px] flex flex-col justify-end overflow-hidden px-1 pb-4 pt-1">
           {/* Small Preview of Last Two Calculations (Older Entries Fade Out) */}
           {previewTapeEntries.length > 0 && (
             <div
@@ -885,9 +885,9 @@ export default function ScientificCalculator({
           </div>
         </div>
 
-        {/* Keypad Grid */}
+        {/* Keypad Grid (locked height across Scientific & Standard modes to prevent display shift) */}
         {calculatorView === 'scientific' ? (
-          <div className="grid grid-cols-5 gap-2.5 sm:gap-3 shrink-0">
+          <div className="grid grid-cols-5 grid-rows-7 gap-2.5 sm:gap-3 h-[396px] sm:h-[450px] shrink-0">
             {/* Row 1: 2nd, deg, sin, cos, tan */}
             <button
               type="button"
@@ -1141,13 +1141,13 @@ export default function ScientificCalculator({
             </button>
           </div>
         ) : (
-          /* Standard 4-Column Minimalist Keypad */
-          <div className="grid grid-cols-4 gap-2.5 sm:gap-3 shrink-0">
+          /* Standard 4-Column Minimalist Keypad (identical height to Scientific grid) */
+          <div className="grid grid-cols-4 grid-rows-5 gap-2.5 sm:gap-3 h-[396px] sm:h-[450px] shrink-0">
             {/* Row 1: C, Backspace, %, ÷ */}
             <button
               type="button"
               onClick={handleClearAll}
-              className={`${accentKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${accentKeyClass} h-full`}
               aria-label="Clear all"
             >
               C
@@ -1156,7 +1156,7 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={handleBackspace}
-              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${operatorKeyClass} h-full`}
               aria-label="Backspace"
             >
               <Delete className="w-5 h-5" />
@@ -1165,7 +1165,7 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={handlePercent}
-              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${operatorKeyClass} h-full`}
             >
               %
             </button>
@@ -1173,7 +1173,7 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={() => handleOperator('÷')}
-              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${operatorKeyClass} h-full`}
             >
               ÷
             </button>
@@ -1182,28 +1182,28 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={() => handleDigit('7')}
-              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${numKeyClass} h-full`}
             >
               7
             </button>
             <button
               type="button"
               onClick={() => handleDigit('8')}
-              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${numKeyClass} h-full`}
             >
               8
             </button>
             <button
               type="button"
               onClick={() => handleDigit('9')}
-              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${numKeyClass} h-full`}
             >
               9
             </button>
             <button
               type="button"
               onClick={() => handleOperator('×')}
-              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${operatorKeyClass} h-full`}
             >
               ×
             </button>
@@ -1212,28 +1212,28 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={() => handleDigit('4')}
-              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${numKeyClass} h-full`}
             >
               4
             </button>
             <button
               type="button"
               onClick={() => handleDigit('5')}
-              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${numKeyClass} h-full`}
             >
               5
             </button>
             <button
               type="button"
               onClick={() => handleDigit('6')}
-              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${numKeyClass} h-full`}
             >
               6
             </button>
             <button
               type="button"
               onClick={() => handleOperator('−')}
-              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${operatorKeyClass} h-full`}
             >
               −
             </button>
@@ -1242,28 +1242,28 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={() => handleDigit('1')}
-              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${numKeyClass} h-full`}
             >
               1
             </button>
             <button
               type="button"
               onClick={() => handleDigit('2')}
-              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${numKeyClass} h-full`}
             >
               2
             </button>
             <button
               type="button"
               onClick={() => handleDigit('3')}
-              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${numKeyClass} h-full`}
             >
               3
             </button>
             <button
               type="button"
               onClick={() => handleOperator('+')}
-              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${operatorKeyClass} h-full`}
             >
               +
             </button>
@@ -1275,7 +1275,7 @@ export default function ScientificCalculator({
                 setCalculatorView('scientific');
                 triggerVibration('click');
               }}
-              className={`${modeSwitchKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${modeSwitchKeyClass} h-full`}
               aria-label="Switch to Scientific keypad"
               title="Switch to Scientific keypad"
             >
@@ -1285,7 +1285,7 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={() => handleDigit('0')}
-              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${numKeyClass} h-full`}
             >
               0
             </button>
@@ -1293,7 +1293,7 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={handleDecimal}
-              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${numKeyClass} h-full`}
             >
               .
             </button>
@@ -1301,7 +1301,7 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={handleEqual}
-              className={`${accentKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              className={`${accentKeyClass} h-full`}
               aria-label="Equals"
             >
               =

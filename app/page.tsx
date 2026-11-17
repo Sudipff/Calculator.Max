@@ -342,8 +342,6 @@ export default function RetailCalc() {
   const [profileCloseSignal, setProfileCloseSignal] = useState(0);
   const [noteEditorCloseSignal, setNoteEditorCloseSignal] = useState(0);
   const [isNoteFullScreen, setIsNoteFullScreen] = useState(false);
-  const [calculatorViewMode, setCalculatorViewMode] = useState<'scientific' | 'standard'>('scientific');
-  const [isCalcHistoryOpen, setIsCalcHistoryOpen] = useState(false);
   const [isManagerSubOverlayOpen, setIsManagerSubOverlayOpen] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [profileOpenSignal, setProfileOpenSignal] = useState(0);
@@ -1049,7 +1047,7 @@ export default function RetailCalc() {
     showSignOutConfirm,
   ]);
 
-  const isCalcFullScreen = activeTab === 'calculator' && (calculatorViewMode === 'scientific' || isCalcHistoryOpen);
+  const isCalcFullScreen = activeTab === 'calculator';
 
   useEffect(() => {
     setBottomNavVisible(!isNoteFullScreen && !isCalcFullScreen);
@@ -2654,9 +2652,7 @@ export default function RetailCalc() {
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
               className={`w-full min-h-[100dvh] flex-1 flex flex-col ${
                 activeTab === 'calculator'
-                  ? isCalcFullScreen
-                    ? 'p-0 pb-0 sm:px-6 sm:py-3 space-y-0'
-                    : 'p-0 pb-20 sm:px-6 sm:pt-3 sm:pb-24 md:px-8 space-y-0 sm:space-y-4'
+                  ? 'p-0 pb-0 sm:px-6 sm:py-3 space-y-0'
                   : activeTab === 'home'
                   ? 'p-0 pb-20 space-y-0'
                   : activeTab === 'notes' || activeTab === 'tasks' || activeTab === 'history'
@@ -2785,8 +2781,6 @@ export default function RetailCalc() {
                     <ScientificCalculator
                       triggerVibration={triggerVibration}
                       onBackHome={() => handleTabChange('home')}
-                      onViewModeChange={setCalculatorViewMode}
-                      onHistoryOpenChange={setIsCalcHistoryOpen}
                     />
                   </CalculatorErrorBoundary>
                 </section>
@@ -3029,7 +3023,7 @@ export default function RetailCalc() {
           </AnimatePresence>
         </main>
 
-        {/* Bottom Navigation Bar: Home, History, Search, Notes, Tasks (hidden when viewing/editing an individual note or in full-screen scientific calculator mode) */}
+        {/* Bottom Navigation Bar: Home, History, Search, Notes, Tasks (hidden when viewing/editing an individual note or anywhere in Calculator full-screen mode) */}
         {!isNoteFullScreen && !isCalcFullScreen && (
           <nav
             aria-label="Primary bottom navigation"
