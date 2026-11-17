@@ -770,17 +770,17 @@ export default function ScientificCalculator({
     return [...priorSource.slice(0, displayScale.entryLimit)].reverse();
   }, [priorSource, displayScale.entryLimit]);
 
-  // Adaptive color classes (Light warm-stone palette + Dark obsidian sibling)
+  // Adaptive color classes (Crisp white + soft tinted off-white keys in Light mode; Obsidian in Dark mode)
   const shellBg = isDark
     ? 'bg-[#121418] text-zinc-100 sm:border sm:border-zinc-800/80'
-    : 'bg-[#ECEBE7] text-zinc-900 sm:border sm:border-[#DFDDD7]';
+    : 'bg-white text-slate-900 sm:border sm:border-slate-200/80';
 
   const keyBase =
     'min-h-[48px] sm:min-h-[54px] rounded-[20px] sm:rounded-[22px] flex items-center justify-center transition-all duration-150 active:scale-[0.94] cursor-pointer select-none touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215]';
 
   const sciKeyClass = isDark
     ? `${keyBase} bg-[#1C1F26] hover:bg-[#252932] text-zinc-300 text-sm sm:text-[15px] font-medium border border-zinc-800/70`
-    : `${keyBase} bg-[#F6F5F2] hover:bg-white text-zinc-700 text-sm sm:text-[15px] font-medium shadow-[0_1px_2px_rgba(24,24,27,0.04)]`;
+    : `${keyBase} bg-[#EEF2F7] hover:bg-[#E3E9F1] text-slate-700 text-sm sm:text-[15px] font-medium border border-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04)]`;
 
   const sciKeyActiveClass = isDark
     ? `${keyBase} bg-[#C25215]/25 text-[#F59E6C] text-sm sm:text-[15px] font-semibold border border-[#C25215]/60`
@@ -788,7 +788,7 @@ export default function ScientificCalculator({
 
   const numKeyClass = isDark
     ? `${keyBase} bg-[#22262E] hover:bg-[#2C313B] text-zinc-50 text-xl sm:text-[22px] font-normal tabular-nums border border-zinc-800/80`
-    : `${keyBase} bg-[#F8F7F4] hover:bg-white text-zinc-900 text-xl sm:text-[22px] font-normal tabular-nums shadow-[0_1px_2px_rgba(24,24,27,0.04)]`;
+    : `${keyBase} bg-[#F5F7FA] hover:bg-[#EBF0F5] text-slate-900 text-xl sm:text-[22px] font-normal tabular-nums border border-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.05)]`;
 
   const operatorKeyClass = isDark
     ? `${keyBase} bg-[#9E5228] hover:bg-[#AE5B2E] text-white text-xl sm:text-[22px] font-normal shadow-sm`
@@ -800,7 +800,7 @@ export default function ScientificCalculator({
 
   const modeSwitchKeyClass = isDark
     ? `${keyBase} bg-[#1C1F26] hover:bg-[#252932] text-[#E8793E] border border-zinc-800/70`
-    : `${keyBase} bg-[#F6F5F2] hover:bg-white text-[#C25215] shadow-[0_1px_2px_rgba(24,24,27,0.04)]`;
+    : `${keyBase} bg-[#EEF2F7] hover:bg-[#E3E9F1] text-[#C25215] border border-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04)]`;
 
   if (showHistoryPage) {
     return (
@@ -868,7 +868,7 @@ export default function ScientificCalculator({
                 className={`mt-2 mb-1 px-3.5 py-2.5 rounded-2xl flex items-center justify-between gap-3 border ${
                   isDark
                     ? 'bg-[#1C1F26] border-zinc-800 text-zinc-200'
-                    : 'bg-[#F6F5F2] border-[#DFDDD7] text-zinc-800'
+                    : 'bg-[#F5F7FA] border-slate-200/80 text-slate-800'
                 }`}
               >
                 <span className="text-sm font-medium">Clear all past calculations?</span>
@@ -942,10 +942,10 @@ export default function ScientificCalculator({
                   return (
                     <div
                       key={entryKey}
-                      className={`rounded-2xl px-3.5 py-3 transition-colors ${
+                      className={`rounded-2xl px-3.5 py-3 transition-colors border ${
                         isDark
-                          ? 'bg-[#1C1F26]/90 hover:bg-[#242832] border border-zinc-800/70'
-                          : 'bg-[#F6F5F2] hover:bg-white shadow-[0_1px_2px_rgba(24,24,27,0.04)]'
+                          ? 'bg-[#1C1F26]/90 hover:bg-[#242832] border-zinc-800/70'
+                          : 'bg-[#F5F7FA] hover:bg-[#EDF1F6] border-slate-200/75 shadow-[0_1px_2px_rgba(15,23,42,0.03)]'
                       }`}
                     >
                       <div className="flex items-center gap-2">
@@ -1099,7 +1099,7 @@ export default function ScientificCalculator({
                   className={`absolute right-0 top-12 z-40 w-56 rounded-2xl p-1.5 shadow-xl border ${
                     isDark
                       ? 'bg-[#1C1F26] border-zinc-700/80 text-zinc-100'
-                      : 'bg-[#FAF9F6] border-[#DFDDD7] text-zinc-800'
+                      : 'bg-white border-slate-200/90 text-slate-800'
                   }`}
                 >
                   <button
@@ -1138,7 +1138,7 @@ export default function ScientificCalculator({
                   </button>
 
                   <div
-                    className={`my-1 h-px ${isDark ? 'bg-zinc-800' : 'bg-[#E3E1DA]'}`}
+                    className={`my-1 h-px ${isDark ? 'bg-zinc-800' : 'bg-slate-200/80'}`}
                     aria-hidden="true"
                   />
 
