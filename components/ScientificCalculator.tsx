@@ -18,6 +18,7 @@ import {
   Delete,
   History,
   MoreVertical,
+  Plus,
   Trash2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -34,9 +35,11 @@ import { showNotification } from '@/lib/notifications';
 import { useTheme } from '@/components/ThemeProvider';
 
 const CALC_HISTORY_STORAGE_KEY = 'calcmax_scientific_tape_v1';
+const CALC_SAVED_HISTORY_KEYS_STORAGE = 'calcmax_scientific_saved_keys_v1';
 
 interface ScientificCalculatorProps {
   triggerVibration: (type?: 'success' | 'error' | 'click' | 'reset') => void;
+  onSaveHistory?: (type: string, details: string, result: string) => void | Promise<void>;
   onBackHome?: () => void;
   onViewModeChange?: (mode: 'scientific' | 'standard') => void;
   onHistoryOpenChange?: (isOpen: boolean) => void;
@@ -44,6 +47,7 @@ interface ScientificCalculatorProps {
 
 export default function ScientificCalculator({
   triggerVibration,
+  onSaveHistory,
   onBackHome,
   onViewModeChange,
   onHistoryOpenChange,
@@ -55,6 +59,8 @@ export default function ScientificCalculator({
   const [showMenu, setShowMenu] = useState<boolean>(false);
   const [showHistoryPage, setShowHistoryPage] = useState<boolean>(false);
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
+  const [savingHistoryKeys, setSavingHistoryKeys] = useState<Record<string, boolean>>({});
+  const [savedHistoryKeys, setSavedHistoryKeys] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState<boolean>(false);
   const [copiedHistoryId, setCopiedHistoryId] = useState<string | null>(null);
 
@@ -115,12 +121,32 @@ export default function ScientificCalculator({
           }
         }
       }
+      const rawSaved = window.localStorage.getItem(CALC_SAVED_HISTORY_KEYS_STORAGE);
+      if (rawSaved) {
+        const parsedSaved = JSON.parse(rawSaved);
+        if (parsedSaved && typeof parsedSaved === 'object' && !Array.isArray(parsedSaved)) {
+          setSavedHistoryKeys(parsedSaved as Record<string, boolean>);
+        }
+      }
     } catch {
       // Ignore storage access or malformed data errors
     } finally {
       hasHydratedTapeRef.current = true;
     }
   }, []);
+
+  // Persist saved card flags whenever updated
+  useEffect(() => {
+    if (!hasHydratedTapeRef.current) return;
+    try {
+      window.localStorage.setItem(
+        CALC_SAVED_HISTORY_KEYS_STORAGE,
+        JSON.stringify(savedHistoryKeys)
+      );
+    } catch {
+      // Ignore quota / private browsing errors
+    }
+  }, [savedHistoryKeys]);
 
   // Persist calculator history whenever tape changes (after initial hydration)
   useEffect(() => {
@@ -410,14 +436,13 @@ export default function ScientificCalculator({
   const trigCosFn = isSecondFunction ? 'acos' : 'cos';
   const trigTanFn = isSecondFunction ? 'atan' : 'tan';
 
-  // Small preview of ONLY the last two calculations above the input area (oldest on top, fading out)
+  // Dynamic sizing & history shortening based on active equation length:
+  // History items always stay larger than active input text while scaling down and shortening as equation grows.
   const lastTape = localTape[0];
-  const previewTapeEntries = useMemo(() => {
-    const source =
-      evaluatedResult !== null && lastTape && lastTape.res === evaluatedResult
-        ? localTape.slice(1)
-        : localTape;
-    return [...source.slice(0, 2)].reverse();
+  const priorSource = useMemo(() => {
+    return evaluatedResult !== null && lastTape && lastTape.res === evaluatedResult
+      ? localTape.slice(1)
+      : localTape;
   }, [localTape, evaluatedResult, lastTape]);
 
   const equationDisplay = useMemo(() => {
@@ -439,6 +464,110 @@ export default function ScientificCalculator({
     if (expression && livePreview !== null) return `= ${livePreview}`;
     return currentInput;
   }, [errorMessage, evaluatedResult, expression, livePreview, currentInput]);
+
+  const handleAddCardToMainHistory = async (entryKey: string, item: TapeEntry) => {
+    if (savingHistoryKeys[entryKey] || savedHistoryKeys[entryKey]) return;
+
+    setSavingHistoryKeys((prev) => ({ ...prev, [entryKey]: true }));
+    triggerVibration('click');
+    try {
+      await onSaveHistory?.('Calculator', item.expr, `Result: ${item.res}`);
+      setSavedHistoryKeys((prev) => ({ ...prev, [entryKey]: true }));
+      triggerVibration('success');
+      showNotification({
+        id: `calc-save-${entryKey}`,
+        message: 'Saved to main History',
+        type: 'success',
+        duration: 1800,
+      });
+    } catch {
+      triggerVibration('error');
+      showNotification({
+        id: `calc-save-err-${entryKey}`,
+        message: 'Could not save calculation',
+        type: 'error',
+        duration: 2400,
+      });
+    } finally {
+      setSavingHistoryKeys((prev) => {
+        const next = { ...prev };
+        delete next[entryKey];
+        return next;
+      });
+    }
+  };
+
+  const displayScale = useMemo(() => {
+    const activeLen = Math.max(
+      equationDisplay.length,
+      mainResultDisplay.length > 14 ? mainResultDisplay.length : 0
+    );
+
+    if (activeLen <= 18) {
+      return {
+        tier: 0 as const,
+        entryLimit: 4,
+        historyMaxHeight: 'max-h-[168px] sm:max-h-[204px]',
+        historyExprClass: 'text-[21px] sm:text-[24px] leading-[1.24]',
+        historyLongExprClass: 'text-[19px] sm:text-[21px] leading-[1.24]',
+        historyResClass: 'text-[22px] sm:text-[26px]',
+        historyLongResClass: 'text-[20px] sm:text-[22px]',
+        inputExprClass: 'text-[17px] sm:text-[19px] leading-[1.28]',
+      };
+    }
+    if (activeLen <= 38) {
+      return {
+        tier: 1 as const,
+        entryLimit: 2,
+        historyMaxHeight: 'max-h-[108px] sm:max-h-[128px]',
+        historyExprClass: 'text-[19px] sm:text-[21px] leading-[1.24]',
+        historyLongExprClass: 'text-[17px] sm:text-[19px] leading-[1.24]',
+        historyResClass: 'text-[20px] sm:text-[23px]',
+        historyLongResClass: 'text-[18px] sm:text-[20px]',
+        inputExprClass: 'text-[16px] sm:text-[18px] leading-[1.28]',
+      };
+    }
+    if (activeLen <= 68) {
+      return {
+        tier: 2 as const,
+        entryLimit: 2,
+        historyMaxHeight: 'max-h-[76px] sm:max-h-[90px]',
+        historyExprClass: 'text-[17px] sm:text-[19px] leading-[1.22]',
+        historyLongExprClass: 'text-[16px] sm:text-[18px] leading-[1.22]',
+        historyResClass: 'text-[18px] sm:text-[20px]',
+        historyLongResClass: 'text-[17px] sm:text-[19px]',
+        inputExprClass: 'text-[15px] sm:text-[16px] leading-[1.26]',
+      };
+    }
+    return {
+      tier: 3 as const,
+      entryLimit: 1,
+      historyMaxHeight: 'max-h-[52px] sm:max-h-[60px]',
+      historyExprClass: 'text-[16px] sm:text-[17px] leading-[1.2]',
+      historyLongExprClass: 'text-[15px] sm:text-[16px] leading-[1.2]',
+      historyResClass: 'text-[17px] sm:text-[18px]',
+      historyLongResClass: 'text-[16px] sm:text-[17px]',
+      inputExprClass: 'text-[14px] sm:text-[15px] leading-[1.24]',
+    };
+  }, [equationDisplay.length, mainResultDisplay.length]);
+
+  const previewTapeEntries = useMemo(() => {
+    return [...priorSource.slice(0, displayScale.entryLimit)].reverse();
+  }, [priorSource, displayScale.entryLimit]);
+
+  const mainResultSizeClass =
+    mainResultDisplay.length > 16
+      ? 'text-[28px] sm:text-[34px] leading-[1.12]'
+      : mainResultDisplay.length > 10
+      ? 'text-[36px] sm:text-[44px] leading-[1.1]'
+      : 'text-[46px] sm:text-[56px] leading-[1.06]';
+
+  const caretHeightClass =
+    mainResultDisplay.length > 16
+      ? 'h-8 sm:h-9'
+      : mainResultDisplay.length > 10
+      ? 'h-9 sm:h-11'
+      : 'h-11 sm:h-14';
 
   // Adaptive color classes (Light warm-stone palette + Dark obsidian sibling)
   const shellBg = isDark
@@ -481,7 +610,7 @@ export default function ScientificCalculator({
           transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
           className={`flex-1 flex flex-col rounded-none sm:rounded-[34px] px-4 pt-2.5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-5 sm:shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition-colors ${shellBg}`}
         >
-          {/* Dedicated History Top Bar: Back Arrow Left, History Title, Clear Action Right */}
+          {/* Dedicated Histories Top Bar: Back Arrow Left, Histories Title, Clear Action Right */}
           <div className="flex items-center justify-between h-12 shrink-0">
             <button
               type="button"
@@ -501,7 +630,7 @@ export default function ScientificCalculator({
               <ArrowLeft className="w-5 h-5 stroke-[2]" />
             </button>
 
-            <h2 className="text-base sm:text-lg font-semibold tracking-tight">History</h2>
+            <h2 className="text-base sm:text-lg font-semibold tracking-tight">Histories</h2>
 
             {localTape.length > 0 ? (
               <button
@@ -517,8 +646,8 @@ export default function ScientificCalculator({
                     ? 'text-zinc-300 hover:text-white hover:bg-zinc-800/80'
                     : 'text-zinc-700 hover:text-zinc-950 hover:bg-black/5'
                 }`}
-                aria-label="Clear calculation history"
-                title="Clear history"
+                aria-label="Clear calculation histories"
+                title="Clear histories"
               >
                 <Trash2 className="w-[18px] h-[18px] stroke-[2]" />
               </button>
@@ -559,11 +688,12 @@ export default function ScientificCalculator({
                     type="button"
                     onClick={() => {
                       dispatch({ type: 'CLEAR_TAPE' });
+                      setSavedHistoryKeys({});
                       setShowClearConfirm(false);
                       triggerVibration('reset');
                       showNotification({
                         id: 'calc-history-clear',
-                        message: 'Calculator history cleared',
+                        message: 'Calculator histories cleared',
                         type: 'success',
                         duration: 1800,
                       });
@@ -606,67 +736,104 @@ export default function ScientificCalculator({
                 {localTape.map((item, idx) => {
                   const entryKey = item.id ?? `${item.expr}-${item.res}-${item.time}-${idx}`;
                   const isEntryCopied = copiedHistoryId === entryKey;
+                  const isSaving = Boolean(savingHistoryKeys[entryKey]);
+                  const isSaved = Boolean(savedHistoryKeys[entryKey]);
                   return (
                     <div
                       key={entryKey}
-                      className={`flex items-center gap-2 rounded-2xl px-3.5 py-3 transition-colors ${
+                      className={`rounded-2xl px-3.5 py-3 transition-colors ${
                         isDark
                           ? 'bg-[#1C1F26]/90 hover:bg-[#242832] border border-zinc-800/70'
                           : 'bg-[#F6F5F2] hover:bg-white shadow-[0_1px_2px_rgba(24,24,27,0.04)]'
                       }`}
                     >
-                      <button
-                        type="button"
-                        onClick={() => handleCopyHistoryEntry(entryKey, item.res)}
-                        className={`min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] ${
-                          isDark
-                            ? 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
-                            : 'text-zinc-500 hover:text-zinc-900 hover:bg-black/5'
-                        }`}
-                        aria-label={`Copy result ${item.res}`}
-                        title="Copy result"
-                      >
-                        {isEntryCopied ? (
-                          <Check className="w-4 h-4 text-emerald-500" />
-                        ) : (
-                          <Copy className="w-4 h-4" />
-                        )}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCopyHistoryEntry(entryKey, item.res)}
+                          className={`min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] ${
+                            isDark
+                              ? 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
+                              : 'text-zinc-500 hover:text-zinc-900 hover:bg-black/5'
+                          }`}
+                          aria-label={`Copy result ${item.res}`}
+                          title="Copy result"
+                        >
+                          {isEntryCopied ? (
+                            <Check className="w-4 h-4 text-emerald-500" />
+                          ) : (
+                            <Copy className="w-4 h-4" />
+                          )}
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          dispatch({ type: 'LOAD_TAPE', res: item.res });
-                          setShowClearConfirm(false);
-                          setShowHistoryPage(false);
-                          triggerVibration('click');
-                        }}
-                        className="flex-1 min-w-0 text-right cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] rounded-xl py-0.5"
-                        title="Tap to load result into calculator"
+                        <button
+                          type="button"
+                          onClick={() => {
+                            dispatch({ type: 'LOAD_TAPE', res: item.res });
+                            setShowClearConfirm(false);
+                            setShowHistoryPage(false);
+                            triggerVibration('click');
+                          }}
+                          className="flex-1 min-w-0 text-right cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] rounded-xl py-0.5"
+                          title="Tap to load result into calculator"
+                        >
+                          <div
+                            className={`text-xs font-normal tabular-nums mb-0.5 ${
+                              isDark ? 'text-zinc-500' : 'text-zinc-400'
+                            }`}
+                          >
+                            {item.time}
+                          </div>
+                          <div
+                            className={`text-[15px] sm:text-base font-normal tabular-nums leading-snug whitespace-normal break-words ${
+                              isDark ? 'text-zinc-300' : 'text-zinc-600'
+                            }`}
+                          >
+                            {item.expr}
+                          </div>
+                          <div
+                            className={`text-2xl sm:text-[26px] font-semibold tabular-nums tracking-tight leading-tight mt-0.5 whitespace-normal break-words ${
+                              isDark ? 'text-white' : 'text-zinc-950'
+                            }`}
+                          >
+                            <span className="text-[#C25215] mr-1">=</span>
+                            {item.res}
+                          </div>
+                        </button>
+                      </div>
+
+                      <div
+                        className={`mt-2.5 pt-2 border-t flex items-center justify-end ${
+                          isDark ? 'border-zinc-800/80' : 'border-zinc-200/80'
+                        }`}
                       >
-                        <div
-                          className={`text-xs font-normal tabular-nums mb-0.5 ${
-                            isDark ? 'text-zinc-500' : 'text-zinc-400'
+                        <button
+                          type="button"
+                          disabled={isSaving || isSaved}
+                          onClick={() => handleAddCardToMainHistory(entryKey, item)}
+                          className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] ${
+                            isSaved
+                              ? isDark
+                                ? 'bg-emerald-500/15 text-emerald-400 cursor-default'
+                                : 'bg-emerald-500/10 text-emerald-700 cursor-default'
+                              : isSaving
+                              ? 'bg-[#C25215]/70 text-white cursor-wait'
+                              : 'bg-[#C25215] hover:bg-[#AE4811] text-white cursor-pointer active:scale-[0.97]'
                           }`}
                         >
-                          {item.time}
-                        </div>
-                        <div
-                          className={`text-[15px] sm:text-base font-normal tabular-nums leading-snug whitespace-normal break-words ${
-                            isDark ? 'text-zinc-300' : 'text-zinc-600'
-                          }`}
-                        >
-                          {item.expr}
-                        </div>
-                        <div
-                          className={`text-2xl sm:text-[26px] font-semibold tabular-nums tracking-tight leading-tight mt-0.5 whitespace-normal break-words ${
-                            isDark ? 'text-white' : 'text-zinc-950'
-                          }`}
-                        >
-                          <span className="text-[#C25215] mr-1">=</span>
-                          {item.res}
-                        </div>
-                      </button>
+                          {isSaved ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 stroke-[2.2]" />
+                              <span>Saved to History</span>
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="w-3.5 h-3.5 stroke-[2.2]" />
+                              <span>{isSaving ? 'Saving...' : 'Add to History'}</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -747,7 +914,7 @@ export default function ScientificCalculator({
                     }`}
                   >
                     <History className="w-4 h-4 text-[#C25215]" />
-                    <span>History</span>
+                    <span>Histories</span>
                   </button>
 
                   <button
@@ -774,31 +941,40 @@ export default function ScientificCalculator({
           </div>
         </div>
 
-        {/* Display Area: Fading 2-Calculation Preview Above + Active Input / Result Display */}
+        {/* Display Area: Dynamically Scaling & Shortening History Above + Active Input / Result Display */}
         <div className="flex-1 min-h-[168px] sm:min-h-[210px] flex flex-col justify-end overflow-hidden px-1 pb-4 pt-1">
-          {/* Small Preview of Last Two Calculations (Older Entries Fade Out) */}
+          {/* Dynamic History Section: Automatically shortens & scales down as active equation grows; older entries fade out */}
           {previewTapeEntries.length > 0 && (
             <div
               aria-label="Recent calculations preview"
-              className={`mb-2.5 pb-2.5 border-b overflow-hidden ${
-                isDark ? 'border-zinc-800/75' : 'border-zinc-300/75'
-              } ${
+              className={`mb-2.5 pb-2.5 border-b overflow-hidden flex flex-col justify-end transition-all duration-200 ${
+                displayScale.historyMaxHeight
+              } ${isDark ? 'border-zinc-800/75' : 'border-zinc-300/75'} ${
                 previewTapeEntries.length > 1
-                  ? '[mask-image:linear-gradient(to_bottom,rgba(0,0,0,0.2)_0%,rgba(0,0,0,0.9)_55%,rgba(0,0,0,1)_100%)]'
-                  : ''
+                  ? '[mask-image:linear-gradient(to_bottom,transparent_0%,rgba(0,0,0,0.45)_34%,rgba(0,0,0,1)_82%)]'
+                  : '[mask-image:linear-gradient(to_bottom,rgba(0,0,0,0.6)_0%,rgba(0,0,0,1)_45%)]'
               }`}
             >
-              <div className="flex flex-col items-end gap-1.5">
+              <div className="flex flex-col items-end justify-end gap-1.5">
                 <AnimatePresence initial={false} mode="popLayout">
                   {previewTapeEntries.map((item, idx) => {
-                    const isOlderEntry = previewTapeEntries.length === 2 && idx === 0;
+                    const ageFromBottom = previewTapeEntries.length - 1 - idx;
+                    const targetOpacity =
+                      ageFromBottom === 0
+                        ? 0.88
+                        : ageFromBottom === 1
+                        ? 0.52
+                        : ageFromBottom === 2
+                        ? 0.28
+                        : 0.14;
+                    const isLongHistoryItem = item.expr.length + item.res.length > 36;
                     return (
                       <motion.button
                         key={item.id ?? `${item.expr}-${item.res}-${item.time}-${idx}`}
                         layout
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: isOlderEntry ? 0.4 : 0.8, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: targetOpacity, y: 0 }}
+                        exit={{ opacity: 0, y: -12 }}
                         transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
                         type="button"
                         onClick={() => {
@@ -811,12 +987,20 @@ export default function ScientificCalculator({
                         title="Tap to insert result"
                       >
                         <div
-                          className={`text-xs sm:text-[13px] font-normal tabular-nums leading-snug whitespace-normal break-words ${
-                            isDark ? 'text-zinc-400' : 'text-zinc-500'
-                          }`}
+                          className={`font-normal tabular-nums whitespace-normal break-words transition-all duration-150 ${
+                            isLongHistoryItem
+                              ? displayScale.historyLongExprClass
+                              : displayScale.historyExprClass
+                          } ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}
                         >
                           {item.expr} ={' '}
-                          <span className={`font-medium ${isDark ? 'text-zinc-200' : 'text-zinc-700'}`}>
+                          <span
+                            className={`font-medium ${
+                              isLongHistoryItem
+                                ? displayScale.historyLongResClass
+                                : displayScale.historyResClass
+                            } ${isDark ? 'text-zinc-200' : 'text-zinc-700'}`}
+                          >
                             {item.res}
                           </span>
                         </div>
@@ -843,21 +1027,21 @@ export default function ScientificCalculator({
               </div>
             )}
 
-            {/* Large Right-Aligned Wrapping Equation Line */}
+            {/* Right-Aligned Wrapping Input Equation (sized smaller than history items above) */}
             {equationDisplay && (
               <div
-                className={`text-right text-[26px] sm:text-[32px] font-normal tabular-nums tracking-tight leading-[1.24] whitespace-normal break-words ${
-                  isDark ? 'text-zinc-300' : 'text-zinc-700'
-                }`}
+                className={`text-right font-normal tabular-nums tracking-tight whitespace-normal break-words transition-all duration-150 ${
+                  displayScale.inputExprClass
+                } ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}
               >
                 {equationDisplay}
               </div>
             )}
 
-            {/* Significantly Larger Primary Result / Input Value + Burnt-Orange Caret */}
-            <div className="mt-2 flex items-end justify-end gap-1.5">
+            {/* Primary Result / Active Value + Burnt-Orange Caret */}
+            <div className="mt-1.5 flex items-end justify-end gap-1.5">
               <span
-                className={`text-[50px] sm:text-[60px] font-semibold tabular-nums tracking-tight leading-[1.06] text-right whitespace-normal break-all ${
+                className={`font-semibold tabular-nums tracking-tight text-right whitespace-normal break-all transition-all duration-150 ${mainResultSizeClass} ${
                   errorMessage
                     ? 'text-rose-500'
                     : isDark
@@ -869,7 +1053,7 @@ export default function ScientificCalculator({
               </span>
               <span
                 aria-hidden="true"
-                className="w-[2.5px] h-12 sm:h-14 mb-1 rounded-full bg-[#C25215] shrink-0"
+                className={`w-[2.5px] ${caretHeightClass} mb-1 rounded-full bg-[#C25215] shrink-0 transition-all duration-150`}
               />
             </div>
 

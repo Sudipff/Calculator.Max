@@ -728,7 +728,16 @@ test('Calculator Reducer: successive = does not repeat, memory operations, paren
     ],
   });
   assert.equal(hydrated.tape.length, 2);
-  const loaded = calcReducer(hydrated, { type: 'LOAD_TAPE', res: '42' });
+  const manuallyAdded = calcReducer(hydrated, {
+    type: 'ADD_TAPE',
+    expr: 'sin(30) + 10',
+    res: '10.5',
+    timeStr: '10:02 AM',
+  });
+  assert.equal(manuallyAdded.tape.length, 3);
+  assert.equal(manuallyAdded.tape[0].expr, 'sin(30) + 10');
+  assert.equal(manuallyAdded.tape[0].res, '10.5');
+  const loaded = calcReducer(manuallyAdded, { type: 'LOAD_TAPE', res: '42' });
   assert.equal(loaded.currentInput, '42');
   assert.equal(calcReducer(loaded, { type: 'CLEAR_TAPE' }).tape.length, 0);
 });

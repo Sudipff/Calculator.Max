@@ -2780,6 +2780,7 @@ export default function RetailCalc() {
                   <CalculatorErrorBoundary>
                     <ScientificCalculator
                       triggerVibration={triggerVibration}
+                      onSaveHistory={(type, details, result) => saveHistoryItem(type, details, result)}
                       onBackHome={() => handleTabChange('home')}
                     />
                   </CalculatorErrorBoundary>

@@ -38,6 +38,7 @@ export type CalcAction =
   | { type: 'TOGGLE_ANGLE' }
   | { type: 'MEMORY'; action: 'MC' | 'MR' | 'M+' | 'M-' | 'MS' }
   | { type: 'LOAD_TAPE'; res: string }
+  | { type: 'ADD_TAPE'; expr: string; res: string; timeStr: string }
   | { type: 'HYDRATE_TAPE'; tape: TapeEntry[] }
   | { type: 'CLEAR_TAPE' };
 
@@ -1886,6 +1887,24 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
         currentInput: action.res,
         isNewInput: false,
       };
+
+    case 'ADD_TAPE': {
+      const expr = action.expr.trim();
+      const res = action.res.trim();
+      if (!expr || !res) return state;
+      return {
+        ...state,
+        tape: [
+          {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            expr,
+            res,
+            time: action.timeStr,
+          },
+          ...state.tape.slice(0, MAX_TAPE_ENTRIES - 1),
+        ],
+      };
+    }
 
     case 'HYDRATE_TAPE':
       return {
