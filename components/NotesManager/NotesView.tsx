@@ -53,6 +53,7 @@ import {
   triggerStorageFullPopup,
 } from '@/lib/storageSyncClient';
 import { resolveNoteSourceHistory } from '@/lib/historyProvenance';
+import { getBackupPermissions } from '@/lib/backupPermissions';
 
 interface NotesViewProps {
   currentUser: any;
@@ -380,6 +381,7 @@ export default function NotesView({
 
     const nowIso = new Date().toISOString();
     const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const notesBackupEnabled = currentUser?.id ? getBackupPermissions(currentUser.id).notes : false;
     const blankDraft: NoteItem = {
       id: 'note-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       userId: currentUser?.id,
@@ -392,7 +394,7 @@ export default function NotesView({
       labels: [],
       reminderAt: null,
       isEmergency: false,
-      syncStatus: currentUser?.id && !isOffline ? 'synced' : 'unsynced',
+      syncStatus: currentUser?.id && !isOffline && notesBackupEnabled ? 'synced' : 'unsynced',
       createdOffline: isOffline,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -561,8 +563,20 @@ export default function NotesView({
   const handleBatchUpdateColor = async (newColor: string) => {
     if (selectedNoteIds.length === 0) return;
     const nowIso = new Date().toISOString();
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const notesBackupEnabled = currentUser?.id ? getBackupPermissions(currentUser.id).notes : false;
     const updated = notes.map((n) =>
-      selectedNoteIds.includes(n.id) ? { ...n, color: newColor, syncStatus: 'unsynced' as const, updatedAt: nowIso } : n
+      selectedNoteIds.includes(n.id)
+        ? {
+            ...n,
+            color: newColor,
+            syncStatus:
+              isOffline || !currentUser?.id || !notesBackupEnabled
+                ? ('unsynced' as const)
+                : (n.syncStatus ?? ('synced' as const)),
+            updatedAt: nowIso,
+          }
+        : n
     );
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
@@ -571,7 +585,21 @@ export default function NotesView({
       const target = updated.find((n) => n.id === id);
       if (target && currentUser?.id) {
         const res = await upsertNoteToSupabase(target, currentUser.id);
-        setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, syncStatus: res.syncStatus } : n)));
+        setNotes((prev) => {
+          const next = prev.map((n) =>
+            n.id === id
+              ? {
+                  ...n,
+                  syncStatus: res.syncStatus,
+                  createdOffline: res.success ? false : n.createdOffline,
+                }
+              : n
+          );
+          if (!res.success) {
+            saveLocalNotes(next, currentUser.id);
+          }
+          return next;
+        });
       }
     }
   };
@@ -636,9 +664,10 @@ export default function NotesView({
         JSON.stringify(existingNote.labels) === JSON.stringify(editingNote.labels)
     );
     const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const notesBackupEnabled = currentUser?.id ? getBackupPermissions(currentUser.id).notes : false;
     const nextSyncStatus: 'synced' | 'unsynced' = isPinOnlyEdit
       ? (existingNote?.syncStatus ?? 'synced')
-      : isOffline || !currentUser?.id
+      : isOffline || !currentUser?.id || !notesBackupEnabled
         ? 'unsynced'
         : (existingNote?.syncStatus ?? 'synced');
     const nextCreatedOffline = isPinOnlyEdit
@@ -685,13 +714,17 @@ export default function NotesView({
       if (res.success || !isPinOnlyEdit) {
         const finalSyncStatus = res.success ? 'synced' : res.syncStatus;
         const finalCreatedOffline = res.success ? false : nextCreatedOffline;
-        setNotes((prev) =>
-          prev.map((n) =>
+        setNotes((prev) => {
+          const next = prev.map((n) =>
             n.id === noteToSave.id
               ? { ...n, syncStatus: finalSyncStatus, createdOffline: finalCreatedOffline }
               : n
-          )
-        );
+          );
+          if (!res.success) {
+            saveLocalNotes(next, currentUser.id);
+          }
+          return next;
+        });
         if (!closeAfter) {
           setEditingNote((prev) =>
             prev && prev.id === noteToSave.id
@@ -705,10 +738,15 @@ export default function NotesView({
 
   const handleChangeSavedNoteColor = async (colorId: string) => {
     if (!editingNote) return;
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const notesBackupEnabled = currentUser?.id ? getBackupPermissions(currentUser.id).notes : false;
     const updatedNote: NoteItem = {
       ...editingNote,
       color: colorId,
-      syncStatus: 'unsynced',
+      syncStatus:
+        isOffline || !currentUser?.id || !notesBackupEnabled
+          ? 'unsynced'
+          : (editingNote.syncStatus ?? 'synced'),
       updatedAt: new Date().toISOString(),
     };
 
@@ -732,8 +770,23 @@ export default function NotesView({
 
     if (currentUser?.id) {
       const res = await upsertNoteToSupabase(updatedNote, currentUser.id);
-      setNotes((prev) => prev.map((n) => (n.id === updatedNote.id ? { ...n, syncStatus: res.syncStatus } : n)));
-      setEditingNote((prev) => (prev && prev.id === updatedNote.id ? { ...prev, syncStatus: res.syncStatus } : prev));
+      const finalCreatedOffline = res.success ? false : updatedNote.createdOffline;
+      setNotes((prev) => {
+        const next = prev.map((n) =>
+          n.id === updatedNote.id
+            ? { ...n, syncStatus: res.syncStatus, createdOffline: finalCreatedOffline }
+            : n
+        );
+        if (!res.success) {
+          saveLocalNotes(next, currentUser.id);
+        }
+        return next;
+      });
+      setEditingNote((prev) =>
+        prev && prev.id === updatedNote.id
+          ? { ...prev, syncStatus: res.syncStatus, createdOffline: finalCreatedOffline }
+          : prev
+      );
     }
   };
 
@@ -2039,15 +2092,6 @@ export default function NotesView({
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
-            {(currentUser?.id ? note.syncStatus === 'unsynced' : Boolean(note.createdOffline)) && (
-              <span
-                title="Saved offline — pending cloud sync"
-                aria-label="Saved offline"
-                className="text-red-500 flex items-center justify-center shrink-0"
-              >
-                <CloudOff className="w-3 h-3" />
-              </span>
-            )}
             <button
               type="button"
               onClick={(e) => handleTogglePin(note.id, e)}
@@ -2067,6 +2111,15 @@ export default function NotesView({
                 }`}
               />
             </button>
+            {(currentUser?.id ? note.syncStatus === 'unsynced' : Boolean(note.createdOffline)) && (
+              <span
+                title="Not backed up to cloud"
+                aria-label="Not backed up to cloud"
+                className="text-red-500 flex items-center justify-center shrink-0"
+              >
+                <CloudOff className="w-3 h-3" />
+              </span>
+            )}
           </div>
         </div>
       </motion.article>

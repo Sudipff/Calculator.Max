@@ -103,13 +103,37 @@ export async function fetchBackupPermissionsFromCloud(
   return local;
 }
 
+export interface BackupUpdateResult {
+  permissions: BackupPermissions;
+  confirmed: boolean;
+  syncedWithCloud: boolean;
+}
+
 export async function updateBackupPermissionsInCloud(
   perms: BackupPermissions,
   userId?: string | null
-): Promise<BackupPermissions> {
-  const savedLocal = saveBackupPermissionsLocal(perms, userId);
+): Promise<BackupUpdateResult> {
+  const normalized: BackupPermissions = {
+    calculatorHistory: Boolean(perms.calculatorHistory),
+    notes: Boolean(perms.notes),
+    tasks: Boolean(perms.tasks),
+  };
+
   if (!userId || typeof window === 'undefined') {
-    return savedLocal;
+    const savedLocal = saveBackupPermissionsLocal(normalized, userId);
+    return {
+      permissions: savedLocal,
+      confirmed: true,
+      syncedWithCloud: false,
+    };
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return {
+      permissions: getBackupPermissions(userId),
+      confirmed: false,
+      syncedWithCloud: false,
+    };
   }
 
   try {
@@ -125,14 +149,40 @@ export async function updateBackupPermissionsInCloud(
       headers['Authorization'] = `Bearer ${session.access_token}`;
     }
 
-    await fetch('/api/backup-settings', {
+    const res = await fetch('/api/backup-settings', {
       method: 'POST',
       headers,
-      body: JSON.stringify(savedLocal),
+      body: JSON.stringify(normalized),
     });
-  } catch {
-    // Saved locally even when offline
-  }
 
-  return savedLocal;
+    if (!res.ok) {
+      return {
+        permissions: getBackupPermissions(userId),
+        confirmed: false,
+        syncedWithCloud: false,
+      };
+    }
+
+    const json = await res.json().catch(() => null);
+    if (!json?.ok || !json?.permissions) {
+      return {
+        permissions: getBackupPermissions(userId),
+        confirmed: false,
+        syncedWithCloud: false,
+      };
+    }
+
+    const savedLocal = saveBackupPermissionsLocal(json.permissions, userId);
+    return {
+      permissions: savedLocal,
+      confirmed: true,
+      syncedWithCloud: Boolean(json.syncedWithCloud),
+    };
+  } catch {
+    return {
+      permissions: getBackupPermissions(userId),
+      confirmed: false,
+      syncedWithCloud: false,
+    };
+  }
 }

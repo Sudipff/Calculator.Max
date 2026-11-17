@@ -698,7 +698,7 @@ export default function TasksView({
     }
   };
 
-  // Toggle Complete (Main Task) with offline-first sync
+  // Toggle Complete (Main Task) without triggering unsynced cloud badge
   const handleToggleComplete = async (taskId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const updated = tasks.map((t) => {
@@ -709,7 +709,6 @@ export default function TasksView({
           ...t,
           completed: nextCompleted,
           subtasks: updatedSubs,
-          syncStatus: 'unsynced' as const,
           updatedAt: new Date().toISOString(),
         };
       }
@@ -731,7 +730,9 @@ export default function TasksView({
     }
     if (target && currentUser?.id) {
       const res = await upsertTaskToSupabase(target, currentUser.id);
-      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, syncStatus: res.syncStatus } : t)));
+      if (res.success) {
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, syncStatus: 'synced' } : t)));
+      }
     }
   };
 
@@ -890,7 +891,9 @@ export default function TasksView({
     const parentTask = updated.find((t) => t.id === parentId);
     if (parentTask && currentUser?.id) {
       const res = await upsertTaskToSupabase(parentTask, currentUser.id);
-      setTasks((prev) => prev.map((t) => (t.id === parentId ? { ...t, syncStatus: res.syncStatus } : t)));
+      if (res.success) {
+        setTasks((prev) => prev.map((t) => (t.id === parentId ? { ...t, syncStatus: 'synced' } : t)));
+      }
     }
   };
 
@@ -2186,7 +2189,7 @@ export default function TasksView({
             {currentUser?.id && task.syncStatus === 'unsynced' && (
               <span
                 title="Saved offline — pending cloud sync"
-                className="text-amber-700 flex items-center justify-center"
+                className="text-red-500 flex items-center justify-center"
               >
                 <CloudOff className="w-3 h-3" />
               </span>

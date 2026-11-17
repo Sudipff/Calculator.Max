@@ -731,9 +731,6 @@ export default function ProfileSettingsView({
 
             {expandedAccount === 'security' && (
               <div className="px-4 pb-4 pt-2 bg-slate-50/60 border-t border-slate-100 space-y-2.5">
-                <div className="flex items-center justify-between text-xs text-slate-600">
-                  <span>AES-256-GCM at rest · TLS 1.3 · Signed HttpOnly cookies</span>
-                </div>
                 {currentUser ? (
                   authProvider.isEmailPassword ? (
                     <button

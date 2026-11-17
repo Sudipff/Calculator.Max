@@ -23,8 +23,6 @@ import {
   Target,
   Coins,
   CalendarDays,
-  AlertCircle,
-  Cloud,
   CloudOff,
   User,
   ChevronRight,
@@ -52,6 +50,7 @@ import {
 import type { NoteItem, TaskItem } from '../lib/types/notes-tasks';
 import { OfflineWifiIndicator } from '@/components/PwaRuntime';
 import { showNotification, suppressOfflineSyncNotifications } from '@/lib/notifications';
+import { getBackupPermissions } from '../lib/backupPermissions';
 
 export type HistoryCategoryFilter =
   | 'all'
@@ -364,6 +363,7 @@ export default function HistoryView({
     ];
 
     const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const notesBackupEnabled = uid ? getBackupPermissions(uid).notes : false;
     const newNote: NoteItem = {
       id: 'note-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       userId: uid,
@@ -387,7 +387,7 @@ export default function HistoryView({
         createdAt: item.createdAt || nowIso,
         timestamp: item.timestamp || displayTime,
       },
-      syncStatus: isOffline || !uid ? 'unsynced' : 'synced',
+      syncStatus: isOffline || !uid || !notesBackupEnabled ? 'unsynced' : 'synced',
       createdOffline: isOffline,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -1422,51 +1422,37 @@ export default function HistoryView({
                           )}
                         </div>
 
-                        {/* Visual Status Indicator at bottom right displaying cloud sync state */}
-                        <div className="shrink-0 flex items-center">
-                          {item.syncStatus === 'synced' ? (
-                            <span
-                              className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/80 shadow-2xs"
-                              title="Synced to cloud database"
-                            >
-                              <Cloud className="w-3 h-3 text-emerald-600" />
-                              <span>Cloud Synced</span>
-                            </span>
-                          ) : item.syncStatus === 'syncing' ? (
-                            <span
-                              className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200/80 shadow-2xs"
-                              title="Syncing to cloud database..."
-                            >
-                              <RefreshCw className="w-3 h-3 text-blue-600 animate-spin" />
-                              <span>Syncing...</span>
-                            </span>
-                          ) : item.syncStatus === 'error' && currentUser ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onRetrySyncItem(item);
-                              }}
-                              className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200 hover:bg-rose-100 transition-colors cursor-pointer shadow-2xs"
-                              title="Cloud sync failed. Tap to retry."
-                            >
-                              <AlertCircle className="w-3 h-3 text-rose-600" />
-                              <span>Sync Error · Retry</span>
-                            </button>
-                          ) : (
-                            <span
-                              className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200/80 shadow-2xs"
-                              title={
-                                currentUser
-                                  ? 'Saved locally (queued for cloud sync on reconnect)'
-                                  : 'Saved locally on device'
-                              }
-                            >
-                              <CloudOff className="w-3 h-3 text-amber-600" />
-                              <span>Saved Locally</span>
-                            </span>
-                          )}
-                        </div>
+                        {/* Small red cloud icon at bottom right only when not synced to cloud */}
+                        {item.syncStatus !== 'synced' && item.syncStatus !== 'syncing' && (
+                          <div className="shrink-0 flex items-center">
+                            {item.syncStatus === 'error' && currentUser ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onRetrySyncItem(item);
+                                }}
+                                className="text-red-500 hover:text-red-600 flex items-center justify-center p-0.5 rounded-md transition-colors cursor-pointer"
+                                title="Not synced to cloud — tap to retry"
+                                aria-label="Not synced to cloud — tap to retry"
+                              >
+                                <CloudOff className="w-3 h-3" />
+                              </button>
+                            ) : (
+                              <span
+                                className="text-red-500 flex items-center justify-center"
+                                title={
+                                  currentUser
+                                    ? 'Not synced to cloud'
+                                    : 'Saved locally on device'
+                                }
+                                aria-label="Not synced to cloud"
+                              >
+                                <CloudOff className="w-3 h-3" />
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </motion.article>
                   );

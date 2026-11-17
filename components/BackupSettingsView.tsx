@@ -63,6 +63,9 @@ export default function BackupSettingsView({
   const [permissions, setPermissions] = useState<BackupPermissions>(() =>
     getBackupPermissions(userId)
   );
+  const [pendingKeys, setPendingKeys] = useState<
+    Partial<Record<keyof BackupPermissions, boolean>>
+  >({});
 
   useEffect(() => {
     let active = true;
@@ -92,6 +95,7 @@ export default function BackupSettingsView({
   }, [onBack]);
 
   const handleToggle = async (key: keyof BackupPermissions) => {
+    if (pendingKeys[key]) return;
     const nextValue = !permissions[key];
     const nextPerms: BackupPermissions = {
       ...(permissions || DEFAULT_BACKUP_PERMISSIONS),
@@ -100,25 +104,40 @@ export default function BackupSettingsView({
     const spec = BACKUP_ITEMS.find((item) => item.key === key);
     const subject = spec?.toastSubject || 'Backup';
 
-    setPermissions(nextPerms);
-    showNotification({
-      id: `backup-prefs-${key}`,
-      message: `${subject} ${nextValue ? 'on' : 'off'}`,
-      type: nextValue ? 'success' : 'info',
-      duration: 2000,
-    });
-
+    setPendingKeys((prev) => ({ ...prev, [key]: true }));
     try {
-      await updateBackupPermissionsInCloud(nextPerms, userId);
-      if (nextValue && userId) {
+      const result = await updateBackupPermissionsInCloud(nextPerms, userId);
+      if (!result.confirmed) {
+        showNotification({
+          id: `backup-prefs-${key}`,
+          message: `Could not update ${subject.toLowerCase()} — check connection`,
+          type: 'error',
+          duration: 2400,
+        });
+        return;
+      }
+
+      setPermissions(result.permissions);
+      showNotification({
+        id: `backup-prefs-${key}`,
+        message: `${subject} ${result.permissions[key] ? 'on' : 'off'}`,
+        type: result.permissions[key] ? 'success' : 'info',
+        duration: 2000,
+      });
+
+      if (result.permissions[key] && userId) {
         if (key === 'calculatorHistory') {
           void flushOfflineCalculationsQueue(userId);
         } else {
           void flushOfflineSyncQueue(userId);
         }
       }
-    } catch {
-      // Local preferences remain saved via updateBackupPermissionsInCloud
+    } finally {
+      setPendingKeys((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     }
   };
 
@@ -187,9 +206,13 @@ export default function BackupSettingsView({
                   type="button"
                   role="switch"
                   aria-checked={isEnabled}
+                  aria-busy={Boolean(pendingKeys[item.key])}
                   aria-label={`Toggle ${item.title} backup`}
+                  disabled={Boolean(pendingKeys[item.key])}
                   onClick={() => void handleToggle(item.key)}
-                  className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer shrink-0 ${
+                  className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+                    pendingKeys[item.key] ? 'opacity-60 cursor-wait' : 'cursor-pointer'
+                  } ${
                     isEnabled ? 'bg-emerald-500' : 'bg-slate-300'
                   }`}
                 >
