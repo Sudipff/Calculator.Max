@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Check, RefreshCw, WifiOff } from 'lucide-react';
+import { WifiOff } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
+import { dismissNotification, showNotification } from '@/lib/notifications';
 import {
   flushOfflineSyncQueue,
   getLocalNotes,
@@ -76,20 +77,20 @@ function calculateAllPendingCount(uid?: string | null): number {
 }
 
 export default function PwaRuntime() {
-  const isOnline = useOnlineStatus();
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
-  const [pendingCount, setPendingCount] = useState<number>(0);
-  const [isSyncingQueue, setIsSyncingQueue] = useState<boolean>(false);
-  const [syncedBannerText, setSyncedBannerText] = useState<string | null>(null);
 
   const runCloudSync = useCallback(async (uid: string | null) => {
     if (!uid || (typeof navigator !== 'undefined' && !navigator.onLine)) {
-      setPendingCount(calculateAllPendingCount(uid));
       return;
     }
     const beforePending = calculateAllPendingCount(uid);
     if (beforePending > 0) {
-      setIsSyncingQueue(true);
+      showNotification({
+        id: 'cloud-sync',
+        message: `Syncing ${beforePending} offline item${beforePending === 1 ? '' : 's'}...`,
+        type: 'sync',
+        duration: 0,
+      });
     }
     try {
       const [notesTasksRes, calcRes] = await Promise.allSettled([
@@ -97,20 +98,24 @@ export default function PwaRuntime() {
         flushOfflineCalculationsQueue(uid),
       ]);
       const notesSynced = notesTasksRes.status === 'fulfilled' ? notesTasksRes.value.syncedCount : 0;
-      const notesPending = notesTasksRes.status === 'fulfilled' ? notesTasksRes.value.pendingCount : getPendingSyncCount(uid);
       const calcSynced = calcRes.status === 'fulfilled' ? calcRes.value.syncedCount : 0;
-      const calcPending = calcRes.status === 'fulfilled' ? calcRes.value.pendingCount : getPendingCalculationSyncCount(uid);
 
       const totalSynced = notesSynced + calcSynced;
-      const totalPending = notesPending + calcPending;
-      setPendingCount(totalPending);
 
       if (totalSynced > 0) {
-        setSyncedBannerText(`Synced ${totalSynced} offline item${totalSynced === 1 ? '' : 's'}`);
-        setTimeout(() => setSyncedBannerText(null), 3200);
+        showNotification({
+          id: 'cloud-sync',
+          message: `Synced ${totalSynced} offline item${totalSynced === 1 ? '' : 's'}`,
+          type: 'success',
+          duration: 3000,
+        });
+      } else if (beforePending > 0) {
+        dismissNotification('cloud-sync');
       }
-    } finally {
-      setIsSyncingQueue(false);
+    } catch {
+      if (beforePending > 0) {
+        dismissNotification('cloud-sync');
+      }
     }
   }, []);
 
@@ -130,14 +135,12 @@ export default function PwaRuntime() {
         if (!mounted) return;
         const resolved = data?.user?.id || readCachedUserId();
         setActiveUserId(resolved);
-        setPendingCount(calculateAllPendingCount(resolved));
         void syncRemindersToDeviceStore(getLocalNotes(resolved), getLocalTasks(resolved));
       })
       .catch(() => {
         if (!mounted) return;
         const fallback = readCachedUserId();
         setActiveUserId(fallback);
-        setPendingCount(calculateAllPendingCount(fallback));
         void syncRemindersToDeviceStore(getLocalNotes(fallback), getLocalTasks(fallback));
       });
 
@@ -145,7 +148,6 @@ export default function PwaRuntime() {
       if (!mounted) return;
       const uid = session?.user?.id || readCachedUserId();
       setActiveUserId(uid);
-      setPendingCount(calculateAllPendingCount(uid));
       void syncRemindersToDeviceStore(getLocalNotes(uid), getLocalTasks(uid));
       if (uid && navigator.onLine) {
         void runCloudSync(uid);
@@ -218,7 +220,6 @@ export default function PwaRuntime() {
     if (typeof window === 'undefined') return;
 
     const uid = activeUserId || readCachedUserId();
-    setPendingCount(calculateAllPendingCount(uid));
 
     if (navigator.onLine && uid) {
       void runCloudSync(uid);
@@ -242,27 +243,14 @@ export default function PwaRuntime() {
       }
     };
 
-    const handleSyncUpdated = (e: Event) => {
-      const detail = (e as CustomEvent)?.detail;
-      if (typeof detail?.pendingCount === 'number') {
-        setPendingCount(calculateAllPendingCount(activeUserId || readCachedUserId()));
-      } else {
-        setPendingCount(calculateAllPendingCount(activeUserId || readCachedUserId()));
-      }
-    };
-
     window.addEventListener('online', handleOnline);
     window.addEventListener('focus', handleVisibilityOrFocus);
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-    window.addEventListener('calcmax:sync-updated', handleSyncUpdated);
-    window.addEventListener('calcmax:history-sync-updated', handleSyncUpdated);
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('focus', handleVisibilityOrFocus);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-      window.removeEventListener('calcmax:sync-updated', handleSyncUpdated);
-      window.removeEventListener('calcmax:history-sync-updated', handleSyncUpdated);
     };
   }, [activeUserId, runCloudSync]);
 
@@ -281,32 +269,5 @@ export default function PwaRuntime() {
     return () => clearInterval(interval);
   }, [activeUserId]);
 
-  return (
-    <>
-
-      {isOnline && isSyncingQueue && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-20 sm:bottom-4 left-4 z-50 flex items-center gap-2 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white shadow-lg border border-blue-500"
-        >
-          <RefreshCw className="w-3.5 h-3.5 shrink-0 animate-spin" />
-          <span>
-            Syncing {pendingCount > 0 ? pendingCount : ''} offline item{pendingCount === 1 ? '' : 's'}...
-          </span>
-        </div>
-      )}
-
-      {isOnline && syncedBannerText && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-20 sm:bottom-4 left-4 z-50 flex items-center gap-2 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-lg border border-emerald-500"
-        >
-          <Check className="w-3.5 h-3.5 shrink-0" />
-          <span>{syncedBannerText}</span>
-        </div>
-      )}
-    </>
-  );
+  return null;
 }

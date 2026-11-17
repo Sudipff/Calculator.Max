@@ -32,6 +32,7 @@ import {
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { NoteItem, NOTE_COLORS, type SourceHistoryMeta } from '@/lib/types/notes-tasks';
 import { formatNotesForShare, shareTextContent } from '@/lib/shareUtils';
+import { showNotification } from '@/lib/notifications';
 import {
   fetchNotes,
   getLocalNotes,
@@ -160,7 +161,6 @@ export default function NotesView({
   const [isMounted, setIsMounted] = useState(false);
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   const [onlyPinned, setOnlyPinned] = useState(false);
@@ -182,7 +182,6 @@ export default function NotesView({
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showThreeDotMenu, setShowThreeDotMenu] = useState(false);
   const [showColorPaletteSubmenu, setShowColorPaletteSubmenu] = useState(false);
-  const [editorSaveFeedback, setEditorSaveFeedback] = useState<string | null>(null);
   const [checklistDraftItem, setChecklistDraftItem] = useState('');
   const [fullPageNewTag, setFullPageNewTag] = useState('');
   const [showFullPageTagInput, setShowFullPageTagInput] = useState(false);
@@ -301,8 +300,12 @@ export default function NotesView({
       const freshLocal = getLocalNotes(currentUser?.id);
       setNotes(freshLocal);
       if (detail?.syncedCount > 0) {
-        setRefreshNotice(`Synced ${detail.syncedCount} offline change${detail.syncedCount === 1 ? '' : 's'}`);
-        setTimeout(() => setRefreshNotice(null), 2600);
+        showNotification({
+          id: 'notes-sync',
+          message: `Synced ${detail.syncedCount} offline change${detail.syncedCount === 1 ? '' : 's'}`,
+          type: 'success',
+          duration: 2600,
+        });
       }
     };
 
@@ -356,8 +359,12 @@ export default function NotesView({
     try {
       const freshNotes = await fetchNotes(currentUser?.id);
       setNotes(freshNotes);
-      setRefreshNotice('Notes updated');
-      setTimeout(() => setRefreshNotice(null), 2200);
+      showNotification({
+        id: 'notes-refresh',
+        message: 'Notes updated',
+        type: 'success',
+        duration: 2200,
+      });
     } catch (err) {
       console.warn('Notes refresh notice:', err);
     }
@@ -477,9 +484,17 @@ export default function NotesView({
       }
     }
 
+    const deletedCount =
+      confirmDeleteTarget.type === 'single' ? 1 : confirmDeleteTarget.ids.length;
     setIsDeleting(false);
     setConfirmDeleteTarget(null);
     refreshLocalStorageSnapshot(currentUser?.id);
+    showNotification({
+      id: 'notes-delete',
+      message: deletedCount === 1 ? 'Note deleted' : `Deleted ${deletedCount} notes`,
+      type: 'success',
+      duration: 2200,
+    });
   };
 
   // Batch Selection Handlers
@@ -490,19 +505,18 @@ export default function NotesView({
     );
   };
 
-  const handleShareNotes = async (targetNotes: NoteItem[], inEditor = false) => {
+  const handleShareNotes = async (targetNotes: NoteItem[], _inEditor = false) => {
     if (targetNotes.length === 0) return;
     const payload = formatNotesForShare(targetNotes);
     const outcome = await shareTextContent(payload);
     if (outcome === 'shared' || outcome === 'copied') {
       const msg = outcome === 'shared' ? 'Shared' : 'Copied to share';
-      if (inEditor) {
-        setEditorSaveFeedback(msg);
-        setTimeout(() => setEditorSaveFeedback(null), 1800);
-      } else {
-        setRefreshNotice(msg);
-        setTimeout(() => setRefreshNotice(null), 2200);
-      }
+      showNotification({
+        id: 'notes-share',
+        message: msg,
+        type: 'success',
+        duration: 2000,
+      });
     }
   };
 
@@ -528,6 +542,14 @@ export default function NotesView({
     saveLocalNotes(updated, currentUser?.id);
 
     const target = updated.find((n) => n.id === id);
+    if (target) {
+      showNotification({
+        id: 'notes-pin',
+        message: target.isPinned ? 'Note pinned' : 'Note unpinned',
+        type: 'info',
+        duration: 1800,
+      });
+    }
     if (target && currentUser?.id) {
       const res = await upsertNoteToSupabase(target, currentUser.id);
       setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, syncStatus: res.syncStatus } : n)));
@@ -660,6 +682,12 @@ export default function NotesView({
     setHasUnsavedChanges(false);
     setShowColorPaletteSubmenu(false);
     setShowThreeDotMenu(false);
+    showNotification({
+      id: 'notes-color',
+      message: 'Note color updated',
+      type: 'success',
+      duration: 1800,
+    });
 
     if (currentUser?.id) {
       const res = await upsertNoteToSupabase(updatedNote, currentUser.id);
@@ -721,8 +749,12 @@ export default function NotesView({
 
       triggerVibration?.('success');
       await onReturnToHistory?.(source, noteSnapshot);
-      setRefreshNotice('Returned to History');
-      setTimeout(() => setRefreshNotice(null), 2200);
+      showNotification({
+        id: 'notes-return-history',
+        message: 'Returned to History',
+        type: 'success',
+        duration: 2200,
+      });
     } finally {
       setIsReturningToHistory(false);
     }
@@ -1140,28 +1172,11 @@ export default function NotesView({
         </LayoutGroup>
       )}
 
-      {/* Pinned Bottom Status Pill + Large Fixed Floating + Action Button (Portaled to body so parent transforms never unpin it) */}
+      {/* Large Fixed Floating + Action Button (Portaled to body so parent transforms never unpin it) */}
       {isMounted &&
         typeof document !== 'undefined' &&
         createPortal(
           <>
-            <AnimatePresence>
-              {!editingNote && refreshNotice && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.94 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.94 }}
-                  transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                  className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-4 sm:left-6 z-[85] pointer-events-none"
-                >
-                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
-                    <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
-                    <span>{refreshNotice}</span>
-                  </span>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
             {!editingNote && selectedNoteIds.length === 0 && (
               <button
                 type="button"
@@ -1298,8 +1313,12 @@ export default function NotesView({
                           await persistNoteInEditor(false);
                           setShowThreeDotMenu(false);
                           setShowColorPaletteSubmenu(false);
-                          setEditorSaveFeedback('Note saved');
-                          setTimeout(() => setEditorSaveFeedback(null), 1800);
+                          showNotification({
+                            id: 'notes-save',
+                            message: 'Note saved',
+                            type: 'success',
+                            duration: 2000,
+                          });
                         }}
                         className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 flex items-center justify-between gap-3 transition-colors cursor-pointer"
                       >
@@ -1556,23 +1575,6 @@ export default function NotesView({
 
           {/* Clutter-Free Minimalist Note Content Workspace */}
           <div className="flex-1 overflow-y-auto overscroll-contain w-full max-w-2xl mx-auto px-5 sm:px-8 pt-2 pb-10 flex flex-col gap-4 pb-[max(2.5rem,env(safe-area-inset-bottom))]">
-            <AnimatePresence>
-              {editorSaveFeedback && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.95 }}
-                  transition={{ duration: 0.16 }}
-                  className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100001] pointer-events-none"
-                >
-                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-slate-900 text-white text-xs font-bold shadow-lg border border-white/10">
-                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>{editorSaveFeedback}</span>
-                  </span>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
             <section className="space-y-3.5 flex-1 flex flex-col">
               <input
                 type="text"

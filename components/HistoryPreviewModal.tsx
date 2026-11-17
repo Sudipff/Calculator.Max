@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, useTransform, animate } from 'motion/react';
 import { HistoryItem, parseSavedAmountFromText } from '../lib/historyStorage';
+import { showNotification } from '@/lib/notifications';
 
 type ToolTabTarget =
   | 'age'
@@ -655,6 +656,12 @@ export default function HistoryPreviewModal({
     ];
     navigator.clipboard?.writeText(lines.join('\n'));
     setCopied(true);
+    showNotification({
+      id: 'history-preview-copy',
+      message: 'Session copied to clipboard',
+      type: 'success',
+      duration: 1800,
+    });
     setTimeout(() => setCopied(false), 2000);
   };
 

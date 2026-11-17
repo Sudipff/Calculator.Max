@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
 import PwaRuntime from '../components/PwaRuntime';
+import NotificationBanner from '../components/NotificationBanner';
 import { ThemeProvider } from '../components/ThemeProvider';
 
 export const metadata: Metadata = {
@@ -85,6 +86,7 @@ export default function RootLayout({
         <ThemeProvider>
           {children}
           <PwaRuntime />
+          <NotificationBanner />
         </ThemeProvider>
       </body>
     </html>

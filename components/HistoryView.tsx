@@ -51,6 +51,7 @@ import {
 } from '../lib/storageSyncClient';
 import type { NoteItem, TaskItem } from '../lib/types/notes-tasks';
 import { OfflineWifiIndicator } from '@/components/PwaRuntime';
+import { showNotification } from '@/lib/notifications';
 
 export type HistoryCategoryFilter =
   | 'all'
@@ -66,7 +67,6 @@ interface HistoryViewProps {
   history: HistoryItem[];
   currency: string;
   currentUser: any;
-  refreshNotice?: string | null;
   onRefreshHistory: () => Promise<void> | void;
   onInspectItem: (item: HistoryItem) => void;
   onToggleFavorite: (itemId: string) => void;
@@ -269,7 +269,6 @@ export default function HistoryView({
   history,
   currency,
   currentUser,
-  refreshNotice,
   onRefreshHistory,
   onInspectItem,
   onToggleFavorite,
@@ -288,32 +287,25 @@ export default function HistoryView({
   const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
   const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [isRefreshingLocal, setIsRefreshingLocal] = useState(false);
   const [transferringState, setTransferringState] = useState<{
     itemId: string;
     kind: 'note' | 'task';
   } | null>(null);
-  const [toastNotice, setToastNotice] = useState<{
-    id: number;
-    message: string;
-    kind: 'note' | 'task' | 'share';
-  } | null>(null);
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       if (navTimerRef.current) clearTimeout(navTimerRef.current);
     };
   }, []);
 
   const showActionToast = (message: string, kind: 'note' | 'task' | 'share') => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setToastNotice({ id: Date.now(), message, kind });
-    toastTimerRef.current = setTimeout(() => {
-      setToastNotice(null);
-    }, 1800);
+    showNotification({
+      id: `history-${kind}`,
+      message,
+      type: 'success',
+      duration: 2000,
+    });
   };
 
   const handleShareHistoryItems = async (items: HistoryItem[]) => {
@@ -744,20 +736,32 @@ export default function HistoryView({
       await navigator.clipboard.writeText(text);
       setCopiedId(item.id);
       setTimeout(() => setCopiedId(null), 1500);
+      showNotification({
+        id: 'history-copy',
+        message: 'Copied to clipboard',
+        type: 'success',
+        duration: 1800,
+      });
     } catch {
-      // Ignore clipboard failures
+      showNotification({
+        id: 'history-copy',
+        message: 'Failed to copy result',
+        type: 'error',
+        duration: 2400,
+      });
     }
     setOpenCardMenuId(null);
   };
 
   const handleMenuRefresh = async () => {
     setIsHeaderMenuOpen(false);
-    setIsRefreshingLocal(true);
-    try {
-      await onRefreshHistory();
-    } finally {
-      setTimeout(() => setIsRefreshingLocal(false), 350);
-    }
+    showNotification({
+      id: 'history-sync',
+      message: 'Syncing history...',
+      type: 'sync',
+      duration: 0,
+    });
+    await onRefreshHistory();
   };
 
   return (
@@ -773,24 +777,6 @@ export default function HistoryView({
             <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase truncate">
               Calculator History
             </h2>
-            <AnimatePresence>
-              {(refreshNotice || isRefreshingLocal) && (
-                <motion.span
-                  initial={{ opacity: 0, scale: 0.92 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.92 }}
-                  transition={{ duration: 0.18 }}
-                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/90 px-2 py-0.5 rounded-full border border-emerald-200/80 shrink-0"
-                >
-                  {isRefreshingLocal ? (
-                    <RefreshCw className="w-2.5 h-2.5 text-emerald-600 animate-spin" />
-                  ) : (
-                    <Check className="w-2.5 h-2.5 text-emerald-600" />
-                  )}
-                  <span>{isRefreshingLocal ? 'Syncing' : refreshNotice}</span>
-                </motion.span>
-              )}
-            </AnimatePresence>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
@@ -831,35 +817,8 @@ export default function HistoryView({
           </div>
         </div>
 
-        {/* Shortened Search Bar + Three-Dot Overflow Menu + Centered Toast Above Search Bar */}
+        {/* Shortened Search Bar + Three-Dot Overflow Menu */}
         <div className="relative flex items-center gap-2">
-          <AnimatePresence>
-            {toastNotice && (
-              <motion.div
-                key={toastNotice.id}
-                initial={{ opacity: 0, y: 6, scale: 0.94 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 4, scale: 0.94 }}
-                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-                role="status"
-                aria-live="polite"
-                className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
-              >
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/95 text-white text-[11px] font-bold shadow-lg border border-slate-700/80 whitespace-nowrap">
-                  <Check
-                    className={`w-3 h-3 stroke-[2.75] shrink-0 ${
-                      toastNotice.kind === 'note'
-                        ? 'text-emerald-400'
-                        : toastNotice.kind === 'share'
-                        ? 'text-sky-400'
-                        : 'text-indigo-400'
-                    }`}
-                  />
-                  <span>{toastNotice.message}</span>
-                </span>
-              </motion.div>
-            )}
-          </AnimatePresence>
           <div className="relative flex-1 min-w-0">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
@@ -1292,6 +1251,14 @@ export default function HistoryView({
                                   onClick={() => {
                                     onToggleFavorite(item.id);
                                     setOpenCardMenuId(null);
+                                    showNotification({
+                                      id: 'history-favorite',
+                                      message: item.isFavorite
+                                        ? 'Removed from favorites'
+                                        : 'Added to favorites',
+                                      type: 'info',
+                                      duration: 1800,
+                                    });
                                   }}
                                   className="w-full px-3.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
                                 >

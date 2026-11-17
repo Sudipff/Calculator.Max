@@ -8,6 +8,7 @@ import {
   computeWishlistPlan,
 } from '../lib/basicCalculators';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { showNotification } from '@/lib/notifications';
 
 export interface WishlistItem {
   id: string;
@@ -216,6 +217,12 @@ export default function WishlistPlanner({ currency, triggerVibration, onSaveHist
     const details = `Target Item Name: ${newItem.name} | Target Price: ${currency}${target.toLocaleString()} | Already Saved: ${currency}${saved.toLocaleString()} | Remaining Target: ${currency}${remainingVal.toLocaleString()} | Timeframe: ${daysRemaining} Days (${computedDate})`;
     const result = `Daily Savings Target: ${currency}${Math.ceil(plan?.daily || 0)}/day (${currency}${Math.ceil(plan?.weekly || 0)}/wk | ${currency}${Math.ceil(plan?.monthly || 0)}/mo) | Current Goal Progress: ${plan?.progressPercent || 0}%`;
     onSaveHistory('Wishlist', details, result, saved);
+    showNotification({
+      id: 'wishlist-save',
+      message: 'Wishlist goal saved',
+      type: 'success',
+      duration: 2000,
+    });
   };
 
   // Quick Deposit increment for a saved wishlist item
@@ -224,6 +231,12 @@ export default function WishlistPlanner({ currency, triggerVibration, onSaveHist
     const depositVal = parseNum(amountStr || '0');
     if (depositVal <= 0) {
       triggerVibration('error');
+      showNotification({
+        id: 'wishlist-deposit',
+        message: 'Enter a positive deposit amount',
+        type: 'warning',
+        duration: 2200,
+      });
       return;
     }
     triggerVibration('success');
@@ -238,6 +251,12 @@ export default function WishlistPlanner({ currency, triggerVibration, onSaveHist
 
     saveWishlistToStorage(updated);
     setDepositAmountMap((prev) => ({ ...prev, [id]: '' }));
+    showNotification({
+      id: 'wishlist-deposit',
+      message: 'Deposit added to goal',
+      type: 'success',
+      duration: 2000,
+    });
   };
 
   // Delete item from saved wishlist
@@ -245,6 +264,12 @@ export default function WishlistPlanner({ currency, triggerVibration, onSaveHist
     triggerVibration('reset');
     const updated = savedWishlist.filter((item) => item.id !== id);
     saveWishlistToStorage(updated);
+    showNotification({
+      id: 'wishlist-delete',
+      message: 'Wishlist goal removed',
+      type: 'info',
+      duration: 1800,
+    });
   };
 
   return (

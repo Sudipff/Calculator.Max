@@ -50,6 +50,11 @@ import HistoryView from '../components/HistoryView';
 import HistoryPreviewModal from '../components/HistoryPreviewModal';
 import ProfileSettingsView, { type BackupPayload } from '../components/ProfileSettingsView';
 import StorageFullModal from '../components/StorageFullModal';
+import {
+  dismissNotification,
+  setBottomNavVisible,
+  showNotification,
+} from '../lib/notifications';
 import { createClient } from '@/utils/supabase/client';
 import {
   evaluateBasicArithmetic,
@@ -335,7 +340,6 @@ export default function RetailCalc() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [profileCloseSignal, setProfileCloseSignal] = useState(0);
   const [noteEditorCloseSignal, setNoteEditorCloseSignal] = useState(0);
-  const [exitPromptVisible, setExitPromptVisible] = useState(false);
   const [isNoteFullScreen, setIsNoteFullScreen] = useState(false);
   const [isManagerSubOverlayOpen, setIsManagerSubOverlayOpen] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
@@ -348,16 +352,13 @@ export default function RetailCalc() {
   const [profileRefreshSignal, setProfileRefreshSignal] = useState(0);
   const [pullDistance, setPullDistance] = useState(0);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
-  const [pullRefreshNotice, setPullRefreshNotice] = useState<string | null>(null);
   const [dashboardNotes, setDashboardNotes] = useState<NoteItem[]>([]);
   const [dashboardTasksCount, setDashboardTasksCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const navStackRef = useRef<ActiveTab[]>(['home']);
   const lastBackPressAtRef = useRef<number>(0);
-  const exitPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [historyRefreshNotice, setHistoryRefreshNotice] = useState<string | null>(null);
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<
     { type: 'single'; item: HistoryItem } | { type: 'batch'; items: HistoryItem[] } | { type: 'all' } | null
   >(null);
@@ -506,7 +507,7 @@ export default function RetailCalc() {
     }
   }, [currentUser, loadUserHistory]);
 
-  // Real-Time Data Refresh for Calculation History (invoked by Pull-to-Refresh while on History tab)
+  // Real-Time Data Refresh for Calculation History (invoked by Pull-to-Refresh or History menu)
   const handleManualRefreshHistory = useCallback(async () => {
     try {
       if (currentUser?.id) {
@@ -515,10 +516,20 @@ export default function RetailCalc() {
         const local = getCalculationHistory();
         setHistory(local);
       }
-      setHistoryRefreshNotice('History updated');
-      setTimeout(() => setHistoryRefreshNotice(null), 2200);
+      showNotification({
+        id: 'history-sync',
+        message: 'History updated',
+        type: 'success',
+        duration: 2200,
+      });
     } catch (err) {
       console.warn('Calculation history refresh notice:', err);
+      showNotification({
+        id: 'history-sync',
+        message: 'Could not refresh history',
+        type: 'error',
+        duration: 2600,
+      });
     }
   }, [currentUser, loadUserHistory]);
 
@@ -957,7 +968,7 @@ export default function RetailCalc() {
       const handled = backHandlerRef.current();
       if (handled) {
         lastBackPressAtRef.current = 0;
-        setExitPromptVisible(false);
+        dismissNotification('exit-prompt');
         if (fromPopState && !window.history.state?.__calcMaxGuard) {
           pushHistoryGuard('home-root');
         }
@@ -968,18 +979,17 @@ export default function RetailCalc() {
       const now = Date.now();
       if (now - lastBackPressAtRef.current < 2000) {
         lastBackPressAtRef.current = 0;
-        setExitPromptVisible(false);
+        dismissNotification('exit-prompt');
         return;
       }
 
       lastBackPressAtRef.current = now;
-      setExitPromptVisible(true);
-      if (exitPromptTimerRef.current) {
-        clearTimeout(exitPromptTimerRef.current);
-      }
-      exitPromptTimerRef.current = setTimeout(() => {
-        setExitPromptVisible(false);
-      }, 2000);
+      showNotification({
+        id: 'exit-prompt',
+        message: 'Press back again to exit',
+        type: 'info',
+        duration: 2000,
+      });
 
       if (fromPopState) {
         pushHistoryGuard('home-exit-guard');
@@ -1005,9 +1015,6 @@ export default function RetailCalc() {
       window.removeEventListener('keydown', ensureArmedOnGesture);
       window.removeEventListener('popstate', onPopState);
       document.removeEventListener('backbutton', onAndroidBackButton);
-      if (exitPromptTimerRef.current) {
-        clearTimeout(exitPromptTimerRef.current);
-      }
     };
   }, [pushHistoryGuard]);
 
@@ -1039,6 +1046,13 @@ export default function RetailCalc() {
     showSignOutConfirm,
   ]);
 
+  useEffect(() => {
+    setBottomNavVisible(!isNoteFullScreen);
+    return () => {
+      setBottomNavVisible(false);
+    };
+  }, [isNoteFullScreen]);
+
   const handleRefreshActiveView = useCallback(async () => {
     if (isPullRefreshingRef.current) return;
     isPullRefreshingRef.current = true;
@@ -1048,13 +1062,13 @@ export default function RetailCalc() {
     try {
       if (targetTab === 'notes') {
         setNotesRefreshSignal((n) => n + 1);
-        setPullRefreshNotice('Notes refreshed');
+        showNotification({ id: 'view-refresh', message: 'Notes refreshed', type: 'success', duration: 2200 });
       } else if (targetTab === 'tasks') {
         setTasksRefreshSignal((n) => n + 1);
-        setPullRefreshNotice('Tasks refreshed');
+        showNotification({ id: 'view-refresh', message: 'Tasks refreshed', type: 'success', duration: 2200 });
       } else if (targetTab === 'history') {
         await handleManualRefreshHistory();
-        setPullRefreshNotice('History refreshed');
+        showNotification({ id: 'view-refresh', message: 'History refreshed', type: 'success', duration: 2200 });
       } else if (targetTab === 'home') {
         const notesList = getLocalNotes(currentUser?.id);
         const tasksList = getLocalTasks(currentUser?.id);
@@ -1063,18 +1077,18 @@ export default function RetailCalc() {
         if (currentUser?.id) {
           await loadUserHistory(currentUser);
         }
-        setPullRefreshNotice('Dashboard refreshed');
+        showNotification({ id: 'view-refresh', message: 'Dashboard refreshed', type: 'success', duration: 2200 });
       } else if (targetTab === 'profile') {
         setProfileRefreshSignal((n) => n + 1);
         if (currentUser?.id) {
           await loadUserHistory(currentUser);
         }
-        setPullRefreshNotice('Cloud storage synced');
+        showNotification({ id: 'view-refresh', message: 'Cloud storage synced', type: 'success', duration: 2200 });
       } else {
         if (currentUser?.id) {
           await loadUserHistory(currentUser);
         }
-        setPullRefreshNotice('View refreshed');
+        showNotification({ id: 'view-refresh', message: 'View refreshed', type: 'success', duration: 2200 });
       }
     } catch {
       // Ignore transient refresh notice errors
@@ -1085,9 +1099,6 @@ export default function RetailCalc() {
         setPullDistance(0);
         pullDistanceRef.current = 0;
       }, 450);
-      setTimeout(() => {
-        setPullRefreshNotice(null);
-      }, 2000);
     }
   }, [currentUser, handleManualRefreshHistory, loadUserHistory]);
 
@@ -1348,8 +1359,12 @@ export default function RetailCalc() {
 
       setIsNoteFullScreen(false);
       setIsManagerSubOverlayOpen(false);
-      setHistoryRefreshNotice('Returned to History');
-      setTimeout(() => setHistoryRefreshNotice(null), 2200);
+      showNotification({
+        id: 'history-restore',
+        message: 'Returned to History',
+        type: 'success',
+        duration: 2200,
+      });
 
       if (currentUser && allowHistoryBackup) {
         if (!isOnline) {
@@ -1405,11 +1420,22 @@ export default function RetailCalc() {
   const retrySyncItem = async (itemToSync: HistoryItem) => {
     if (!currentUser) {
       triggerVibration('error');
-      alert('Please sign in to save this calculation record to the cloud database.');
+      showNotification({
+        id: 'retry-sync',
+        message: 'Sign in to sync calculation to cloud',
+        type: 'warning',
+        duration: 3000,
+      });
       return;
     }
 
     triggerVibration('click');
+    showNotification({
+      id: 'retry-sync',
+      message: 'Syncing calculation...',
+      type: 'sync',
+      duration: 0,
+    });
     setHistory((prev) =>
       prev.map((i) => (i.id === itemToSync.id ? { ...i, syncStatus: 'syncing' } : i))
     );
@@ -1425,6 +1451,12 @@ export default function RetailCalc() {
     if (res.success) {
       clearCalculationOfflineOp(`upsert_calculation:${itemToSync.id}`, currentUser.id);
       triggerVibration('success');
+      showNotification({
+        id: 'retry-sync',
+        message: 'Calculation synced to cloud',
+        type: 'success',
+        duration: 2200,
+      });
     } else {
       enqueueCalculationOfflineSync(
         {
@@ -1435,6 +1467,12 @@ export default function RetailCalc() {
         currentUser.id
       );
       triggerVibration('error');
+      showNotification({
+        id: 'retry-sync',
+        message: navigator.onLine ? 'Cloud sync failed — saved locally' : 'Offline — queued for sync',
+        type: navigator.onLine ? 'error' : 'info',
+        duration: 2800,
+      });
     }
 
     setHistory((prev) => {
@@ -1470,6 +1508,12 @@ export default function RetailCalc() {
     const sourceItems = Array.isArray(itemsToExport) ? itemsToExport : history;
     if (sourceItems.length === 0) {
       triggerVibration('error');
+      showNotification({
+        id: 'export-csv',
+        message: 'No calculations to export',
+        type: 'warning',
+        duration: 2400,
+      });
       return;
     }
     triggerVibration('success');
@@ -1496,6 +1540,12 @@ export default function RetailCalc() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+    showNotification({
+      id: 'export-csv',
+      message: 'Exported calculations CSV',
+      type: 'success',
+      duration: 2200,
+    });
   };
 
   // Export History to PDF Handler (All or Filtered Records)
@@ -1503,16 +1553,34 @@ export default function RetailCalc() {
     const sourceItems = Array.isArray(itemsToExport) ? itemsToExport : history;
     if (sourceItems.length === 0) {
       triggerVibration('error');
+      showNotification({
+        id: 'export-pdf',
+        message: 'No calculations to export',
+        type: 'warning',
+        duration: 2400,
+      });
       return;
     }
     triggerVibration('success');
     exportAllHistoryPDF(sourceItems);
+    showNotification({
+      id: 'export-pdf',
+      message: 'Exported PDF report',
+      type: 'success',
+      duration: 2200,
+    });
   };
 
   // Export Single History Item PDF Handler
   const handleDownloadSinglePDF = (item: HistoryItem) => {
     triggerVibration('click');
     exportSingleItemPDF(item);
+    showNotification({
+      id: 'export-pdf',
+      message: 'Exported calculation PDF',
+      type: 'success',
+      duration: 2200,
+    });
   };
 
   const calculateDiscount = () => {
@@ -1727,6 +1795,12 @@ export default function RetailCalc() {
       refreshLocalStorageSnapshot(currentUser?.id);
       setIsDeleting(false);
       setDeleteConfirmTarget(null);
+      showNotification({
+        id: 'history-delete',
+        message: `Deleted ${itemsToDelete.length} calculation${itemsToDelete.length === 1 ? '' : 's'}`,
+        type: 'success',
+        duration: 2200,
+      });
     }
   };
 
@@ -1845,6 +1919,12 @@ export default function RetailCalc() {
       if (!silent) {
         setIsDeleting(false);
         setDeleteConfirmTarget(null);
+        showNotification({
+          id: 'history-delete',
+          message: 'Calculation deleted',
+          type: 'success',
+          duration: 2200,
+        });
       }
     }
   };
@@ -1935,6 +2015,12 @@ export default function RetailCalc() {
       refreshLocalStorageSnapshot(currentUser?.id);
       setIsDeleting(false);
       setDeleteConfirmTarget(null);
+      showNotification({
+        id: 'history-delete',
+        message: 'Calculation history cleared',
+        type: 'success',
+        duration: 2200,
+      });
     }
   };
 
@@ -2495,8 +2581,8 @@ export default function RetailCalc() {
 
         {/* Main Content Area (Invariant outer container prevents 116px upward layout jumps during screen transitions) */}
         <main className="flex-1 flex flex-col relative overflow-x-clip p-0">
-          {/* Pull-to-Refresh Visual Pill Indicator (Scoped strictly to the active view) */}
-          {(pullDistance > 8 || isPullRefreshing || pullRefreshNotice) && !isNoteFullScreen && (
+          {/* Pull-to-Refresh Physical Gesture Indicator (Scoped strictly to active pull/refreshing gesture) */}
+          {(pullDistance > 8 || isPullRefreshing) && !isNoteFullScreen && (
             <div
               role="status"
               aria-live="polite"
@@ -2510,11 +2596,6 @@ export default function RetailCalc() {
                   <>
                     <RefreshCw className="w-3.5 h-3.5 text-blue-600 animate-spin" />
                     <span>Refreshing view...</span>
-                  </>
-                ) : pullRefreshNotice ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>{pullRefreshNotice}</span>
                   </>
                 ) : (
                   <>
@@ -2826,7 +2907,6 @@ export default function RetailCalc() {
                     history={history}
                     currency={currency}
                     currentUser={currentUser}
-                    refreshNotice={historyRefreshNotice}
                     onRefreshHistory={handleManualRefreshHistory}
                     onInspectItem={(item) => {
                       triggerVibration('click');
@@ -3196,22 +3276,6 @@ export default function RetailCalc() {
               </div>
             </motion.div>
           </div>
-        )}
-      </AnimatePresence>
-
-      {/* Android Back Exit Guard Toast */}
-      <AnimatePresence>
-        {exitPromptVisible && (
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 12 }}
-            role="status"
-            aria-live="polite"
-            className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-slate-900/95 text-white text-xs font-semibold shadow-lg pointer-events-none whitespace-nowrap"
-          >
-            Press back again to exit
-          </motion.div>
         )}
       </AnimatePresence>
 

@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Lightbulb, ChevronRight, ChevronLeft, Clock, Check, Share2, DollarSign } from 'lucide-react';
+import { showNotification } from '@/lib/notifications';
 
 export interface RetailTip {
   id: number;
@@ -116,8 +117,14 @@ export default function DidYouKnow() {
 
   const handleCopy = () => {
     const text = `💡 Retail Savings Tip: ${currentTip.title}\n${currentTip.tip}\nAction: ${currentTip.actionableStep}`;
-    navigator.clipboard.writeText(text);
+    navigator.clipboard?.writeText(text);
     setCopied(true);
+    showNotification({
+      id: 'tip-copy',
+      message: 'Tip copied to clipboard',
+      type: 'success',
+      duration: 1800,
+    });
     setTimeout(() => setCopied(false), 2000);
   };
 

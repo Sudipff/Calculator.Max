@@ -15,10 +15,6 @@ import {
   Sparkles,
   Bell,
   Cloud,
-  Database,
-  Upload,
-  Download,
-  Trash2,
   RefreshCw,
   LogIn,
   LogOut,
@@ -51,6 +47,7 @@ import {
 import { fetchAndCacheStorageSnapshot } from '../lib/storageSyncClient';
 import { OfflineWifiIndicator } from './PwaRuntime';
 import SubscriptionView, { type SubscriptionPlanId } from './SubscriptionView';
+import { showNotification } from '@/lib/notifications';
 
 export interface CurrencyOption {
   symbol: string;
@@ -76,11 +73,11 @@ interface ProfileSettingsViewProps {
   onOpenAuthModal: (mode?: 'signin' | 'update_password') => void;
   onSignOut: () => Promise<void> | void;
   onSyncHistory: () => Promise<void> | void;
-  onExportCalculations: () => void;
+  onExportCalculations?: () => void;
   onBuildLocalBackup?: () => BackupPayload;
   onRestoreBackup?: (payload: BackupPayload) => number;
   onUserUpdated?: (user: any) => void;
-  calculationsCount: number;
+  calculationsCount?: number;
   onSubOverlayChange?: (hasOverlay: boolean) => void;
   closeSubViewSignal?: number;
   refreshSignal?: number;
@@ -98,11 +95,7 @@ export default function ProfileSettingsView({
   onOpenAuthModal,
   onSignOut,
   onSyncHistory,
-  onExportCalculations,
-  onBuildLocalBackup,
-  onRestoreBackup,
   onUserUpdated,
-  calculationsCount,
   onSubOverlayChange,
   closeSubViewSignal = 0,
   refreshSignal = 0,
@@ -113,12 +106,10 @@ export default function ProfileSettingsView({
   const [closeBackupSignal, setCloseBackupSignal] = useState(0);
   const [activePlanLabel, setActivePlanLabel] = useState<SubscriptionPlanId>('starter');
   const [activeLimitBytes, setActiveLimitBytes] = useState<number>(TEN_MB_LIMIT_BYTES);
-  const [showBackupPanel, setShowBackupPanel] = useState(false);
 
   // User profile editing state
   const [editName, setEditName] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
-  const [profileFeedback, setProfileFeedback] = useState<string | null>(null);
 
   // Preferences persisted to localStorage
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>('light');
@@ -133,15 +124,10 @@ export default function ProfileSettingsView({
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default');
   const [skipBlockedPushPopup, setSkipBlockedPushPopup] = useState(true);
-  const [pushFeedback, setPushFeedback] = useState<string | null>(null);
-  const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
-  const [privacyLoading, setPrivacyLoading] = useState(false);
-  const [confirmEraseData, setConfirmEraseData] = useState(false);
-  const restoreInputRef = useRef<HTMLInputElement | null>(null);
   const prevCloseSignalRef = useRef<number>(closeSubViewSignal);
 
   const hasSubOverlay = Boolean(
-    showSubscriptionView || expandedAccount !== null || showBackupPanel || confirmEraseData
+    showSubscriptionView || expandedAccount !== null
   );
 
   useEffect(() => {
@@ -169,22 +155,12 @@ export default function ProfileSettingsView({
       }
       return;
     }
-    if (confirmEraseData) {
-      setConfirmEraseData(false);
-      return;
-    }
-    if (showBackupPanel) {
-      setShowBackupPanel(false);
-      return;
-    }
     if (expandedAccount !== null) {
       setExpandedAccount(null);
     }
   }, [
     closeSubViewSignal,
-    confirmEraseData,
     expandedAccount,
-    showBackupPanel,
     showBackupSettingsView,
     showSubscriptionView,
   ]);
@@ -315,6 +291,12 @@ export default function ProfileSettingsView({
       document.documentElement.dataset.theme = next;
       window.dispatchEvent(new CustomEvent('calcmax:theme-changed', { detail: { theme: next } }));
     }
+    showNotification({
+      id: 'pref-theme',
+      message: `${next === 'dark' ? 'Dark' : 'Light'} theme enabled`,
+      type: 'info',
+      duration: 1800,
+    });
   };
 
   const toggleUnitSystem = () => {
@@ -324,6 +306,12 @@ export default function ProfileSettingsView({
       localStorage.setItem('calculator-max-unit-system', next);
     }
     onUnitSystemChange?.(next);
+    showNotification({
+      id: 'pref-unit',
+      message: `Unit system: ${next === 'metric' ? 'Metric' : 'Imperial'}`,
+      type: 'info',
+      duration: 1800,
+    });
   };
 
   const toggleNotifyUpdates = () => {
@@ -348,7 +336,12 @@ export default function ProfileSettingsView({
 
   const handleEnablePushNotifications = async () => {
     if (typeof window === 'undefined' || !('Notification' in window)) {
-      setPushFeedback('Browser does not support push notifications.');
+      showNotification({
+        id: 'push-feedback',
+        message: 'Browser does not support push notifications',
+        type: 'warning',
+        duration: 3200,
+      });
       return;
     }
     const perm = await requestNotificationPermission(currentUser?.id);
@@ -359,12 +352,21 @@ export default function ProfileSettingsView({
       await sendServiceWorkerPushNotification('Calculator Max Push Active', {
         body: 'Scheduled Note & Task reminders will alert you even when offline.',
       });
-      setPushFeedback('Push notifications enabled for offline & background alerts.');
+      showNotification({
+        id: 'push-feedback',
+        message: 'Push notifications enabled',
+        type: 'success',
+        duration: 3000,
+      });
     } else if (perm === 'denied') {
       setSkipBlockedPushPopup(false);
-      setPushFeedback('Blocked in browser settings. Enable Notifications for this site to receive alerts.');
+      showNotification({
+        id: 'push-feedback',
+        message: 'Notifications blocked in browser settings',
+        type: 'warning',
+        duration: 3500,
+      });
     }
-    setTimeout(() => setPushFeedback(null), 4000);
   };
 
   const handleSendTestPush = async () => {
@@ -376,19 +378,27 @@ export default function ProfileSettingsView({
     const sent = await sendServiceWorkerPushNotification('Test Push Reminder', {
       body: 'Offline-capable Service Worker push alert is working cleanly.',
     });
-    setPushFeedback(sent ? 'Test notification dispatched!' : 'Enable site notifications first.');
-    setTimeout(() => setPushFeedback(null), 3200);
+    showNotification({
+      id: 'push-feedback',
+      message: sent ? 'Test notification dispatched' : 'Enable site notifications first',
+      type: sent ? 'success' : 'warning',
+      duration: 2800,
+    });
   };
 
   const handleSaveProfileInfo = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleaned = editName.trim().slice(0, 80);
     if (!cleaned) {
-      setProfileFeedback('Display name cannot be empty.');
+      showNotification({
+        id: 'profile-save',
+        message: 'Display name cannot be empty',
+        type: 'error',
+        duration: 2800,
+      });
       return;
     }
     setSavingProfile(true);
-    setProfileFeedback(null);
 
     try {
       const supabase = createClient();
@@ -411,9 +421,21 @@ export default function ProfileSettingsView({
         onUserUpdated?.(updatedUser);
       }
 
-      setProfileFeedback('Profile updated cleanly.');
+      setExpandedAccount(null);
+      showNotification({
+        id: 'profile-save',
+        message: 'Profile updated',
+        type: 'success',
+        duration: 2200,
+      });
     } catch {
-      setProfileFeedback('Saved locally.');
+      setExpandedAccount(null);
+      showNotification({
+        id: 'profile-save',
+        message: 'Saved locally',
+        type: 'info',
+        duration: 2200,
+      });
     } finally {
       setSavingProfile(false);
     }
@@ -425,6 +447,12 @@ export default function ProfileSettingsView({
       return;
     }
     setIsSyncing(true);
+    showNotification({
+      id: 'cloud-sync',
+      message: 'Syncing with cloud...',
+      type: 'sync',
+      duration: 0,
+    });
     try {
       const queueRes = await flushOfflineSyncQueue(currentUser.id);
       await onSyncHistory();
@@ -437,143 +465,24 @@ export default function ProfileSettingsView({
           ? `${queueRes.pendingCount} still queued`
           : `Last synced: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
       );
+      showNotification({
+        id: 'cloud-sync',
+        message:
+          queueRes.pendingCount > 0
+            ? `${queueRes.pendingCount} item${queueRes.pendingCount === 1 ? '' : 's'} still queued`
+            : 'Cloud sync complete',
+        type: queueRes.pendingCount > 0 ? 'warning' : 'success',
+        duration: 2400,
+      });
+    } catch {
+      showNotification({
+        id: 'cloud-sync',
+        message: 'Cloud sync failed — saved locally',
+        type: 'error',
+        duration: 3000,
+      });
     } finally {
       setIsSyncing(false);
-    }
-  };
-
-  const handleExportPrivacyArchive = async () => {
-    setPrivacyLoading(true);
-    setPrivacyNotice(null);
-    try {
-      let archiveData: any = null;
-      if (currentUser) {
-        const supabase = createClient();
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const res = await fetch('/api/privacy', {
-          headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-        });
-        if (res.ok) {
-          archiveData = await res.json();
-        }
-      }
-
-      if (!archiveData && onBuildLocalBackup) {
-        archiveData = {
-          source: 'local-workspace',
-          exportedAt: new Date().toISOString(),
-          ...onBuildLocalBackup(),
-        };
-      }
-
-      if (!archiveData) {
-        setPrivacyNotice('Sign in or add calculations first to export a backup archive.');
-        return;
-      }
-
-      const blob = new Blob([JSON.stringify(archiveData, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `calculator-max-backup-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setPrivacyNotice(
-        currentUser ? 'Encrypted cloud backup archive downloaded.' : 'Local backup archive downloaded.'
-      );
-    } catch {
-      setPrivacyNotice('Backup export failed. Please try again.');
-    } finally {
-      setPrivacyLoading(false);
-    }
-  };
-
-  const handleRestoreBackupFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      setPrivacyNotice('Backup file exceeds 5 MB limit.');
-      return;
-    }
-    setPrivacyLoading(true);
-    setPrivacyNotice(null);
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-      if (!parsed || typeof parsed !== 'object') {
-        setPrivacyNotice('Invalid backup format.');
-        return;
-      }
-      const payload: BackupPayload = {
-        calculations: Array.isArray(parsed.calculations)
-          ? parsed.calculations
-          : Array.isArray(parsed.data?.calculations)
-          ? parsed.data.calculations
-          : Array.isArray(parsed)
-          ? parsed
-          : undefined,
-        notes: Array.isArray(parsed.notes)
-          ? parsed.notes
-          : Array.isArray(parsed.data?.notes)
-          ? parsed.data.notes
-          : undefined,
-        tasks: Array.isArray(parsed.tasks)
-          ? parsed.tasks
-          : Array.isArray(parsed.data?.tasks)
-          ? parsed.data.tasks
-          : undefined,
-      };
-      const restoredCount = onRestoreBackup ? onRestoreBackup(payload) : 0;
-      if (restoredCount > 0) {
-        setPrivacyNotice(`Restored ${restoredCount} items from backup.`);
-      } else {
-        setPrivacyNotice('No valid calculations, notes, or tasks found in backup file.');
-      }
-    } catch {
-      setPrivacyNotice('Could not read JSON backup file. Ensure it is valid JSON.');
-    } finally {
-      setPrivacyLoading(false);
-    }
-  };
-
-  const handleEraseCloudData = async () => {
-    if (!currentUser) return;
-    setPrivacyLoading(true);
-    setPrivacyNotice(null);
-    try {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const res = await fetch('/api/privacy', {
-        method: 'DELETE',
-        headers: session?.access_token
-          ? { Authorization: `Bearer ${session.access_token}` }
-          : undefined,
-      });
-      if (res.ok) {
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('retail_calc_auth_user');
-          if (currentUser?.id) {
-            localStorage.removeItem(`retail-calc-history-${currentUser.id}`);
-          }
-        }
-        setConfirmEraseData(false);
-        await onSignOut();
-      } else {
-        setPrivacyNotice('Unable to erase cloud archive right now.');
-      }
-    } catch {
-      setPrivacyNotice('Erasure request failed.');
-    } finally {
-      setPrivacyLoading(false);
     }
   };
 
@@ -726,9 +635,9 @@ export default function ProfileSettingsView({
           <div>
             <button
               type="button"
-              onClick={() =>
-                setExpandedAccount((prev) => (prev === 'profile_info' ? null : 'profile_info'))
-              }
+              onClick={() => {
+                setExpandedAccount((prev) => (prev === 'profile_info' ? null : 'profile_info'));
+              }}
               className="w-full px-4 py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors cursor-pointer text-left"
             >
               <div className="flex items-center gap-3 min-w-0">
@@ -778,9 +687,6 @@ export default function ProfileSettingsView({
                         {savingProfile ? 'Saving...' : 'Save'}
                       </button>
                     </div>
-                    {profileFeedback && (
-                      <p className="text-[11px] font-semibold text-emerald-700">{profileFeedback}</p>
-                    )}
                   </form>
                 ) : (
                   <div className="flex items-center justify-between gap-3 py-1">
@@ -951,7 +857,15 @@ export default function ProfileSettingsView({
                 value={activeCurrencyObj?.code || 'INR'}
                 onChange={(e) => {
                   const found = currencies.find((c) => c.code === e.target.value);
-                  if (found) onCurrencyChange(found.symbol);
+                  if (found) {
+                    onCurrencyChange(found.symbol);
+                    showNotification({
+                      id: 'pref-currency',
+                      message: `Currency set to ${found.symbol} ${found.code}`,
+                      type: 'info',
+                      duration: 1800,
+                    });
+                  }
                 }}
                 className="bg-slate-100 hover:bg-slate-200/80 rounded-xl py-1.5 pl-3 pr-7 text-xs font-bold text-slate-700 appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 transition-colors"
               >
@@ -1100,12 +1014,6 @@ export default function ProfileSettingsView({
                 ) : null}
               </div>
             </div>
-
-            {pushFeedback && (
-              <p className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200/80 rounded-xl px-3 py-1.5">
-                {pushFeedback}
-              </p>
-            )}
           </div>
         </div>
       </section>
@@ -1148,124 +1056,6 @@ export default function ProfileSettingsView({
             <span className="text-[11px] font-medium text-slate-500 text-right shrink-0">
               {isSyncing ? 'Syncing...' : lastSyncedText}
             </span>
-          </button>
-
-          {/* Backup & Restore Data */}
-          <div>
-            <button
-              type="button"
-              onClick={() => setShowBackupPanel((prev) => !prev)}
-              className="w-full px-4 py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors cursor-pointer text-left"
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
-                  <Database className="w-4 h-4" />
-                </span>
-                <span className="text-sm font-semibold text-slate-800 truncate">
-                  Backup &amp; Restore Data
-                </span>
-              </div>
-              {showBackupPanel ? (
-                <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
-              ) : (
-                <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
-              )}
-            </button>
-
-            {showBackupPanel && (
-              <div className="px-4 pb-4 pt-2 bg-slate-50/60 border-t border-slate-100 space-y-2.5">
-                {privacyNotice && (
-                  <p className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
-                    {privacyNotice}
-                  </p>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={handleExportPrivacyArchive}
-                    disabled={privacyLoading}
-                    className="flex-1 min-w-[140px] py-2 px-3 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    <Download className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>{currentUser ? 'Download Archive (JSON)' : 'Backup JSON'}</span>
-                  </button>
-
-                  {onRestoreBackup && (
-                    <>
-                      <input
-                        ref={restoreInputRef}
-                        type="file"
-                        accept=".json,application/json"
-                        onChange={handleRestoreBackupFile}
-                        className="hidden"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => restoreInputRef.current?.click()}
-                        disabled={privacyLoading}
-                        className="flex-1 min-w-[140px] py-2 px-3 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                      >
-                        <Upload className="w-3.5 h-3.5 text-blue-600" />
-                        <span>Restore Backup (JSON)</span>
-                      </button>
-                    </>
-                  )}
-
-                  {currentUser && !confirmEraseData && (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmEraseData(true)}
-                      disabled={privacyLoading}
-                      className="py-2 px-3 bg-white hover:bg-rose-50 border border-rose-200 rounded-xl text-xs font-bold text-rose-600 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Erase Cloud Data</span>
-                    </button>
-                  )}
-                </div>
-
-                {confirmEraseData && (
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={handleEraseCloudData}
-                      disabled={privacyLoading}
-                      className="flex-1 py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
-                    >
-                      Confirm Permanent Cloud Erase
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmEraseData(false)}
-                      disabled={privacyLoading}
-                      className="py-2 px-3 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Export Calculations */}
-          <button
-            type="button"
-            onClick={onExportCalculations}
-            className="w-full px-4 py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors cursor-pointer text-left"
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="w-8 h-8 rounded-xl bg-rose-100 text-rose-500 flex items-center justify-center shrink-0">
-                <Upload className="w-4 h-4" />
-              </span>
-              <span className="text-sm font-semibold text-slate-800 truncate">
-                Export Calculations
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 shrink-0">
-              <span>{calculationsCount} CSV</span>
-              <ChevronRight className="w-4 h-4 text-slate-400" />
-            </div>
           </button>
         </div>
       </section>

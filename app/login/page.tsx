@@ -1086,22 +1086,20 @@ export default function LoginPage() {
                     )}
                   </button>
 
-                  <div className="text-center pt-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (currentUser) {
-                          setActiveTab('google');
-                        } else {
+                  {!currentUser && (
+                    <div className="text-center pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
                           setActiveTab('email_login');
-                        }
-                        setError(null);
-                      }}
-                      className="text-xs font-semibold text-slate-500 hover:text-slate-800 hover:underline cursor-pointer"
-                    >
-                      {currentUser ? 'Back to Profile' : 'Cancel and back to Sign In'}
-                    </button>
-                  </div>
+                          setError(null);
+                        }}
+                        className="text-xs font-semibold text-slate-500 hover:text-slate-800 hover:underline cursor-pointer"
+                      >
+                        Cancel and back to Sign In
+                      </button>
+                    </div>
+                  )}
                 </form>
               )}
 

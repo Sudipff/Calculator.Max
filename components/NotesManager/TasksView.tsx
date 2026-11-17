@@ -37,6 +37,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { TaskItem, TaskList, TaskPriority, type SourceHistoryMeta } from '@/lib/types/notes-tasks';
 import { formatTasksForShare, shareTextContent } from '@/lib/shareUtils';
+import { showNotification } from '@/lib/notifications';
 import {
   fetchTasks,
   getLocalTasks,
@@ -153,7 +154,6 @@ export default function TasksView({
   const [activeListId, setActiveListId] = useState<string>('default-my-tasks');
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
 
   // Search & Filter states
   const [searchQuery, setSearchQuery] = useState('');
@@ -192,14 +192,11 @@ export default function TasksView({
   const [isAddingNoteInDetail, setIsAddingNoteInDetail] = useState(false);
   const [detailQuickNote, setDetailQuickNote] = useState('');
   const [showDetailMenu, setShowDetailMenu] = useState(false);
-  const [detailSaveFeedback, setDetailSaveFeedback] = useState<string | null>(null);
 
   // New List Modal
   const [showNewListModal, setShowNewListModal] = useState(false);
   const [newListName, setNewListName] = useState('');
 
-  // Active Reminder In-App Banner
-  const [activeAlert, setActiveAlert] = useState<{ id: string; title: string; due: string } | null>(null);
   const [showManagerMenu, setShowManagerMenu] = useState(false);
 
   // Long-press refs
@@ -337,8 +334,12 @@ export default function TasksView({
       setTaskLists(getLocalTaskLists(currentUser?.id));
       setTasks(getLocalTasks(currentUser?.id));
       if (detail?.syncedCount > 0) {
-        setRefreshNotice(`Synced ${detail.syncedCount} offline item${detail.syncedCount === 1 ? '' : 's'}`);
-        setTimeout(() => setRefreshNotice(null), 2600);
+        showNotification({
+          id: 'tasks-sync',
+          message: `Synced ${detail.syncedCount} offline item${detail.syncedCount === 1 ? '' : 's'}`,
+          type: 'success',
+          duration: 2600,
+        });
       }
     };
 
@@ -349,7 +350,7 @@ export default function TasksView({
     };
   }, [currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Trigger unified Service Worker due task alerts & inline banner
+  // Trigger unified Service Worker due task alerts via unified bottom-center notification banner
   useEffect(() => {
     if (!alertsEnabled) return;
 
@@ -358,18 +359,25 @@ export default function TasksView({
       const firstDueTask = fired.find((r) => r.sourceType === 'task');
       if (firstDueTask) {
         const dueDateObj = new Date(firstDueTask.remindAt);
-        setActiveAlert({
-          id: firstDueTask.sourceId,
-          title: firstDueTask.title.replace(/^Task Due:\s*/i, ''),
-          due: Number.isNaN(dueDateObj.getTime())
-            ? 'Now'
-            : dueDateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        const dueStr = Number.isNaN(dueDateObj.getTime())
+          ? 'Now'
+          : dueDateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const cleanTitle = firstDueTask.title.replace(/^Task Due:\s*/i, '');
+        showNotification({
+          id: `task-due-${firstDueTask.sourceId}`,
+          message: `Reminder (${dueStr}): ${cleanTitle}`,
+          type: 'info',
+          duration: 8000,
+          actionLabel: 'Done',
+          onAction: () => {
+            void handleToggleComplete(firstDueTask.sourceId);
+          },
         });
       }
     };
 
     void checkTasksNow();
-  }, [tasks, alertsEnabled]);
+  }, [tasks, alertsEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Open Detail View for a task card
   const openTaskDetail = (task: TaskItem) => {
@@ -428,8 +436,12 @@ export default function TasksView({
       ]);
       setTaskLists(freshLists);
       setTasks(freshTasks);
-      setRefreshNotice('Tasks updated');
-      setTimeout(() => setRefreshNotice(null), 2200);
+      showNotification({
+        id: 'tasks-refresh',
+        message: 'Tasks updated',
+        type: 'success',
+        duration: 2200,
+      });
     } catch (err) {
       console.warn('Tasks refresh notice:', err);
     }
@@ -459,9 +471,21 @@ export default function TasksView({
       }
       setAlertsEnabled(true);
       localStorage.setItem(ALERTS_STORAGE_KEY, 'true');
+      showNotification({
+        id: 'tasks-alerts',
+        message: 'Task alerts enabled',
+        type: 'success',
+        duration: 2000,
+      });
     } else {
       setAlertsEnabled(false);
       localStorage.setItem(ALERTS_STORAGE_KEY, 'false');
+      showNotification({
+        id: 'tasks-alerts',
+        message: 'Task alerts paused',
+        type: 'info',
+        duration: 2000,
+      });
     }
   };
 
@@ -514,6 +538,12 @@ export default function TasksView({
     refreshLocalStorageSnapshot(currentUser?.id);
     triggerVibration?.('success');
     resetCreateModal();
+    showNotification({
+      id: 'tasks-create',
+      message: 'Task added',
+      type: 'success',
+      duration: 2000,
+    });
 
     if (currentUser?.id) {
       const res = await upsertTaskToSupabase(newTask, currentUser.id);
@@ -612,8 +642,12 @@ export default function TasksView({
 
       triggerVibration?.('success');
       await onReturnToHistory?.(source, taskSnapshot);
-      setRefreshNotice('Returned to History');
-      setTimeout(() => setRefreshNotice(null), 2200);
+      showNotification({
+        id: 'tasks-return-history',
+        message: 'Returned to History',
+        type: 'success',
+        duration: 2200,
+      });
     } finally {
       setIsReturningToHistory(false);
     }
@@ -692,6 +726,14 @@ export default function TasksView({
     triggerVibration?.('click');
 
     const target = updated.find((t) => t.id === taskId);
+    if (target) {
+      showNotification({
+        id: 'tasks-complete',
+        message: target.completed ? 'Task completed' : 'Task reopened',
+        type: 'success',
+        duration: 1800,
+      });
+    }
     if (target && currentUser?.id) {
       const res = await upsertTaskToSupabase(target, currentUser.id);
       setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, syncStatus: res.syncStatus } : t)));
@@ -741,9 +783,17 @@ export default function TasksView({
       }
     }
 
+    const deletedCount =
+      confirmDeleteTarget.type === 'single' ? 1 : confirmDeleteTarget.ids.length;
     setIsDeleting(false);
     setConfirmDeleteTarget(null);
     refreshLocalStorageSnapshot(currentUser?.id);
+    showNotification({
+      id: 'tasks-delete',
+      message: deletedCount === 1 ? 'Task deleted' : `Deleted ${deletedCount} tasks`,
+      type: 'success',
+      duration: 2200,
+    });
   };
 
   // Batch Selection Handlers
@@ -754,19 +804,18 @@ export default function TasksView({
     );
   };
 
-  const handleShareTasks = async (targetTasks: TaskItem[], inDetail = false) => {
+  const handleShareTasks = async (targetTasks: TaskItem[], _inDetail = false) => {
     if (targetTasks.length === 0) return;
     const payload = formatTasksForShare(targetTasks);
     const outcome = await shareTextContent(payload);
     if (outcome === 'shared' || outcome === 'copied') {
       const msg = outcome === 'shared' ? 'Shared' : 'Copied to share';
-      if (inDetail) {
-        setDetailSaveFeedback(msg);
-        setTimeout(() => setDetailSaveFeedback(null), 1800);
-      } else {
-        setRefreshNotice(msg);
-        setTimeout(() => setRefreshNotice(null), 2200);
-      }
+      showNotification({
+        id: 'tasks-share',
+        message: msg,
+        type: 'success',
+        duration: 2000,
+      });
     }
   };
 
@@ -1299,43 +1348,6 @@ export default function TasksView({
         )}
       </div>
 
-      {/* Active In-App Reminder Alert Banner (placed below sticky header so top header never shifts) */}
-      {activeAlert && (
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-3.5 rounded-2xl shadow-lg flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
-              <Bell className="w-4 h-4 text-white" />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-blue-100">
-                Reminder · {activeAlert.due}
-              </div>
-              <div className="text-xs sm:text-sm font-extrabold text-white truncate">{activeAlert.title}</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                handleToggleComplete(activeAlert.id);
-                setActiveAlert(null);
-              }}
-              className="px-3 py-1.5 bg-white text-blue-700 font-bold text-xs rounded-xl hover:bg-blue-50 transition-colors cursor-pointer"
-            >
-              Done
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveAlert(null)}
-              className="p-1.5 hover:bg-white/20 rounded-lg text-white/80 hover:text-white cursor-pointer"
-              aria-label="Dismiss reminder"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Compact Multi-Column Task Grid */}
       {loading ? (
         <div
@@ -1376,28 +1388,11 @@ export default function TasksView({
         </div>
       )}
 
-      {/* Pinned Bottom Status Pill + Large Fixed Floating + Action Button (Portaled to body so parent transforms never unpin it) */}
+      {/* Large Fixed Floating + Action Button (Portaled to body so parent transforms never unpin it) */}
       {isMounted &&
         typeof document !== 'undefined' &&
         createPortal(
           <>
-            <AnimatePresence>
-              {!detailTask && !isCreateModalOpen && refreshNotice && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.94 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.94 }}
-                  transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                  className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-4 sm:left-6 z-[85] pointer-events-none"
-                >
-                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-emerald-200/80 shadow-xs">
-                    <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
-                    <span>{refreshNotice}</span>
-                  </span>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
             {!detailTask && !isCreateModalOpen && selectedTaskIds.length === 0 && (
               <button
                 type="button"
@@ -1607,8 +1602,12 @@ export default function TasksView({
                         setShowDetailMenu(false);
                         if (isEditingDetail) {
                           await handleSaveDetailChanges();
-                          setDetailSaveFeedback('Task saved');
-                          setTimeout(() => setDetailSaveFeedback(null), 1800);
+                          showNotification({
+                            id: 'tasks-save',
+                            message: 'Task saved',
+                            type: 'success',
+                            duration: 2000,
+                          });
                         } else {
                           setIsEditingDetail(true);
                         }
@@ -1687,22 +1686,6 @@ export default function TasksView({
 
           {/* Detail Body */}
           <div className="flex-1 overflow-y-auto overscroll-contain w-full max-w-2xl mx-auto px-4 sm:px-6 py-4 space-y-4 pb-[max(2rem,env(safe-area-inset-bottom))]">
-            <AnimatePresence>
-              {detailSaveFeedback && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.95 }}
-                  transition={{ duration: 0.16 }}
-                  className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100001] pointer-events-none"
-                >
-                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-slate-900 text-white text-xs font-bold shadow-lg border border-white/10">
-                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>{detailSaveFeedback}</span>
-                  </span>
-                </motion.div>
-              )}
-            </AnimatePresence>
             {/* Title, Checkbox & Metadata Row */}
             <div className="space-y-3">
               <div className="flex items-start gap-3">

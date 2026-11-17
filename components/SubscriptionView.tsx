@@ -41,6 +41,7 @@ import {
 } from '@/lib/storageSyncClient';
 import type { CurrencyOption } from './ProfileSettingsView';
 import BackupSettingsView from './BackupSettingsView';
+import { showNotification } from '@/lib/notifications';
 
 export type { SubscriptionPlanId };
 export { SUBSCRIPTION_PLANS };
@@ -118,7 +119,6 @@ export default function SubscriptionView({
   const [counts, setCounts] = useState(initialSnapshot.counts);
   const [isSyncingStorage, setIsSyncingStorage] = useState<boolean>(false);
   const [cloudSyncedAt, setCloudSyncedAt] = useState<string | null>(initialSnapshot.syncedAt);
-  const [planNotice, setPlanNotice] = useState<string | null>(null);
   const [activeScrollIndex, setActiveScrollIndex] = useState<number>(0);
 
   // Payment Gateway Checkout State
@@ -348,10 +348,12 @@ export default function SubscriptionView({
         new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
     onStorageSynced?.(usedBytes, nextLimit, plan.id);
-    setPlanNotice(
-      `Subscription switched to ${plan.title} (${formatStorageLimitLabel(nextLimit)} Storage).`
-    );
-    setTimeout(() => setPlanNotice(null), 3500);
+    showNotification({
+      id: 'subscription-plan',
+      message: `Switched to ${plan.title} (${formatStorageLimitLabel(nextLimit)})`,
+      type: 'success',
+      duration: 3200,
+    });
   };
 
   const handleSubmitPaymentCheckout = async (e: React.FormEvent) => {
@@ -442,12 +444,14 @@ export default function SubscriptionView({
         payerSummary: data.payerSummary || paymentMethod.toUpperCase(),
       });
 
-      setPlanNotice(
-        `Payment confirmed! Upgraded to ${getPlanDisplayName(
+      showNotification({
+        id: 'subscription-plan',
+        message: `Upgraded to ${getPlanDisplayName(
           upgradedPlan
-        )} (${formatStorageLimitLabel(upgradedLimit)} Cloud Storage).`
-      );
-      setTimeout(() => setPlanNotice(null), 5000);
+        )} (${formatStorageLimitLabel(upgradedLimit)} Storage)`,
+        type: 'success',
+        duration: 4200,
+      });
     } catch {
       setPaymentError('Network error while contacting the payment gateway. Please retry.');
     } finally {
@@ -691,23 +695,6 @@ export default function SubscriptionView({
           </div>
         </div>
       </section>
-
-      {/* Feedback Banner on Plan Action */}
-      {planNotice && (
-        <div
-          role="status"
-          className="px-4 py-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800 flex items-center justify-between gap-2"
-        >
-          <span>{planNotice}</span>
-          <button
-            type="button"
-            onClick={() => setPlanNotice(null)}
-            className="text-emerald-700 hover:text-emerald-950 font-extrabold cursor-pointer px-1"
-          >
-            OK
-          </button>
-        </div>
-      )}
 
       {/* SUBSCRIPTION PLANS Section */}
       <section aria-labelledby="subscription-plans-heading" className="space-y-3 relative">

@@ -29,6 +29,7 @@ import {
   buildFullExpression,
   countUnclosedParens,
 } from '../lib/scientificEngine';
+import { showNotification } from '@/lib/notifications';
 
 interface ScientificCalculatorProps {
   triggerVibration: (type?: 'success' | 'error' | 'click' | 'reset') => void;
@@ -258,6 +259,12 @@ export default function ScientificCalculator({
     navigator.clipboard?.writeText(textToCopy);
     setCopied(true);
     triggerVibration('click');
+    showNotification({
+      id: 'calc-copy',
+      message: 'Copied to clipboard',
+      type: 'success',
+      duration: 1800,
+    });
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     copyTimerRef.current = setTimeout(() => {
       setCopied(false);
@@ -283,6 +290,12 @@ export default function ScientificCalculator({
     onSaveHistory('Calculator', details, `= ${res}`);
     setSaved(true);
     triggerVibration('success');
+    showNotification({
+      id: 'calc-save',
+      message: 'Saved to history',
+      type: 'success',
+      duration: 2000,
+    });
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       setSaved(false);

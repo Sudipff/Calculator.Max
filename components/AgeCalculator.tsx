@@ -21,6 +21,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 import { computeAgeDetails } from '../lib/basicCalculators';
+import { showNotification } from '@/lib/notifications';
 
 interface AgeCalculatorProps {
   triggerVibration: (type?: 'success' | 'error' | 'click' | 'reset') => void;
@@ -78,6 +79,12 @@ export default function AgeCalculator({ triggerVibration, onSaveHistory }: AgeCa
     navigator.clipboard?.writeText(text);
     setCopied(true);
     triggerVibration('click');
+    showNotification({
+      id: 'age-copy',
+      message: 'Copied to clipboard',
+      type: 'success',
+      duration: 1800,
+    });
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -88,6 +95,12 @@ export default function AgeCalculator({ triggerVibration, onSaveHistory }: AgeCa
     onSaveHistory('Age', details, result);
     setSaved(true);
     triggerVibration('success');
+    showNotification({
+      id: 'age-save',
+      message: 'Saved to history',
+      type: 'success',
+      duration: 2000,
+    });
     setTimeout(() => setSaved(false), 2000);
   };
 

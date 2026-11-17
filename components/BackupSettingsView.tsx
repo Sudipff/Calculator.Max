@@ -12,6 +12,7 @@ import {
 } from '@/lib/backupPermissions';
 import { flushOfflineCalculationsQueue } from '@/lib/historyStorage';
 import { flushOfflineSyncQueue } from '@/lib/notesTasksStorage';
+import { showNotification } from '@/lib/notifications';
 
 interface BackupSettingsViewProps {
   currentUser: any;
@@ -58,7 +59,6 @@ export default function BackupSettingsView({
   const [permissions, setPermissions] = useState<BackupPermissions>(() =>
     getBackupPermissions(userId)
   );
-  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -95,7 +95,12 @@ export default function BackupSettingsView({
     };
 
     setPermissions(nextPerms);
-    setIsSaving(true);
+    showNotification({
+      id: 'backup-prefs',
+      message: 'Saving backup preferences...',
+      type: 'sync',
+      duration: 0,
+    });
     try {
       await updateBackupPermissionsInCloud(nextPerms, userId);
       if (nextValue && userId) {
@@ -105,8 +110,19 @@ export default function BackupSettingsView({
           void flushOfflineSyncQueue(userId);
         }
       }
-    } finally {
-      setIsSaving(false);
+      showNotification({
+        id: 'backup-prefs',
+        message: 'Backup preferences saved',
+        type: 'success',
+        duration: 1800,
+      });
+    } catch {
+      showNotification({
+        id: 'backup-prefs',
+        message: 'Saved backup preferences locally',
+        type: 'info',
+        duration: 2000,
+      });
     }
   };
 
@@ -135,12 +151,6 @@ export default function BackupSettingsView({
             Backup Settings
           </h2>
         </div>
-
-        {isSaving && (
-          <span className="text-[11px] font-semibold text-emerald-600 shrink-0">
-            Saving...
-          </span>
-        )}
       </div>
 
       {/* Independent Backup Permission Toggle Cards (Matching Profile Settings Toggle Design) */}
