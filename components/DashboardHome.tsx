@@ -251,16 +251,14 @@ export default function DashboardHome({
                       key={card.id}
                       type="button"
                       data-dashboard-card="true"
-                      initial={{ opacity: 0, y: 10, scale: 0.96 }}
+                      initial={false}
                       animate={{
-                        opacity: 1,
-                        y: 0,
                         scale: isLaunching ? 1.06 : 1,
                       }}
                       transition={
                         isLaunching
                           ? { type: 'spring', stiffness: 520, damping: 24 }
-                          : { duration: 0.22, delay: index * 0.03, ease: [0.22, 1, 0.36, 1] }
+                          : { duration: 0.16, ease: [0.22, 1, 0.36, 1] }
                       }
                       whileHover={{ y: -3, scale: 1.02 }}
                       whileTap={{ scale: 0.93 }}
@@ -312,16 +310,14 @@ export default function DashboardHome({
                       key={card.id}
                       type="button"
                       data-dashboard-card="true"
-                      initial={{ opacity: 0, y: 10, scale: 0.96 }}
+                      initial={false}
                       animate={{
-                        opacity: 1,
-                        y: 0,
                         scale: isLaunching ? 1.06 : 1,
                       }}
                       transition={
                         isLaunching
                           ? { type: 'spring', stiffness: 520, damping: 24 }
-                          : { duration: 0.22, delay: 0.08 + index * 0.03, ease: [0.22, 1, 0.36, 1] }
+                          : { duration: 0.16, ease: [0.22, 1, 0.36, 1] }
                       }
                       whileHover={{ y: -3, scale: 1.02 }}
                       whileTap={{ scale: 0.93 }}
@@ -363,10 +359,7 @@ export default function DashboardHome({
 
           {/* Section 3: NOTES MANAGER (Strictly Contained Entry — Individual Notes Live Inside Notes Manager View) */}
           {(showMyNotesCard || showTasksCard) && (
-            <motion.section
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.24, delay: 0.16, ease: [0.22, 1, 0.36, 1] }}
+            <section
               aria-labelledby="section-notes-manager"
               className="w-full max-w-full overflow-hidden rounded-2xl bg-white/80 border border-slate-200/80 shadow-[0_2px_12px_rgba(15,23,42,0.03)] p-3.5 sm:p-4 space-y-3"
             >
@@ -440,7 +433,7 @@ export default function DashboardHome({
                   </motion.button>
                 )}
               </div>
-            </motion.section>
+            </section>
           )}
         </>
       )}

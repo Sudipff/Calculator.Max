@@ -1132,7 +1132,7 @@ export default function HistoryView({
 
       {/* Empty States or Chronological Date-Grouped Cards */}
       {history.length === 0 && !transferringState ? (
-        <div className="bg-white border border-slate-200/80 rounded-3xl p-8 sm:p-10 text-center shadow-xs">
+        <div className="min-h-[360px] flex flex-col items-center justify-center bg-white border border-slate-200/80 rounded-3xl p-8 sm:p-10 text-center shadow-xs">
           <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-3 text-slate-400 border border-slate-100">
             <Clock className="w-6 h-6" />
           </div>
@@ -1142,7 +1142,7 @@ export default function HistoryView({
           </p>
         </div>
       ) : filteredHistory.length === 0 && !transferringState ? (
-        <div className="bg-white border border-slate-200/80 rounded-3xl p-8 text-center shadow-xs space-y-2">
+        <div className="min-h-[360px] flex flex-col items-center justify-center bg-white border border-slate-200/80 rounded-3xl p-8 text-center shadow-xs space-y-2">
           <p className="text-sm font-bold text-slate-700">
             {searchQuery
               ? `No calculations matching "${searchQuery}"`
@@ -1161,7 +1161,7 @@ export default function HistoryView({
         </div>
       ) : (
         <div className="space-y-6">
-          <AnimatePresence mode="popLayout">
+          <AnimatePresence mode="popLayout" initial={false}>
             {groupedHistory.map((group) => (
               <motion.section
                 key={group.key}
@@ -1176,7 +1176,7 @@ export default function HistoryView({
                 </h3>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  <AnimatePresence mode="popLayout">
+                  <AnimatePresence mode="popLayout" initial={false}>
                     {group.items.map(({ item, displayTime }) => {
                       const visual = getCategoryVisual(item.type);
                       const IconComponent = visual.Icon;
@@ -1192,10 +1192,10 @@ export default function HistoryView({
                         <motion.article
                           key={item.id}
                           layout="position"
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
                           exit={{ opacity: 0, scale: 0.9, x: 28 }}
-                          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                       onTouchStart={(e) =>
                         handleStartLongPress(item.id, e.touches[0]?.clientX, e.touches[0]?.clientY)
                       }

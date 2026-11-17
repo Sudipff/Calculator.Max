@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Pin,
@@ -15,7 +15,6 @@ import {
   X,
   Clock,
   AlertTriangle,
-  RotateCcw,
   RotateCw,
   StickyNote,
   Check,
@@ -280,10 +279,16 @@ export default function NotesView({
     }
   }, [closeEditorSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load notes on mount or user change & subscribe to background offline sync completion
+  // Synchronously seed local notes before first paint so switching to Notes never flashes a collapsed loader
+  useLayoutEffect(() => {
+    const localNotes = getLocalNotes(currentUser?.id);
+    setNotes(localNotes);
+    setLoading(false);
+  }, [currentUser?.id]);
+
+  // Background-sync notes on mount or user change & subscribe to offline sync updates
   useEffect(() => {
     let isSubscribed = true;
-    setLoading(true);
     fetchNotes(currentUser?.id).then((data) => {
       if (isSubscribed) {
         setNotes(data);
@@ -953,10 +958,10 @@ export default function NotesView({
         </div>
 
         {/* Interactive Filter Pills: All Notes, Pinned, + Labels with right-side scroll indicator icon */}
-        <div className="relative flex items-center min-w-0">
+        <div className="relative flex items-center min-w-0 min-h-[34px]">
           <div
             ref={filterBarScrollRef}
-            className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pr-9 scrollbar-none"
+            className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pr-9 scrollbar-none min-h-[34px]"
           >
             <button
               type="button"
@@ -1089,12 +1094,27 @@ export default function NotesView({
 
       {/* Compact Multi-Column Notes Grid */}
       {loading ? (
-        <div className="py-12 text-center text-slate-400 text-sm font-semibold flex items-center justify-center gap-2">
-          <RotateCcw className="w-4 h-4 animate-spin text-amber-500" />
-          <span>Loading your notes...</span>
+        <div
+          aria-busy="true"
+          aria-label="Loading notes"
+          className="min-h-[420px] grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3.5 w-full min-w-0 items-start"
+        >
+          {[0, 1, 2, 3].map((slot) => (
+            <div
+              key={slot}
+              className="rounded-2xl p-3 sm:p-3.5 border border-slate-200/70 bg-white/60 min-h-[132px] sm:min-h-[144px] animate-pulse flex flex-col justify-between"
+            >
+              <div className="space-y-2">
+                <div className="h-3.5 w-3/4 rounded-md bg-slate-200/80" />
+                <div className="h-2.5 w-full rounded-md bg-slate-100" />
+                <div className="h-2.5 w-5/6 rounded-md bg-slate-100" />
+              </div>
+              <div className="h-4 w-14 rounded-md bg-slate-200/70 mt-4" />
+            </div>
+          ))}
         </div>
       ) : filteredNotes.length === 0 ? (
-        <div className="py-14 text-center max-w-sm mx-auto space-y-3 bg-white/80 rounded-2xl border border-slate-200/70 p-6">
+        <div className="min-h-[360px] flex flex-col items-center justify-center py-14 text-center max-w-sm mx-auto space-y-3 bg-white/80 rounded-2xl border border-slate-200/70 p-6">
           <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200/60">
             <StickyNote className="w-6 h-6" />
           </div>

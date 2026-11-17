@@ -2493,113 +2493,8 @@ export default function RetailCalc() {
           }}
         />
 
-        {/* Main Header: Rendered only on Home Dashboard; secondary screens have no top back button or excess header bar */}
-        {activeTab === 'home' && (
-          <header className="mobile-edge-header w-full shrink-0 bg-white/90 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_14px_rgba(15,23,42,0.04)] sticky top-0 z-40 transition-colors">
-            <div className="h-14 px-4 sm:px-6 flex justify-between items-center gap-3">
-              {/* Left: App Icon + Calculator Max Title */}
-              <h1 className="m-0 flex items-center min-w-0">
-                <button
-                  type="button"
-                  onClick={() => handleTabChange('home')}
-                  className="flex items-center gap-2.5 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-xl min-w-0"
-                >
-                  <Image
-                    src="/pwa-192x192.png"
-                    alt="Calculator Max"
-                    width={32}
-                    height={32}
-                    className="w-8 h-8 rounded-xl shadow-xs shrink-0"
-                    referrerPolicy="no-referrer"
-                  />
-                  <span className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 whitespace-nowrap leading-none">
-                    Calculator Max
-                  </span>
-                </button>
-              </h1>
-
-              {/* Right: Install App (when available) + Offline Wi-Fi Indicator + Profile Avatar */}
-              <div className="flex items-center gap-1.5 shrink-0">
-                <PWAInstallButton compact />
-                <OfflineWifiIndicator />
-                <motion.button
-                  type="button"
-                  whileTap={{ scale: 0.92 }}
-                  whileHover={{ scale: 1.04 }}
-                  onClick={() => handleTabChange('profile')}
-                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-slate-100/80 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  aria-label="Open Profile & Account Settings"
-                  title={
-                    currentUser
-                      ? `Profile: ${currentUser.user_metadata?.full_name || currentUser.email}`
-                      : 'Profile & Account Settings'
-                  }
-                >
-                  {currentUser?.user_metadata?.avatar_url ? (
-                    <img
-                      src={currentUser.user_metadata.avatar_url}
-                      alt={currentUser.user_metadata?.full_name || 'Profile'}
-                      className="w-9 h-9 rounded-full border border-slate-200 object-cover shadow-xs"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : currentUser ? (
-                    <span className="w-9 h-9 rounded-full bg-slate-900 text-white font-bold text-sm flex items-center justify-center shadow-xs">
-                      {(
-                        (currentUser.user_metadata?.full_name || currentUser.email || 'U')[0] ||
-                        'U'
-                      ).toUpperCase()}
-                    </span>
-                  ) : (
-                    <span className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-xs">
-                      <User className="w-4.5 h-4.5" />
-                    </span>
-                  )}
-                </motion.button>
-              </div>
-            </div>
-
-            {/* Sticky Full-Width Search Bar pinned inside the Main Header on Home Dashboard */}
-            <div className="px-4 sm:px-6 pb-3 pt-0.5">
-              <div className="relative w-full">
-                <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  ref={searchInputRef}
-                  type="search"
-                  value={dashboardSearch}
-                  onChange={(e) => setDashboardSearch(e.target.value)}
-                  placeholder="Search calculators, tools..."
-                  aria-label="Search calculators, tools, and notes"
-                  className="w-full min-h-[44px] bg-slate-50/90 border border-slate-200/80 rounded-2xl pl-11 pr-10 py-2 text-sm font-medium text-slate-900 placeholder:text-slate-400 shadow-[0_1px_6px_rgba(15,23,42,0.03)] focus:bg-white focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
-                />
-                {dashboardSearch && (
-                  <button
-                    type="button"
-                    onClick={() => setDashboardSearch('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                    aria-label="Clear search"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            </div>
-          </header>
-        )}
-
-        {/* Main Content Area */}
-        <main
-          className={`flex-1 flex flex-col relative overflow-x-clip ${
-            activeTab === 'calculator'
-              ? 'p-0 pb-20 sm:px-6 sm:pt-3 sm:pb-24 md:px-8 space-y-0 sm:space-y-4'
-              : activeTab === 'home'
-              ? 'p-0 pb-20'
-              : activeTab === 'notes' || activeTab === 'tasks'
-              ? 'px-3 sm:px-6 md:px-8 pt-0 pb-24'
-              : activeTab === 'history'
-              ? 'px-3 sm:px-6 md:px-8 pt-0 pb-24'
-              : 'px-3 sm:px-6 md:px-8 pt-2.5 sm:pt-4 pb-24 space-y-3 sm:space-y-5'
-          }`}
-        >
+        {/* Main Content Area (Invariant outer container prevents 116px upward layout jumps during screen transitions) */}
+        <main className="flex-1 flex flex-col relative overflow-x-clip p-0">
           {/* Pull-to-Refresh Visual Pill Indicator (Scoped strictly to the active view) */}
           {(pullDistance > 8 || isPullRefreshing || pullRefreshNotice) && !isNoteFullScreen && (
             <div
@@ -2676,25 +2571,118 @@ export default function RetailCalc() {
               animate="center"
               exit="exit"
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-              className={`w-full flex-1 flex flex-col ${
-                activeTab === 'calculator' ||
-                activeTab === 'home' ||
-                activeTab === 'history' ||
-                activeTab === 'notes' ||
-                activeTab === 'tasks'
-                  ? 'space-y-0'
-                  : 'space-y-3 sm:space-y-5'
+              className={`w-full min-h-[100dvh] flex-1 flex flex-col ${
+                activeTab === 'calculator'
+                  ? 'p-0 pb-20 sm:px-6 sm:pt-3 sm:pb-24 md:px-8 space-y-0 sm:space-y-4'
+                  : activeTab === 'home'
+                  ? 'p-0 pb-20 space-y-0'
+                  : activeTab === 'notes' || activeTab === 'tasks' || activeTab === 'history'
+                  ? 'px-3 sm:px-6 md:px-8 pt-0 pb-24 space-y-0'
+                  : 'px-3 sm:px-6 md:px-8 pt-2.5 sm:pt-4 pb-24 space-y-3 sm:space-y-5'
               }`}
             >
               {/* TAB: CALCULATOR MAX HOME DASHBOARD */}
               {activeTab === 'home' && (
-                <DashboardHome
-                  searchQuery={dashboardSearch}
-                  onSearchChange={setDashboardSearch}
-                  onSelectTool={(toolTab) => handleTabChange(toolTab)}
-                  notes={dashboardNotes}
-                  tasksCount={dashboardTasksCount}
-                />
+                <>
+                  {/* Main Header scoped inside Home tab so navigating away never snaps <main> upward */}
+                  <header className="mobile-edge-header w-full shrink-0 bg-white/90 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_14px_rgba(15,23,42,0.04)] sticky top-0 z-40 transition-colors">
+                    <div className="h-14 px-4 sm:px-6 flex justify-between items-center gap-3">
+                      {/* Left: App Icon + Calculator Max Title */}
+                      <h1 className="m-0 flex items-center min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => handleTabChange('home')}
+                          className="flex items-center gap-2.5 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-xl min-w-0"
+                        >
+                          <Image
+                            src="/pwa-192x192.png"
+                            alt="Calculator Max"
+                            width={32}
+                            height={32}
+                            className="w-8 h-8 rounded-xl shadow-xs shrink-0"
+                            referrerPolicy="no-referrer"
+                          />
+                          <span className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 whitespace-nowrap leading-none">
+                            Calculator Max
+                          </span>
+                        </button>
+                      </h1>
+
+                      {/* Right: Install App (when available) + Offline Wi-Fi Indicator + Profile Avatar */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <PWAInstallButton compact />
+                        <OfflineWifiIndicator />
+                        <motion.button
+                          type="button"
+                          whileTap={{ scale: 0.92 }}
+                          whileHover={{ scale: 1.04 }}
+                          onClick={() => handleTabChange('profile')}
+                          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-slate-100/80 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                          aria-label="Open Profile & Account Settings"
+                          title={
+                            currentUser
+                              ? `Profile: ${currentUser.user_metadata?.full_name || currentUser.email}`
+                              : 'Profile & Account Settings'
+                          }
+                        >
+                          {currentUser?.user_metadata?.avatar_url ? (
+                            <img
+                              src={currentUser.user_metadata.avatar_url}
+                              alt={currentUser.user_metadata?.full_name || 'Profile'}
+                              className="w-9 h-9 rounded-full border border-slate-200 object-cover shadow-xs"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : currentUser ? (
+                            <span className="w-9 h-9 rounded-full bg-slate-900 text-white font-bold text-sm flex items-center justify-center shadow-xs">
+                              {(
+                                (currentUser.user_metadata?.full_name || currentUser.email || 'U')[0] ||
+                                'U'
+                              ).toUpperCase()}
+                            </span>
+                          ) : (
+                            <span className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-xs">
+                              <User className="w-4.5 h-4.5" />
+                            </span>
+                          )}
+                        </motion.button>
+                      </div>
+                    </div>
+
+                    {/* Sticky Full-Width Search Bar pinned inside the Main Header on Home Dashboard */}
+                    <div className="px-4 sm:px-6 pb-3 pt-0.5">
+                      <div className="relative w-full">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          ref={searchInputRef}
+                          type="search"
+                          value={dashboardSearch}
+                          onChange={(e) => setDashboardSearch(e.target.value)}
+                          placeholder="Search calculators, tools..."
+                          aria-label="Search calculators, tools, and notes"
+                          className="w-full min-h-[44px] bg-slate-50/90 border border-slate-200/80 rounded-2xl pl-11 pr-10 py-2 text-sm font-medium text-slate-900 placeholder:text-slate-400 shadow-[0_1px_6px_rgba(15,23,42,0.03)] focus:bg-white focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
+                        />
+                        {dashboardSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setDashboardSearch('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                            aria-label="Clear search"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </header>
+
+                  <DashboardHome
+                    searchQuery={dashboardSearch}
+                    onSearchChange={setDashboardSearch}
+                    onSelectTool={(toolTab) => handleTabChange(toolTab)}
+                    notes={dashboardNotes}
+                    tasksCount={dashboardTasksCount}
+                  />
+                </>
               )}
 
               {/* TAB: AGE CALCULATOR */}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   CheckCircle2,
@@ -303,10 +303,21 @@ export default function TasksView({
     }
   }, [closeEditorSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch lists & tasks & subscribe to automatic offline-to-cloud sync updates
+  // Synchronously seed local task lists & tasks before first paint so switching to Tasks never flashes a collapsed loader
+  useLayoutEffect(() => {
+    const localLists = getLocalTaskLists(currentUser?.id);
+    const localTasks = getLocalTasks(currentUser?.id);
+    setTaskLists(localLists);
+    if (localLists.length > 0 && !localLists.some((l) => l.id === activeListId)) {
+      setActiveListId(localLists[0].id);
+    }
+    setTasks(localTasks);
+    setLoading(false);
+  }, [currentUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Background-sync lists & tasks & subscribe to automatic offline-to-cloud sync updates
   useEffect(() => {
     let isSubscribed = true;
-    setLoading(true);
 
     Promise.all([fetchTaskLists(currentUser?.id), fetchTasks(currentUser?.id)]).then(
       ([listsData, tasksData]) => {
@@ -962,43 +973,6 @@ export default function TasksView({
 
   return (
     <div className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-4 pb-6">
-      {/* Active In-App Reminder Alert Banner */}
-      {activeAlert && (
-        <div className="mt-2 bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-3.5 rounded-2xl shadow-lg flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
-              <Bell className="w-4 h-4 text-white" />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-blue-100">
-                Reminder · {activeAlert.due}
-              </div>
-              <div className="text-xs sm:text-sm font-extrabold text-white truncate">{activeAlert.title}</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                handleToggleComplete(activeAlert.id);
-                setActiveAlert(null);
-              }}
-              className="px-3 py-1.5 bg-white text-blue-700 font-bold text-xs rounded-xl hover:bg-blue-50 transition-colors cursor-pointer"
-            >
-              Done
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveAlert(null)}
-              className="p-1.5 hover:bg-white/20 rounded-lg text-white/80 hover:text-white cursor-pointer"
-              aria-label="Dismiss reminder"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Sticky Header: Back + Title + Profile Avatar, Search Bar + Three-Dot Menu (with Alert Toggle), Filter Chips, and List Tabs */}
       <div
         data-sticky-secondary-header="tasks"
@@ -1182,7 +1156,7 @@ export default function TasksView({
         </div>
 
         {/* Interactive Status & Priority Filter Bar: All, Active, Completed, Priority */}
-        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 scrollbar-none">
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 scrollbar-none min-h-[34px]">
           {(
             [
               { id: 'all', label: 'All' },
@@ -1207,10 +1181,10 @@ export default function TasksView({
         </div>
 
         {/* Compact Task List Tabs Strip (Preserves custom list management) with right-side scroll indicator icon */}
-        <div className="relative flex items-center min-w-0">
+        <div className="relative flex items-center min-w-0 min-h-[34px]">
           <div
             ref={listStripScrollRef}
-            className="flex items-center gap-1.5 overflow-x-auto pr-9 scrollbar-none"
+            className="flex items-center gap-1.5 overflow-x-auto pr-9 scrollbar-none min-h-[34px]"
           >
             {taskLists.map((list) => (
               <div
@@ -1325,14 +1299,65 @@ export default function TasksView({
         )}
       </div>
 
+      {/* Active In-App Reminder Alert Banner (placed below sticky header so top header never shifts) */}
+      {activeAlert && (
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-3.5 rounded-2xl shadow-lg flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+              <Bell className="w-4 h-4 text-white" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-blue-100">
+                Reminder · {activeAlert.due}
+              </div>
+              <div className="text-xs sm:text-sm font-extrabold text-white truncate">{activeAlert.title}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                handleToggleComplete(activeAlert.id);
+                setActiveAlert(null);
+              }}
+              className="px-3 py-1.5 bg-white text-blue-700 font-bold text-xs rounded-xl hover:bg-blue-50 transition-colors cursor-pointer"
+            >
+              Done
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveAlert(null)}
+              className="p-1.5 hover:bg-white/20 rounded-lg text-white/80 hover:text-white cursor-pointer"
+              aria-label="Dismiss reminder"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Compact Multi-Column Task Grid */}
       {loading ? (
-        <div className="py-12 text-center text-slate-400 text-sm font-semibold flex items-center justify-center gap-2">
-          <RotateCw className="w-4 h-4 animate-spin text-blue-500" />
-          <span>Loading your tasks...</span>
+        <div
+          aria-busy="true"
+          aria-label="Loading tasks"
+          className="min-h-[420px] grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3.5 w-full min-w-0 items-start"
+        >
+          {[0, 1, 2, 3].map((slot) => (
+            <div
+              key={slot}
+              className="rounded-2xl p-3 sm:p-3.5 border border-slate-200/70 bg-white/60 min-h-[124px] sm:min-h-[136px] animate-pulse flex flex-col justify-between"
+            >
+              <div className="space-y-2">
+                <div className="h-3.5 w-3/4 rounded-md bg-slate-200/80" />
+                <div className="h-2.5 w-full rounded-md bg-slate-100" />
+              </div>
+              <div className="h-4 w-16 rounded-md bg-slate-200/70 mt-4" />
+            </div>
+          ))}
         </div>
       ) : filteredTasks.length === 0 ? (
-        <div className="py-14 text-center max-w-sm mx-auto space-y-3 bg-white/80 rounded-2xl border border-slate-200/70 p-6">
+        <div className="min-h-[360px] flex flex-col items-center justify-center py-14 text-center max-w-sm mx-auto space-y-3 bg-white/80 rounded-2xl border border-slate-200/70 p-6">
           <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto border border-blue-100">
             <ListTodo className="w-6 h-6" />
           </div>
