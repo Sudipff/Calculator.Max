@@ -30,9 +30,11 @@ import {
   ChevronRight,
   CheckSquare,
   StickyNote,
+  Share2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { HistoryItem, parseSavedAmountFromText } from '../lib/historyStorage';
+import { formatHistoryItemsForShare, shareTextContent } from '../lib/shareUtils';
 import {
   getLocalNotes,
   saveLocalNotes,
@@ -293,8 +295,8 @@ export default function HistoryView({
   } | null>(null);
   const [toastNotice, setToastNotice] = useState<{
     id: number;
-    message: 'Saved Note' | 'Saved Task';
-    kind: 'note' | 'task';
+    message: string;
+    kind: 'note' | 'task' | 'share';
   } | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -306,12 +308,40 @@ export default function HistoryView({
     };
   }, []);
 
-  const showActionToast = (message: 'Saved Note' | 'Saved Task', kind: 'note' | 'task') => {
+  const showActionToast = (message: string, kind: 'note' | 'task' | 'share') => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToastNotice({ id: Date.now(), message, kind });
     toastTimerRef.current = setTimeout(() => {
       setToastNotice(null);
     }, 1800);
+  };
+
+  const handleShareHistoryItems = async (items: HistoryItem[]) => {
+    if (items.length === 0) return;
+    const payload = formatHistoryItemsForShare(
+      items,
+      (item) => {
+        const visual = getCategoryVisual(item.type);
+        const cleanResult = formatCleanResult(item.result);
+        const savings =
+          item.savedAmount !== undefined
+            ? item.savedAmount
+            : parseSavedAmountFromText(item.type, item.details, item.result);
+        const dt = item.createdAt ? new Date(item.createdAt) : null;
+        const displayTime =
+          dt && !isNaN(dt.getTime())
+            ? dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : item.timestamp || '';
+        return { label: visual.label, cleanResult, displayTime, savings };
+      },
+      currency
+    );
+    const outcome = await shareTextContent(payload);
+    if (outcome === 'shared') {
+      showActionToast('Shared', 'share');
+    } else if (outcome === 'copied') {
+      showActionToast('Copied to share', 'share');
+    }
   };
 
   const handleAddHistoryToNote = async (
@@ -731,12 +761,7 @@ export default function HistoryView({
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-      className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-4 pb-12"
-    >
+    <div className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-4 pb-12">
       {/* Sticky Top Header: Title + Profile Avatar, Shortened Search Bar + 3-Dot Menu, and Category Filter Chips */}
       <div
         data-sticky-secondary-header="history"
@@ -823,7 +848,11 @@ export default function HistoryView({
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/95 text-white text-[11px] font-bold shadow-lg border border-slate-700/80 whitespace-nowrap">
                   <Check
                     className={`w-3 h-3 stroke-[2.75] shrink-0 ${
-                      toastNotice.kind === 'note' ? 'text-emerald-400' : 'text-indigo-400'
+                      toastNotice.kind === 'note'
+                        ? 'text-emerald-400'
+                        : toastNotice.kind === 'share'
+                        ? 'text-sky-400'
+                        : 'text-indigo-400'
                     }`}
                   />
                   <span>{toastNotice.message}</span>
@@ -834,7 +863,9 @@ export default function HistoryView({
           <div className="relative flex-1 min-w-0">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
-              type="search"
+              type="text"
+              inputMode="search"
+              enterKeyHint="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search calculations..."
@@ -870,11 +901,11 @@ export default function HistoryView({
             <AnimatePresence>
               {isHeaderMenuOpen && (
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                  initial={{ opacity: 0, scale: 0.9, y: -6 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                  transition={{ duration: 0.14 }}
-                  className="absolute right-0 top-full mt-2 w-52 bg-white rounded-2xl border border-slate-200 shadow-xl py-1.5 z-40"
+                  exit={{ opacity: 0, scale: 0.9, y: -6 }}
+                  transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                  className="absolute right-0 top-full mt-2 w-52 bg-white rounded-2xl border border-slate-200 shadow-xl py-1.5 z-40 origin-top-right"
                 >
                   <button
                     type="button"
@@ -1021,66 +1052,83 @@ export default function HistoryView({
             <ChevronRight className="w-3.5 h-3.5" />
           </button>
         </div>
+
+        {/* Pinned Batch Selection Action Bar inside Sticky Header */}
+        {selectedItemIds.length > 0 && (
+          <div
+            data-multi-select-bar="history"
+            className="bg-slate-900 text-white p-2.5 sm:px-3.5 sm:py-2.5 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-2 border border-slate-700"
+          >
+            <div className="flex items-center gap-2">
+              <span className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-xs font-black">
+                {selectedItemIds.length}
+              </span>
+              <span className="text-xs font-bold">
+                {selectedItemIds.length} {selectedItemIds.length === 1 ? 'record' : 'records'} selected
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  const allIds = filteredHistory.map((item) => item.id);
+                  setSelectedItemIds(
+                    selectedItemIds.length === allIds.length ? [] : allIds
+                  );
+                }}
+                className="px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                {selectedItemIds.length === filteredHistory.length ? 'Deselect All' : 'Select All'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const selectedItems = history.filter((item) =>
+                    selectedItemIds.includes(item.id)
+                  );
+                  void handleShareHistoryItems(selectedItems);
+                }}
+                className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Share</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const selectedItems = history.filter((item) =>
+                    selectedItemIds.includes(item.id)
+                  );
+                  if (selectedItems.length === 0) return;
+                  if (onRequestDeleteBatch) {
+                    onRequestDeleteBatch(selectedItems);
+                  } else if (selectedItems.length === 1) {
+                    onRequestDeleteItem(selectedItems[0]);
+                  }
+                  setSelectedItemIds([]);
+                }}
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete ({selectedItemIds.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCancelSelection}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+                title="Cancel selection"
+                aria-label="Cancel selection"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
-
-      {/* Sticky Batch Selection Action Bar when items are selected via Long-Press */}
-      {selectedItemIds.length > 0 && (
-        <div className="sticky top-[134px] z-20 bg-slate-900 text-white p-3 sm:p-4 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 border border-slate-700">
-          <div className="flex items-center gap-2.5">
-            <span className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-xs font-black">
-              {selectedItemIds.length}
-            </span>
-            <span className="text-xs font-bold">
-              {selectedItemIds.length} {selectedItemIds.length === 1 ? 'record' : 'records'} selected
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                const allIds = filteredHistory.map((item) => item.id);
-                setSelectedItemIds(
-                  selectedItemIds.length === allIds.length ? [] : allIds
-                );
-              }}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-colors cursor-pointer"
-            >
-              {selectedItemIds.length === filteredHistory.length ? 'Deselect All' : 'Select All'}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                const selectedItems = history.filter((item) =>
-                  selectedItemIds.includes(item.id)
-                );
-                if (selectedItems.length === 0) return;
-                if (onRequestDeleteBatch) {
-                  onRequestDeleteBatch(selectedItems);
-                } else if (selectedItems.length === 1) {
-                  onRequestDeleteItem(selectedItems[0]);
-                }
-                setSelectedItemIds([]);
-              }}
-              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete ({selectedItemIds.length})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleCancelSelection}
-              className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
-              title="Cancel selection"
-              aria-label="Cancel selection"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Empty States or Chronological Date-Grouped Cards */}
       {history.length === 0 && !transferringState ? (
@@ -1233,11 +1281,11 @@ export default function HistoryView({
                           <AnimatePresence>
                             {isMenuOpen && (
                               <motion.div
-                                initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                                initial={{ opacity: 0, scale: 0.9, y: -6 }}
                                 animate={{ opacity: 1, scale: 1, y: 0 }}
-                                exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                                transition={{ duration: 0.12 }}
-                                className="absolute right-0 top-full mt-1 w-48 bg-white rounded-2xl border border-slate-200 shadow-xl py-1.5 z-30"
+                                exit={{ opacity: 0, scale: 0.9, y: -6 }}
+                                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                                className="absolute right-0 top-full mt-1 w-48 bg-white rounded-2xl border border-slate-200 shadow-xl py-1.5 z-30 origin-top-right"
                               >
                                 <button
                                   type="button"
@@ -1326,6 +1374,18 @@ export default function HistoryView({
                                 >
                                   <FileText className="w-3.5 h-3.5 text-blue-600" />
                                   <span>Download PDF</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenCardMenuId(null);
+                                    void handleShareHistoryItems([item]);
+                                  }}
+                                  className="w-full px-3.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-sky-50/70 flex items-center gap-2 cursor-pointer"
+                                >
+                                  <Share2 className="w-3.5 h-3.5 text-sky-600" />
+                                  <span>Share</span>
                                 </button>
 
                                 <div className="my-1 border-t border-slate-100" />
@@ -1447,6 +1507,6 @@ export default function HistoryView({
           {filteredHistory.length !== history.length ? ` of ${history.length}` : ''}
         </p>
       </div>
-    </motion.div>
+    </div>
   );
 }

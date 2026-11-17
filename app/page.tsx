@@ -106,6 +106,8 @@ const TAB_ORDER: Record<ActiveTab, number> = {
   profile: 13,
 };
 
+const BOTTOM_NAV_TABS = new Set<ActiveTab>(['home', 'history', 'notes', 'tasks']);
+
 const CURRENCIES = [
   { symbol: '৳', code: 'BDT', name: 'Bangladesh Taka', country: 'Bangladesh', flag: '🇧🇩' },
   { symbol: '₹', code: 'INR', name: 'Indian Rupee', country: 'India', flag: '🇮🇳' },
@@ -329,6 +331,7 @@ export default function RetailCalc() {
   const [isClient, setIsClient] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [direction, setDirection] = useState<number>(1);
+  const [tabTransitionMode, setTabTransitionMode] = useState<'slide' | 'zoom'>('slide');
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [profileCloseSignal, setProfileCloseSignal] = useState(0);
   const [noteEditorCloseSignal, setNoteEditorCloseSignal] = useState(0);
@@ -802,6 +805,7 @@ export default function RetailCalc() {
       const currentIdx = TAB_ORDER[activeTab] ?? 0;
       const newIdx = TAB_ORDER[newTab] ?? 0;
       setDirection(newIdx > currentIdx ? 1 : -1);
+      setTabTransitionMode(activeTab === 'home' && !BOTTOM_NAV_TABS.has(newTab) ? 'zoom' : 'slide');
       triggerVibration('click');
 
       if (newTab !== 'notes' && newTab !== 'tasks' && newTab !== 'profile') {
@@ -862,6 +866,7 @@ export default function RetailCalc() {
         navStackRef.current = ['home'];
       }
       setDirection(-1);
+      setTabTransitionMode('slide');
       setActiveTab(targetTab);
       if (typeof window !== 'undefined') {
         window.scrollTo({ top: 0, behavior: 'auto' });
@@ -2583,13 +2588,13 @@ export default function RetailCalc() {
 
         {/* Main Content Area */}
         <main
-          className={`flex-1 flex flex-col relative ${
+          className={`flex-1 flex flex-col relative overflow-x-clip ${
             activeTab === 'calculator'
               ? 'p-0 pb-20 sm:px-6 sm:pt-3 sm:pb-24 md:px-8 space-y-0 sm:space-y-4'
               : activeTab === 'home'
               ? 'p-0 pb-20'
               : activeTab === 'notes' || activeTab === 'tasks'
-              ? 'px-3 sm:px-6 md:px-8 pt-0 pb-6'
+              ? 'px-3 sm:px-6 md:px-8 pt-0 pb-24'
               : activeTab === 'history'
               ? 'px-3 sm:px-6 md:px-8 pt-0 pb-24'
               : 'px-3 sm:px-6 md:px-8 pt-2.5 sm:pt-4 pb-24 space-y-3 sm:space-y-5'
@@ -2629,35 +2634,48 @@ export default function RetailCalc() {
               </div>
             </div>
           )}
-          <AnimatePresence mode="wait" initial={false} custom={direction}>
+          <AnimatePresence
+            mode="popLayout"
+            initial={false}
+            custom={{ dir: direction, mode: tabTransitionMode }}
+          >
             <motion.div
               key={activeTab}
-              custom={direction}
+              custom={{ dir: direction, mode: tabTransitionMode }}
               variants={{
-                enter: (dir: number) => ({
-                  opacity: 0,
-                  x: dir > 0 ? 28 : -28,
-                  y: 6,
-                  scale: 0.99,
-                }),
+                enter: ({ dir, mode }: { dir: number; mode: 'slide' | 'zoom' }) =>
+                  mode === 'zoom'
+                    ? {
+                        opacity: 0,
+                        scale: 0.92,
+                        y: 14,
+                      }
+                    : {
+                        opacity: 0,
+                        x: dir > 0 ? 56 : -56,
+                      },
                 center: {
                   opacity: 1,
                   x: 0,
                   y: 0,
                   scale: 1,
                 },
-                exit: (dir: number) => ({
-                  opacity: 0,
-                  x: dir > 0 ? -20 : 20,
-                  y: -4,
-                  scale: 0.99,
-                }),
+                exit: ({ dir, mode }: { dir: number; mode: 'slide' | 'zoom' }) =>
+                  mode === 'zoom'
+                    ? {
+                        opacity: 0,
+                        scale: 0.96,
+                        y: 6,
+                      }
+                    : {
+                        opacity: 0,
+                        x: dir > 0 ? -40 : 40,
+                      },
               }}
               initial="enter"
               animate="center"
               exit="exit"
-              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-              style={{ willChange: 'transform, opacity' }}
+              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
               className={`w-full flex-1 flex flex-col ${
                 activeTab === 'calculator' ||
                 activeTab === 'home' ||
@@ -2939,8 +2957,8 @@ export default function RetailCalc() {
           </AnimatePresence>
         </main>
 
-        {/* Bottom Navigation Bar: Home, History, Search, Notes, Tasks (hidden across Notes and Tasks views for minimalist interface) */}
-        {!isNoteFullScreen && activeTab !== 'notes' && activeTab !== 'tasks' && (
+        {/* Bottom Navigation Bar: Home, History, Search, Notes, Tasks (hidden when viewing/editing an individual note or full-screen detail) */}
+        {!isNoteFullScreen && (
           <nav
             aria-label="Primary bottom navigation"
             className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/80 shadow-[0_-4px_20px_rgba(15,23,42,0.04)] pb-[env(safe-area-inset-bottom)] transition-colors"

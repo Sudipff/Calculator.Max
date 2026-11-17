@@ -596,31 +596,46 @@ export default function ProfileSettingsView({
   const activeCurrencyObj =
     currencies.find((c) => c.symbol === currency) || currencies[0];
 
-  if (showSubscriptionView) {
-    return (
-      <SubscriptionView
-        currentUser={currentUser}
-        currency={currency}
-        currencies={currencies}
-        onCurrencyChange={onCurrencyChange}
-        onClose={() => {
-          setShowBackupSettingsView(false);
-          setShowSubscriptionView(false);
-        }}
-        onOpenAuthModal={onOpenAuthModal}
-        onStorageSynced={(_used, limit, planId) => {
-          setActivePlanLabel(planId);
-          setActiveLimitBytes(limit);
-        }}
-        onBackupViewChange={(isOpen) => setShowBackupSettingsView(isOpen)}
-        closeBackupSignal={closeBackupSignal}
-        refreshSignal={refreshSignal}
-      />
-    );
-  }
-
   return (
-    <div className="w-full max-w-2xl mx-auto px-3 sm:px-4 pb-8 space-y-5">
+    <AnimatePresence mode="wait" initial={false}>
+      {showSubscriptionView ? (
+        <motion.div
+          key="profile-subscription-subview"
+          initial={{ opacity: 0, x: 40 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: 40 }}
+          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+          style={{ willChange: 'transform, opacity' }}
+        >
+          <SubscriptionView
+            currentUser={currentUser}
+            currency={currency}
+            currencies={currencies}
+            onCurrencyChange={onCurrencyChange}
+            onClose={() => {
+              setShowBackupSettingsView(false);
+              setShowSubscriptionView(false);
+            }}
+            onOpenAuthModal={onOpenAuthModal}
+            onStorageSynced={(_used, limit, planId) => {
+              setActivePlanLabel(planId);
+              setActiveLimitBytes(limit);
+            }}
+            onBackupViewChange={(isOpen) => setShowBackupSettingsView(isOpen)}
+            closeBackupSignal={closeBackupSignal}
+            refreshSignal={refreshSignal}
+          />
+        </motion.div>
+      ) : (
+        <motion.div
+          key="profile-main-settings"
+          initial={{ opacity: 0, x: -24 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -24 }}
+          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+          style={{ willChange: 'transform, opacity' }}
+          className="w-full max-w-2xl mx-auto px-3 sm:px-4 pb-8 space-y-5"
+        >
       {/* Top Profile Title & Quick Session Control */}
       <div className="flex items-center justify-between gap-2 pt-1">
         <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-slate-700">
@@ -1457,6 +1472,8 @@ export default function ProfileSettingsView({
           </AnimatePresence>,
           document.body
         )}
-    </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

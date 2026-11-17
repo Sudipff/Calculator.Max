@@ -490,28 +490,37 @@ export default function SubscriptionView({
   const activePlanSpec =
     SUBSCRIPTION_PLANS.find((p) => p.id === activePlanId) || SUBSCRIPTION_PLANS[0];
 
-  if (showBackupSettings) {
-    return (
-      <BackupSettingsView
-        currentUser={currentUser}
-        onBack={() => {
-          setShowBackupSettings(false);
-          if (typeof window !== 'undefined') {
-            window.scrollTo({ top: 0, behavior: 'auto' });
-          }
-        }}
-      />
-    );
-  }
-
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 10 }}
-      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-      className="w-full max-w-3xl mx-auto px-2 sm:px-4 pb-10 space-y-5"
-    >
+    <AnimatePresence mode="wait" initial={false}>
+      {showBackupSettings ? (
+        <motion.div
+          key="subscription-backup-subview"
+          initial={{ opacity: 0, x: 40 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: 40 }}
+          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+          style={{ willChange: 'transform, opacity' }}
+        >
+          <BackupSettingsView
+            currentUser={currentUser}
+            onBack={() => {
+              setShowBackupSettings(false);
+              if (typeof window !== 'undefined') {
+                window.scrollTo({ top: 0, behavior: 'auto' });
+              }
+            }}
+          />
+        </motion.div>
+      ) : (
+        <motion.div
+          key="subscription-main-view"
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -20 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          style={{ willChange: 'transform, opacity' }}
+          className="w-full max-w-3xl mx-auto px-2 sm:px-4 pb-10 space-y-5"
+        >
       {/* Top Header Bar: Back Button + "Subscription" Title */}
       <div className="flex items-center justify-between gap-3 pt-1">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -1229,6 +1238,8 @@ export default function SubscriptionView({
           </AnimatePresence>,
           document.body
         )}
-    </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarDays,
   Calculator,
@@ -150,6 +150,27 @@ export default function DashboardHome({
   tasksCount,
 }: DashboardHomeProps) {
   const normalizedQuery = searchQuery.trim().toLowerCase();
+  const [launchingTool, setLaunchingTool] = useState<DashboardTargetTab | null>(null);
+  const launchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (launchTimerRef.current) {
+        clearTimeout(launchTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCardTap = (toolId: DashboardTargetTab) => {
+    if (launchTimerRef.current) {
+      clearTimeout(launchTimerRef.current);
+    }
+    setLaunchingTool(toolId);
+    launchTimerRef.current = setTimeout(() => {
+      setLaunchingTool(null);
+      onSelectTool(toolId);
+    }, 105);
+  };
 
   const filteredCalculators = useMemo(() => {
     if (!normalizedQuery) return ALL_CALCULATORS_CARDS;
@@ -224,22 +245,35 @@ export default function DashboardHome({
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                 {filteredCalculators.map((card, index) => {
                   const Icon = card.icon;
+                  const isLaunching = launchingTool === card.id;
                   return (
                     <motion.button
                       key={card.id}
                       type="button"
                       data-dashboard-card="true"
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.22, delay: index * 0.03, ease: [0.22, 1, 0.36, 1] }}
-                      whileHover={{ y: -3, scale: 1.01 }}
-                      whileTap={{ scale: 0.96 }}
-                      onClick={() => onSelectTool(card.id)}
-                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-colors duration-150 cursor-pointer flex flex-col justify-between min-h-[116px] min-w-0 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg}`}
+                      initial={{ opacity: 0, y: 10, scale: 0.96 }}
+                      animate={{
+                        opacity: 1,
+                        y: 0,
+                        scale: isLaunching ? 1.06 : 1,
+                      }}
+                      transition={
+                        isLaunching
+                          ? { type: 'spring', stiffness: 520, damping: 24 }
+                          : { duration: 0.22, delay: index * 0.03, ease: [0.22, 1, 0.36, 1] }
+                      }
+                      whileHover={{ y: -3, scale: 1.02 }}
+                      whileTap={{ scale: 0.93 }}
+                      onClick={() => handleCardTap(card.id)}
+                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-colors duration-150 cursor-pointer flex flex-col justify-between min-h-[116px] min-w-0 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg} ${
+                        isLaunching ? 'z-10 shadow-lg ring-2 ring-blue-500/40' : ''
+                      }`}
                     >
                       <span className="flex items-center gap-2 mb-2.5">
                         <span
-                          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-3 ${card.iconBg} ${card.iconText}`}
+                          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-3 ${
+                            isLaunching ? 'scale-125' : ''
+                          } ${card.iconBg} ${card.iconText}`}
                         >
                           <Icon className="w-4.5 h-4.5" />
                         </span>
@@ -272,28 +306,43 @@ export default function DashboardHome({
                 {filteredQuickTools.map((card, index) => {
                   const Icon = card.icon;
                   const SecondaryIcon = card.secondaryIcon;
+                  const isLaunching = launchingTool === card.id;
                   return (
                     <motion.button
                       key={card.id}
                       type="button"
                       data-dashboard-card="true"
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.22, delay: 0.08 + index * 0.03, ease: [0.22, 1, 0.36, 1] }}
-                      whileHover={{ y: -3, scale: 1.01 }}
-                      whileTap={{ scale: 0.96 }}
-                      onClick={() => onSelectTool(card.id)}
-                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-colors duration-150 cursor-pointer flex flex-col justify-between min-h-[116px] min-w-0 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg}`}
+                      initial={{ opacity: 0, y: 10, scale: 0.96 }}
+                      animate={{
+                        opacity: 1,
+                        y: 0,
+                        scale: isLaunching ? 1.06 : 1,
+                      }}
+                      transition={
+                        isLaunching
+                          ? { type: 'spring', stiffness: 520, damping: 24 }
+                          : { duration: 0.22, delay: 0.08 + index * 0.03, ease: [0.22, 1, 0.36, 1] }
+                      }
+                      whileHover={{ y: -3, scale: 1.02 }}
+                      whileTap={{ scale: 0.93 }}
+                      onClick={() => handleCardTap(card.id)}
+                      className={`group text-left rounded-2xl p-3.5 sm:p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-colors duration-150 cursor-pointer flex flex-col justify-between min-h-[116px] min-w-0 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${card.cardBg} ${
+                        isLaunching ? 'z-10 shadow-lg ring-2 ring-blue-500/40' : ''
+                      }`}
                     >
                       <span className="flex items-center gap-2 mb-2.5">
                         <span
-                          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-3 ${card.iconBg} ${card.iconText}`}
+                          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-3 ${
+                            isLaunching ? 'scale-125' : ''
+                          } ${card.iconBg} ${card.iconText}`}
                         >
                           <Icon className="w-4.5 h-4.5" />
                         </span>
                         {SecondaryIcon && (
                           <SecondaryIcon
-                            className={`w-4 h-4 shrink-0 transition-transform duration-200 group-hover:scale-110 ${card.secondaryIconClass || ''}`}
+                            className={`w-4 h-4 shrink-0 transition-transform duration-200 group-hover:scale-110 ${
+                              isLaunching ? 'scale-125' : ''
+                            } ${card.secondaryIconClass || ''}`}
                           />
                         )}
                       </span>
@@ -345,10 +394,14 @@ export default function DashboardHome({
                   <motion.button
                     type="button"
                     data-dashboard-card="true"
-                    whileHover={{ y: -2, scale: 1.01 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={() => onSelectTool('notes')}
-                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 sm:p-4 bg-slate-50/90 hover:bg-slate-100/90 border border-slate-200/80 shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors cursor-pointer flex flex-col justify-between min-h-[96px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    animate={{ scale: launchingTool === 'notes' ? 1.05 : 1 }}
+                    transition={{ type: 'spring', stiffness: 520, damping: 24 }}
+                    whileHover={{ y: -2, scale: 1.02 }}
+                    whileTap={{ scale: 0.94 }}
+                    onClick={() => handleCardTap('notes')}
+                    className={`w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 sm:p-4 bg-slate-50/90 hover:bg-slate-100/90 border border-slate-200/80 shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors cursor-pointer flex flex-col justify-between min-h-[96px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                      launchingTool === 'notes' ? 'ring-2 ring-blue-500/40 shadow-md' : ''
+                    }`}
                   >
                     <span className="flex items-center justify-between gap-2 mb-1.5 w-full min-w-0">
                       <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
@@ -366,10 +419,14 @@ export default function DashboardHome({
                   <motion.button
                     type="button"
                     data-dashboard-card="true"
-                    whileHover={{ y: -2, scale: 1.01 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={() => onSelectTool('tasks')}
-                    className="w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 sm:p-4 bg-[#eef2ff] hover:bg-[#e3e9ff] border border-[#d6defe] shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors cursor-pointer flex flex-col justify-between min-h-[96px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    animate={{ scale: launchingTool === 'tasks' ? 1.05 : 1 }}
+                    transition={{ type: 'spring', stiffness: 520, damping: 24 }}
+                    whileHover={{ y: -2, scale: 1.02 }}
+                    whileTap={{ scale: 0.94 }}
+                    onClick={() => handleCardTap('tasks')}
+                    className={`w-full min-w-0 overflow-hidden text-left rounded-2xl p-3.5 sm:p-4 bg-[#eef2ff] hover:bg-[#e3e9ff] border border-[#d6defe] shadow-[0_1px_6px_rgba(15,23,42,0.03)] transition-colors cursor-pointer flex flex-col justify-between min-h-[96px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                      launchingTool === 'tasks' ? 'ring-2 ring-indigo-500/40 shadow-md' : ''
+                    }`}
                   >
                     <span className="flex items-center justify-between gap-2 mb-1.5 w-full min-w-0">
                       <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
