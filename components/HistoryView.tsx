@@ -363,6 +363,7 @@ export default function HistoryView({
       `Recorded: ${displayTime}`,
     ];
 
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
     const newNote: NoteItem = {
       id: 'note-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       userId: uid,
@@ -386,7 +387,8 @@ export default function HistoryView({
         createdAt: item.createdAt || nowIso,
         timestamp: item.timestamp || displayTime,
       },
-      syncStatus: 'unsynced',
+      syncStatus: isOffline || !uid ? 'unsynced' : 'synced',
+      createdOffline: isOffline,
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -422,7 +424,17 @@ export default function HistoryView({
     }, 260);
 
     if (uid) {
-      await Promise.all([removePromise, upsertNoteToSupabase(newNote, uid)]);
+      const [, upsertRes] = await Promise.all([removePromise, upsertNoteToSupabase(newNote, uid)]);
+      if (!upsertRes.success) {
+        const latestNotes = getLocalNotes(uid);
+        saveLocalNotes(
+          latestNotes.map((n) => (n.id === newNote.id ? { ...n, syncStatus: 'unsynced' } : n)),
+          uid
+        );
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('calcmax:notes-tasks-updated'));
+        }
+      }
     }
   };
 
@@ -761,12 +773,6 @@ export default function HistoryView({
 
   const handleMenuRefresh = async () => {
     setIsHeaderMenuOpen(false);
-    showNotification({
-      id: 'history-sync',
-      message: 'Syncing history...',
-      type: 'sync',
-      duration: 0,
-    });
     await onRefreshHistory();
   };
 

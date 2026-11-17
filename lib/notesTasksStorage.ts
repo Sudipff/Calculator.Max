@@ -388,7 +388,7 @@ export async function upsertNoteToSupabase(
   const cached = getLocalNotesRaw(userId);
   if (cached.some((n) => n.id === note.id)) {
     saveLocalNotes(
-      cached.map((n) => (n.id === note.id ? { ...n, syncStatus: 'synced' } : n)),
+      cached.map((n) => (n.id === note.id ? { ...n, syncStatus: 'synced', createdOffline: false } : n)),
       userId
     );
   }
@@ -533,6 +533,7 @@ export async function fetchNotes(userId?: string | null): Promise<NoteItem[]> {
             isEmergency: !!n.is_emergency,
             sourceHistory: resolvedSourceHistory,
             syncStatus: 'synced' as const,
+            createdOffline: false,
             createdAt: n.created_at || new Date().toISOString(),
             updatedAt: n.updated_at || new Date().toISOString(),
           };
@@ -1305,7 +1306,9 @@ export async function flushOfflineSyncQueue(
     if (syncedNoteIds.size > 0) {
       const latestNotes = getLocalNotesRaw(userId);
       saveLocalNotes(
-        latestNotes.map((n) => (syncedNoteIds.has(n.id) ? { ...n, syncStatus: 'synced' } : n)),
+        latestNotes.map((n) =>
+          syncedNoteIds.has(n.id) ? { ...n, syncStatus: 'synced', createdOffline: false } : n
+        ),
         userId
       );
     }

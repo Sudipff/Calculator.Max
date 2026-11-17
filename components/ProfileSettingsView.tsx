@@ -449,12 +449,6 @@ export default function ProfileSettingsView({
       return;
     }
     setIsSyncing(true);
-    showNotification({
-      id: 'cloud-sync',
-      message: 'Syncing with cloud...',
-      type: 'sync',
-      duration: 0,
-    });
     try {
       const queueRes = await flushOfflineSyncQueue(currentUser.id);
       await onSyncHistory();

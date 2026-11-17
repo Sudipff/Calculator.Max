@@ -1432,12 +1432,6 @@ export default function RetailCalc() {
     }
 
     triggerVibration('click');
-    showNotification({
-      id: 'retry-sync',
-      message: 'Syncing calculation...',
-      type: 'sync',
-      duration: 0,
-    });
     setHistory((prev) =>
       prev.map((i) => (i.id === itemToSync.id ? { ...i, syncStatus: 'syncing' } : i))
     );

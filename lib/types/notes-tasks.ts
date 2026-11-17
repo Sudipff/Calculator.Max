@@ -30,6 +30,7 @@ export interface NoteItem {
   isEmergency?: boolean;
   sourceHistory?: SourceHistoryMeta | null;
   syncStatus?: 'synced' | 'unsynced';
+  createdOffline?: boolean;
   createdAt: string;
   updatedAt: string;
 }

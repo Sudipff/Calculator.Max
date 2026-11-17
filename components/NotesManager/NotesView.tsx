@@ -27,6 +27,7 @@ import {
   ChevronRight,
   History,
   Share2,
+  CloudOff,
 } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { NoteItem, NOTE_COLORS, type SourceHistoryMeta } from '@/lib/types/notes-tasks';
@@ -300,9 +301,11 @@ export default function NotesView({
     };
 
     window.addEventListener('calcmax:sync-updated', handleSyncUpdated);
+    window.addEventListener('calcmax:notes-tasks-updated', handleSyncUpdated);
     return () => {
       isSubscribed = false;
       window.removeEventListener('calcmax:sync-updated', handleSyncUpdated);
+      window.removeEventListener('calcmax:notes-tasks-updated', handleSyncUpdated);
     };
   }, [currentUser]);
 
@@ -376,6 +379,7 @@ export default function NotesView({
     }
 
     const nowIso = new Date().toISOString();
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
     const blankDraft: NoteItem = {
       id: 'note-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       userId: currentUser?.id,
@@ -388,7 +392,8 @@ export default function NotesView({
       labels: [],
       reminderAt: null,
       isEmergency: false,
-      syncStatus: currentUser?.id ? 'synced' : 'unsynced',
+      syncStatus: currentUser?.id && !isOffline ? 'synced' : 'unsynced',
+      createdOffline: isOffline,
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -527,7 +532,7 @@ export default function NotesView({
     e?.stopPropagation();
     suppressOfflineSyncNotifications(3000);
     const updated = notes.map((n) =>
-      n.id === id ? { ...n, isPinned: !n.isPinned, syncStatus: 'unsynced' as const, updatedAt: new Date().toISOString() } : n
+      n.id === id ? { ...n, isPinned: !n.isPinned, updatedAt: new Date().toISOString() } : n
     );
     setNotes(updated);
     saveLocalNotes(updated, currentUser?.id);
@@ -543,7 +548,13 @@ export default function NotesView({
     }
     if (target && currentUser?.id) {
       const res = await upsertNoteToSupabase(target, currentUser.id);
-      setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, syncStatus: res.syncStatus } : n)));
+      if (res.success) {
+        setNotes((prev) =>
+          prev.map((n) =>
+            n.id === id ? { ...n, syncStatus: 'synced', createdOffline: false } : n
+          )
+        );
+      }
     }
   };
 
@@ -610,10 +621,35 @@ export default function NotesView({
       return;
     }
 
+    const normalizedTitle =
+      editingNote.title.trim() || (!closeAfter && isBlankDraft ? 'Untitled Note' : editingNote.title.trim());
+    const existingNote = notes.find((n) => n.id === editingNote.id);
+    const isPinOnlyEdit = Boolean(
+      existingNote &&
+        existingNote.title === normalizedTitle &&
+        existingNote.content === editingNote.content &&
+        existingNote.color === editingNote.color &&
+        existingNote.isChecklist === editingNote.isChecklist &&
+        existingNote.reminderAt === editingNote.reminderAt &&
+        Boolean(existingNote.isEmergency) === Boolean(editingNote.isEmergency) &&
+        JSON.stringify(existingNote.checklistItems) === JSON.stringify(editingNote.checklistItems) &&
+        JSON.stringify(existingNote.labels) === JSON.stringify(editingNote.labels)
+    );
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const nextSyncStatus: 'synced' | 'unsynced' = isPinOnlyEdit
+      ? (existingNote?.syncStatus ?? 'synced')
+      : isOffline || !currentUser?.id
+        ? 'unsynced'
+        : (existingNote?.syncStatus ?? 'synced');
+    const nextCreatedOffline = isPinOnlyEdit
+      ? Boolean(existingNote?.createdOffline)
+      : Boolean(existingNote?.createdOffline || isOffline);
+
     const noteToSave: NoteItem = {
       ...editingNote,
-      title: editingNote.title.trim() || (!closeAfter && isBlankDraft ? 'Untitled Note' : editingNote.title.trim()),
-      syncStatus: 'unsynced',
+      title: normalizedTitle,
+      syncStatus: nextSyncStatus,
+      createdOffline: nextCreatedOffline,
       updatedAt: new Date().toISOString(),
     };
 
@@ -646,9 +682,23 @@ export default function NotesView({
 
     if (currentUser?.id) {
       const res = await upsertNoteToSupabase(noteToSave, currentUser.id);
-      setNotes((prev) => prev.map((n) => (n.id === noteToSave.id ? { ...n, syncStatus: res.syncStatus } : n)));
-      if (!closeAfter) {
-        setEditingNote((prev) => (prev && prev.id === noteToSave.id ? { ...prev, syncStatus: res.syncStatus } : prev));
+      if (res.success || !isPinOnlyEdit) {
+        const finalSyncStatus = res.success ? 'synced' : res.syncStatus;
+        const finalCreatedOffline = res.success ? false : nextCreatedOffline;
+        setNotes((prev) =>
+          prev.map((n) =>
+            n.id === noteToSave.id
+              ? { ...n, syncStatus: finalSyncStatus, createdOffline: finalCreatedOffline }
+              : n
+          )
+        );
+        if (!closeAfter) {
+          setEditingNote((prev) =>
+            prev && prev.id === noteToSave.id
+              ? { ...prev, syncStatus: finalSyncStatus, createdOffline: finalCreatedOffline }
+              : prev
+          );
+        }
       }
     }
   };
@@ -1989,6 +2039,15 @@ export default function NotesView({
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
+            {(currentUser?.id ? note.syncStatus === 'unsynced' : Boolean(note.createdOffline)) && (
+              <span
+                title="Saved offline — pending cloud sync"
+                aria-label="Saved offline"
+                className="text-red-500 flex items-center justify-center shrink-0"
+              >
+                <CloudOff className="w-3 h-3" />
+              </span>
+            )}
             <button
               type="button"
               onClick={(e) => handleTogglePin(note.id, e)}

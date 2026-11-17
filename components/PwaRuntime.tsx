@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { WifiOff } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 import {
-  dismissNotification,
   isOfflineSyncNotificationSuppressed,
   showNotification,
 } from '@/lib/notifications';
@@ -12,11 +11,9 @@ import {
   flushOfflineSyncQueue,
   getLocalNotes,
   getLocalTasks,
-  getPendingSyncCount,
 } from '@/lib/notesTasksStorage';
 import {
   flushOfflineCalculationsQueue,
-  getPendingCalculationSyncCount,
 } from '@/lib/historyStorage';
 import {
   checkAndFireDueReminders,
@@ -76,26 +73,12 @@ function readCachedUserId(): string | null {
   }
 }
 
-function calculateAllPendingCount(uid?: string | null): number {
-  return getPendingSyncCount(uid) + getPendingCalculationSyncCount(uid);
-}
-
 export default function PwaRuntime() {
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
 
   const runCloudSync = useCallback(async (uid: string | null) => {
     if (!uid || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       return;
-    }
-    const beforePending = calculateAllPendingCount(uid);
-    const shouldNotifySync = beforePending > 0 && !isOfflineSyncNotificationSuppressed();
-    if (shouldNotifySync) {
-      showNotification({
-        id: 'cloud-sync',
-        message: `Syncing ${beforePending} offline item${beforePending === 1 ? '' : 's'}...`,
-        type: 'sync',
-        duration: 0,
-      });
     }
     try {
       const [notesTasksRes, calcRes] = await Promise.allSettled([
@@ -114,13 +97,9 @@ export default function PwaRuntime() {
           type: 'success',
           duration: 3000,
         });
-      } else if (shouldNotifySync) {
-        dismissNotification('cloud-sync');
       }
     } catch {
-      if (shouldNotifySync) {
-        dismissNotification('cloud-sync');
-      }
+      // Background sync will retry automatically on next trigger
     }
   }, []);
 

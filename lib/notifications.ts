@@ -66,6 +66,9 @@ function clearAutoDismissTimer() {
 }
 
 export function showNotification(options: ShowNotificationOptions): string {
+  if (options.type === 'sync') {
+    return options.id || 'sync-disabled';
+  }
   if (options.id === 'cloud-sync' && isOfflineSyncNotificationSuppressed()) {
     return options.id;
   }
