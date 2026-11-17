@@ -10,15 +10,14 @@ import React, {
   useDeferredValue,
 } from 'react';
 import {
-  Copy,
-  Check,
   AlertCircle,
+  ArrowLeft,
+  ArrowLeftRight,
+  Check,
+  Copy,
   Delete,
   History,
-  Equal,
-  Maximize2,
-  Minimize2,
-  BookmarkPlus,
+  MoreVertical,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -30,29 +29,34 @@ import {
   countUnclosedParens,
 } from '../lib/scientificEngine';
 import { showNotification } from '@/lib/notifications';
+import { useTheme } from '@/components/ThemeProvider';
 
 interface ScientificCalculatorProps {
   triggerVibration: (type?: 'success' | 'error' | 'click' | 'reset') => void;
-  onSaveHistory: (type: string, details: string, result: string) => void;
+  onSaveHistory?: (type: string, details: string, result: string) => void;
+  onBackHome?: () => void;
+  onOpenHistory?: () => void;
+  onViewModeChange?: (mode: 'scientific' | 'standard') => void;
 }
 
 export default function ScientificCalculator({
   triggerVibration,
-  onSaveHistory,
+  onBackHome,
+  onOpenHistory,
+  onViewModeChange,
 }: ScientificCalculatorProps) {
+  const { isDark } = useTheme();
   const [state, dispatch] = useReducer(calcReducer, INITIAL_CALC_STATE);
   const [isSecondFunction, setIsSecondFunction] = useState<boolean>(false);
-  const [isHyperbolic, setIsHyperbolic] = useState<boolean>(false);
   const [calculatorView, setCalculatorView] = useState<'scientific' | 'standard'>('scientific');
+  const [showMenu, setShowMenu] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
-  const [saved, setSaved] = useState<boolean>(false);
-  const [showTape, setShowTape] = useState<boolean>(false);
 
   const [livePreview, setLivePreview] = useState<string | null>(null);
-
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const computeReqIdRef = useRef<number>(0);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tapeScrollRef = useRef<HTMLDivElement | null>(null);
 
   const {
     expression,
@@ -62,10 +66,29 @@ export default function ScientificCalculator({
     lastAnswer,
     errorMessage,
     angleMode,
-    memoryValue,
-    hasMemory,
     tape: localTape,
   } = state;
+
+  // Notify parent when view mode toggles so bottom navigation hides in scientific mode
+  useEffect(() => {
+    onViewModeChange?.(calculatorView);
+  }, [calculatorView, onViewModeChange]);
+
+  // Close overflow menu on outside pointer click
+  useEffect(() => {
+    if (!showMenu) return;
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+    };
+  }, [showMenu]);
 
   // Defer preview inputs so keystrokes & keypad presses always render immediately without blocking
   const deferredExpr = useDeferredValue(expression);
@@ -119,10 +142,13 @@ export default function ScientificCalculator({
       }
     };
 
-    const win = typeof window !== 'undefined' ? (window as Window & {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-      cancelIdleCallback?: (id: number) => void;
-    }) : null;
+    const win =
+      typeof window !== 'undefined'
+        ? (window as Window & {
+            requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+            cancelIdleCallback?: (id: number) => void;
+          })
+        : null;
 
     if (win && typeof win.requestIdleCallback === 'function') {
       idleHandle = win.requestIdleCallback(runPreviewCalculation, { timeout: 60 });
@@ -148,20 +174,23 @@ export default function ScientificCalculator({
     deferredLastAnswer,
   ]);
 
-  // Unmount cleanup: release timers and bounded evaluation cache to prevent leaks
+  // Unmount cleanup
   useEffect(() => {
     return () => {
       if (copyTimerRef.current) {
         clearTimeout(copyTimerRef.current);
         copyTimerRef.current = null;
       }
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
       clearEvaluationCache();
     };
   }, []);
+
+  // Auto-scroll history tape to newest bottom entry
+  useEffect(() => {
+    if (tapeScrollRef.current) {
+      tapeScrollRef.current.scrollTop = tapeScrollRef.current.scrollHeight;
+    }
+  }, [localTape.length, evaluatedResult]);
 
   // Atomic action dispatchers
   const handleDigit = useCallback(
@@ -175,11 +204,6 @@ export default function ScientificCalculator({
   const handleDecimal = useCallback(() => {
     triggerVibration('click');
     dispatch({ type: 'DECIMAL' });
-  }, [triggerVibration]);
-
-  const handleScientificExponent = useCallback(() => {
-    triggerVibration('click');
-    dispatch({ type: 'SCI_EXP' });
   }, [triggerVibration]);
 
   const handleOperator = useCallback(
@@ -214,11 +238,6 @@ export default function ScientificCalculator({
     [triggerVibration]
   );
 
-  const handleToggleSign = useCallback(() => {
-    triggerVibration('click');
-    dispatch({ type: 'TOGGLE_SIGN' });
-  }, [triggerVibration]);
-
   const handlePercent = useCallback(() => {
     triggerVibration('click');
     dispatch({ type: 'PERCENT' });
@@ -234,19 +253,6 @@ export default function ScientificCalculator({
     dispatch({ type: 'CLEAR_ALL' });
   }, [triggerVibration]);
 
-  const handleClearEntry = useCallback(() => {
-    triggerVibration('click');
-    dispatch({ type: 'CLEAR_ENTRY' });
-  }, [triggerVibration]);
-
-  const handleMemory = useCallback(
-    (action: 'MC' | 'MR' | 'M+' | 'M-' | 'MS') => {
-      triggerVibration('click');
-      dispatch({ type: 'MEMORY', action });
-    },
-    [triggerVibration]
-  );
-
   const handleEqual = useCallback(() => {
     triggerVibration('click');
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -254,7 +260,7 @@ export default function ScientificCalculator({
   }, [triggerVibration]);
 
   const handleCopy = () => {
-    const textToCopy = evaluatedResult || currentInput;
+    const textToCopy = evaluatedResult || livePreview || currentInput;
     if (!textToCopy || textToCopy === 'Error') return;
     navigator.clipboard?.writeText(textToCopy);
     setCopied(true);
@@ -269,41 +275,10 @@ export default function ScientificCalculator({
     copyTimerRef.current = setTimeout(() => {
       setCopied(false);
       copyTimerRef.current = null;
-    }, 2000);
+    }, 1800);
   };
 
-  const handleSaveToHistory = () => {
-    const res = livePreview || evaluatedResult || currentInput;
-    if (!res || res === 'Error') return;
-
-    const lastTape = localTape[0];
-    const exprText =
-      evaluatedResult !== null && lastTape && lastTape.res === evaluatedResult
-        ? lastTape.expr
-        : expression || !isNewInput
-        ? buildFullExpression(expression, currentInput, isNewInput, true)
-        : currentInput;
-
-    const modeLabel = calculatorView === 'scientific' ? 'Scientific' : 'Standard';
-    const memoryLabel = hasMemory ? `${memoryValue}` : 'None';
-    const details = `Expression: ${exprText} | Angle Mode: ${angleMode} | View Mode: ${modeLabel} | Memory: ${memoryLabel}`;
-    onSaveHistory('Calculator', details, `= ${res}`);
-    setSaved(true);
-    triggerVibration('success');
-    showNotification({
-      id: 'calc-save',
-      message: 'Saved to history',
-      type: 'success',
-      duration: 2000,
-    });
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      setSaved(false);
-      saveTimerRef.current = null;
-    }, 2000);
-  };
-
-  // Keyboard Shortcuts Support — stable registration with zero listener churn
+  // Keyboard Shortcuts Support
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
@@ -344,486 +319,397 @@ export default function ScientificCalculator({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Dynamic scientific function labels based on 2nd and HYP states
-  const trigSinLabel = isHyperbolic
-    ? isSecondFunction
-      ? 'sinh⁻¹'
-      : 'sinh'
-    : isSecondFunction
-    ? 'sin⁻¹'
-    : 'sin';
-  const trigCosLabel = isHyperbolic
-    ? isSecondFunction
-      ? 'cosh⁻¹'
-      : 'cosh'
-    : isSecondFunction
-    ? 'cos⁻¹'
-    : 'cos';
-  const trigTanLabel = isHyperbolic
-    ? isSecondFunction
-      ? 'tanh⁻¹'
-      : 'tanh'
-    : isSecondFunction
-    ? 'tan⁻¹'
-    : 'tan';
+  // Dynamic scientific function labels based on 2nd state
+  const trigSinLabel = isSecondFunction ? 'sin⁻¹' : 'sin';
+  const trigCosLabel = isSecondFunction ? 'cos⁻¹' : 'cos';
+  const trigTanLabel = isSecondFunction ? 'tan⁻¹' : 'tan';
 
-  const trigSinFn = isHyperbolic
-    ? isSecondFunction
-      ? 'asinh'
-      : 'sinh'
-    : isSecondFunction
-    ? 'asin'
-    : 'sin';
-  const trigCosFn = isHyperbolic
-    ? isSecondFunction
-      ? 'acosh'
-      : 'cosh'
-    : isSecondFunction
-    ? 'acos'
-    : 'cos';
-  const trigTanFn = isHyperbolic
-    ? isSecondFunction
-      ? 'atanh'
-      : 'tanh'
-    : isSecondFunction
-    ? 'atan'
-    : 'tan';
+  const trigSinFn = isSecondFunction ? 'asin' : 'sin';
+  const trigCosFn = isSecondFunction ? 'acos' : 'cos';
+  const trigTanFn = isSecondFunction ? 'atan' : 'tan';
+
+  // Prominent chronological multi-line tape above the active input area (avoids duplicating active evaluated equation)
+  const lastTape = localTape[0];
+  const priorTapeEntries = useMemo(() => {
+    const source =
+      evaluatedResult !== null && lastTape && lastTape.res === evaluatedResult
+        ? localTape.slice(1)
+        : localTape;
+    return [...source].reverse();
+  }, [localTape, evaluatedResult, lastTape]);
+
+  const equationDisplay = useMemo(() => {
+    if (evaluatedResult !== null && lastTape && lastTape.res === evaluatedResult) {
+      return lastTape.expr;
+    }
+    if (expression) {
+      if (isNewInput || currentInput === 'Error') {
+        return expression;
+      }
+      return `${expression} ${currentInput}`;
+    }
+    return '';
+  }, [evaluatedResult, lastTape, expression, isNewInput, currentInput]);
+
+  const mainResultDisplay = useMemo(() => {
+    if (errorMessage) return 'Error';
+    if (evaluatedResult !== null) return `= ${evaluatedResult}`;
+    if (expression && livePreview !== null) return `= ${livePreview}`;
+    return currentInput;
+  }, [errorMessage, evaluatedResult, expression, livePreview, currentInput]);
+
+  // Adaptive color classes (Light warm-stone palette + Dark obsidian sibling)
+  const shellBg = isDark
+    ? 'bg-[#121418] text-zinc-100 sm:border sm:border-zinc-800/80'
+    : 'bg-[#ECEBE7] text-zinc-900 sm:border sm:border-[#DFDDD7]';
+
+  const keyBase =
+    'min-h-[48px] sm:min-h-[54px] rounded-[20px] sm:rounded-[22px] flex items-center justify-center transition-all duration-150 active:scale-[0.94] cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215]';
+
+  const sciKeyClass = isDark
+    ? `${keyBase} bg-[#1C1F26] hover:bg-[#252932] text-zinc-300 text-sm sm:text-[15px] font-medium border border-zinc-800/70`
+    : `${keyBase} bg-[#F6F5F2] hover:bg-white text-zinc-700 text-sm sm:text-[15px] font-medium shadow-[0_1px_2px_rgba(24,24,27,0.04)]`;
+
+  const sciKeyActiveClass = isDark
+    ? `${keyBase} bg-[#C25215]/25 text-[#F59E6C] text-sm sm:text-[15px] font-semibold border border-[#C25215]/60`
+    : `${keyBase} bg-[#FBECE3] text-[#B84A0E] text-sm sm:text-[15px] font-semibold border border-[#E6B89C]`;
+
+  const numKeyClass = isDark
+    ? `${keyBase} bg-[#22262E] hover:bg-[#2C313B] text-zinc-50 text-xl sm:text-[22px] font-normal tabular-nums border border-zinc-800/80`
+    : `${keyBase} bg-[#F8F7F4] hover:bg-white text-zinc-900 text-xl sm:text-[22px] font-normal tabular-nums shadow-[0_1px_2px_rgba(24,24,27,0.04)]`;
+
+  const operatorKeyClass = isDark
+    ? `${keyBase} bg-[#9E5228] hover:bg-[#AE5B2E] text-white text-xl sm:text-[22px] font-normal shadow-sm`
+    : `${keyBase} bg-[#B46233] hover:bg-[#A3572C] text-white text-xl sm:text-[22px] font-normal shadow-[0_2px_6px_rgba(180,98,51,0.18)]`;
+
+  const accentKeyClass = isDark
+    ? `${keyBase} bg-[#C25215] hover:bg-[#D25C1B] text-white text-xl sm:text-[22px] font-medium shadow-md shadow-black/25`
+    : `${keyBase} bg-[#C25215] hover:bg-[#AE4811] text-white text-xl sm:text-[22px] font-medium shadow-[0_3px_10px_rgba(194,82,21,0.28)]`;
+
+  const modeSwitchKeyClass = isDark
+    ? `${keyBase} bg-[#1C1F26] hover:bg-[#252932] text-[#E8793E] border border-zinc-800/70`
+    : `${keyBase} bg-[#F6F5F2] hover:bg-white text-[#C25215] shadow-[0_1px_2px_rgba(24,24,27,0.04)]`;
 
   return (
-    <div className="mobile-edge-calc w-full flex-1 flex flex-col sm:max-w-4xl sm:mx-auto m-0 p-0 sm:space-y-4">
-      {/* Main Calculator Body */}
-      <div className="flex-1 flex flex-col justify-between bg-white rounded-none sm:rounded-3xl p-0 sm:p-5 md:p-6 shadow-none sm:shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-0 sm:border sm:border-slate-100">
-        {/* LCD / Display Screen */}
-        <div className="bg-slate-900 rounded-none sm:rounded-2xl px-3.5 py-3 sm:p-4 md:p-5 text-white shadow-inner relative overflow-hidden border-b border-slate-800 sm:border shrink-0">
-          <div className="flex items-center justify-between text-[11px] sm:text-xs text-slate-400 font-mono mb-1.5">
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  dispatch({ type: 'TOGGLE_ANGLE' });
-                  triggerVibration('click');
-                }}
-                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer ${
-                  angleMode === 'DEG' ? 'bg-indigo-600 text-white' : 'bg-amber-600 text-white'
-                }`}
-                title="Toggle between Degrees and Radians"
-              >
-                {angleMode}
-              </button>
-              {hasMemory && (
-                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold">
-                  M
-                </span>
-              )}
-              {isSecondFunction && (
-                <span className="px-1.5 py-0.5 rounded bg-purple-500/30 text-purple-300 text-[10px] font-bold">
-                  2nd
-                </span>
-              )}
-              {isHyperbolic && (
-                <span className="px-1.5 py-0.5 rounded bg-cyan-500/30 text-cyan-300 text-[10px] font-bold">
-                  HYP
-                </span>
-              )}
-              {openParenCount > 0 && (
-                <span
-                  className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold"
-                  title="Unclosed parentheses awaiting closing ')'"
+    <div className="mobile-edge-calc w-full flex-1 flex flex-col sm:max-w-[460px] sm:mx-auto m-0 p-0">
+      {/* Main Calculator Shell */}
+      <div
+        className={`flex-1 flex flex-col justify-between rounded-none sm:rounded-[34px] px-4 pt-2.5 pb-[max(0.85rem,env(safe-area-inset-bottom))] sm:p-5 sm:shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition-colors ${shellBg}`}
+      >
+        {/* Minimalist Top Bar: Back Arrow Left (Home), No Title, Visible Three-Dot Menu Right (History & Copy) */}
+        <div className="flex items-center justify-between h-11 shrink-0 relative z-30">
+          <button
+            type="button"
+            onClick={() => {
+              triggerVibration('click');
+              onBackHome?.();
+            }}
+            className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-2xl transition-colors cursor-pointer ${
+              isDark
+                ? 'text-zinc-200 hover:text-white hover:bg-zinc-800/80'
+                : 'text-zinc-800 hover:text-zinc-950 hover:bg-black/5'
+            }`}
+            aria-label="Back to home screen"
+            title="Back to Home"
+          >
+            <ArrowLeft className="w-5 h-5 stroke-[2]" />
+          </button>
+
+          <div ref={menuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                setShowMenu((prev) => !prev);
+                triggerVibration('click');
+              }}
+              className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-2xl transition-colors cursor-pointer ${
+                isDark
+                  ? 'text-zinc-200 hover:text-white hover:bg-zinc-800/80'
+                  : 'text-zinc-800 hover:text-zinc-950 hover:bg-black/5'
+              }`}
+              aria-label="Calculator menu"
+              aria-expanded={showMenu}
+            >
+              <MoreVertical className="w-5 h-5 stroke-[2]" />
+            </button>
+
+            <AnimatePresence>
+              {showMenu && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.94, y: -6 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.94, y: -6 }}
+                  transition={{ duration: 0.14 }}
+                  className={`absolute right-0 top-12 z-40 w-44 rounded-2xl p-1.5 shadow-xl border ${
+                    isDark
+                      ? 'bg-[#1C1F26] border-zinc-700/80 text-zinc-100'
+                      : 'bg-[#FAF9F6] border-[#DFDDD7] text-zinc-800'
+                  }`}
                 >
-                  {openParenCount} (
-                </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false);
+                      triggerVibration('click');
+                      onOpenHistory?.();
+                    }}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
+                      isDark ? 'hover:bg-zinc-800' : 'hover:bg-black/5'
+                    }`}
+                  >
+                    <History className="w-4 h-4 text-[#C25215]" />
+                    <span>History</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={currentInput === 'Error'}
+                    onClick={() => {
+                      handleCopy();
+                      setShowMenu(false);
+                    }}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer disabled:opacity-40 ${
+                      isDark ? 'hover:bg-zinc-800' : 'hover:bg-black/5'
+                    }`}
+                  >
+                    {copied ? (
+                      <Check className="w-4 h-4 text-emerald-500" />
+                    ) : (
+                      <Copy className="w-4 h-4 text-[#C25215]" />
+                    )}
+                    <span>{copied ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </motion.div>
               )}
-            </div>
-
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setCalculatorView((prev) => (prev === 'scientific' ? 'standard' : 'scientific'));
-                  triggerVibration('click');
-                }}
-                className={`flex items-center gap-1 text-[10px] sm:text-[11px] font-sans font-bold py-1 px-2.5 rounded-lg transition-colors cursor-pointer border whitespace-nowrap shrink-0 ${
-                  calculatorView === 'scientific'
-                    ? 'bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-500/60'
-                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
-                }`}
-                title="Switch between Normal and Scientific calculator"
-              >
-                {calculatorView === 'scientific' ? (
-                  <>
-                    <Minimize2 className="w-3 h-3" />
-                    <span>Standard</span>
-                  </>
-                ) : (
-                  <>
-                    <Maximize2 className="w-3 h-3" />
-                    <span>Scientific</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowTape((prev) => !prev)}
-                className={`flex items-center gap-1 text-[10px] sm:text-[11px] transition-colors cursor-pointer py-1 px-2 rounded-lg whitespace-nowrap shrink-0 ${
-                  showTape ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                }`}
-                title="View recent calculation history tape"
-              >
-                <History className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                <span>Tape ({localTape.length})</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Active Expression Line */}
-          <div className="text-slate-400 font-mono tabular-nums text-xs sm:text-sm min-h-[1.25rem] overflow-x-auto whitespace-nowrap text-right tracking-wide scrollbar-none">
-            {expression || ' '}
-          </div>
-
-          {/* Current Input / Main Display */}
-          <div className="text-2xl sm:text-3xl md:text-4xl font-mono tabular-nums font-bold text-right text-white tracking-tight overflow-x-auto whitespace-nowrap scrollbar-none py-1">
-            {currentInput}
-          </div>
-
-          {/* Display Footer Bar: Error feedback or Live Preview + Quick Actions */}
-          <div className="mt-1 pt-1.5 border-t border-slate-800 flex items-center justify-between gap-2 min-h-[1.75rem] text-[11px] sm:text-xs font-mono">
-            <div className="flex-1 min-w-0 truncate">
-              {errorMessage ? (
-                <span className="inline-flex items-center gap-1 text-rose-400 font-sans font-semibold text-[11px] truncate">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{errorMessage}</span>
-                </span>
-              ) : livePreview !== null ? (
-                <span className="text-emerald-400 font-bold tracking-wide">
-                  = {livePreview}
-                </span>
-              ) : (
-                <span className="text-slate-500 font-sans text-[10px]">
-                  Ans = {lastAnswer}
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={handleSaveToHistory}
-                disabled={currentInput === 'Error'}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition-colors cursor-pointer disabled:opacity-40 font-sans text-[10px] sm:text-[11px] font-bold"
-                title="Save calculation to Calculation History"
-              >
-                {saved ? (
-                  <>
-                    <Check className="w-3 h-3 text-emerald-400" />
-                    <span className="text-emerald-400">Saved</span>
-                  </>
-                ) : (
-                  <>
-                    <BookmarkPlus className="w-3 h-3 text-indigo-400" />
-                    <span>Save</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={handleCopy}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                title="Copy current value"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
-            </div>
+            </AnimatePresence>
           </div>
         </div>
 
-        {/* Optional History Tape Dropdown Drawer */}
-        <AnimatePresence>
-          {showTape && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="bg-slate-50 sm:rounded-2xl p-2.5 sm:p-4 border-b sm:border border-slate-200/80 overflow-hidden shrink-0"
+        {/* Prominent Multi-Line History Tape + Active Input / Result Display */}
+        <div className="flex-1 min-h-[210px] sm:min-h-[240px] flex flex-col justify-end overflow-hidden px-1 pb-4 pt-1">
+          {/* Multi-Line Scrollable History Tape Above Input Area */}
+          {priorTapeEntries.length > 0 && (
+            <div
+              ref={tapeScrollRef}
+              aria-label="Calculation history tape"
+              className={`flex-1 min-h-0 overflow-y-auto pr-1 pb-3 mb-3 border-b ${
+                isDark ? 'border-zinc-800/80' : 'border-zinc-300/80'
+              }`}
             >
-              <div className="flex items-center justify-between mb-1.5 sm:mb-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                <span>Recent Tape Records</span>
-                <button
-                  type="button"
-                  onClick={() => dispatch({ type: 'CLEAR_TAPE' })}
-                  className="text-rose-500 hover:text-rose-600 font-semibold text-[11px] cursor-pointer"
-                >
-                  Clear Tape
-                </button>
-              </div>
-
-              {localTape.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-2">No calculations recorded yet in this session.</p>
-              ) : (
-                <div className="max-h-32 sm:max-h-44 overflow-y-auto space-y-1.5 pr-1">
-                  {localTape.map((item, idx) => (
+              <div className="min-h-full flex flex-col justify-end gap-3">
+                {priorTapeEntries.map((item, idx) => (
+                  <button
+                    key={`${item.expr}-${item.res}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      dispatch({ type: 'LOAD_TAPE', res: item.res });
+                      triggerVibration('click');
+                    }}
+                    className={`w-full text-right rounded-xl px-2 py-1 transition-colors cursor-pointer ${
+                      isDark ? 'hover:bg-white/5' : 'hover:bg-black/[0.04]'
+                    }`}
+                    title="Tap to insert result"
+                  >
                     <div
-                      key={idx}
-                      onClick={() => {
-                        dispatch({ type: 'LOAD_TAPE', res: item.res });
-                        triggerVibration('click');
-                      }}
-                      className="p-2 rounded-xl bg-white border border-slate-100 flex items-center justify-between hover:border-indigo-200 cursor-pointer transition-colors"
+                      className={`text-lg sm:text-xl font-normal tabular-nums leading-snug whitespace-normal break-words ${
+                        isDark ? 'text-zinc-400' : 'text-zinc-500'
+                      }`}
                     >
-                      <div className="text-xs font-mono tabular-nums text-slate-600 truncate mr-2">
-                        {item.expr} = <span className="font-bold text-indigo-600">{item.res}</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 shrink-0">{item.time}</span>
+                      {item.expr}
                     </div>
-                  ))}
-                </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Responsive Edge-to-Edge Keypad Area (Fills Remaining Viewport Height on Mobile) */}
-        <div className="flex-1 flex flex-col justify-between px-1.5 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-0 sm:pt-3 gap-1.5 sm:gap-2">
-          {/* Memory Bar (5 Columns) */}
-          <div className="grid grid-cols-5 gap-1 sm:gap-2 shrink-0">
-            {[
-              { label: 'MC', action: 'MC' as const, disabled: !hasMemory },
-              { label: 'MR', action: 'MR' as const, disabled: !hasMemory },
-              { label: 'M+', action: 'M+' as const, disabled: false },
-              { label: 'M-', action: 'M-' as const, disabled: false },
-              { label: 'MS', action: 'MS' as const, disabled: false },
-            ].map((btn) => (
-              <button
-                key={btn.label}
-                type="button"
-                disabled={btn.disabled}
-                onClick={() => handleMemory(btn.action)}
-                className={`py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold transition-all ${
-                  btn.disabled
-                    ? 'bg-slate-50 text-slate-300 cursor-not-allowed border border-slate-100'
-                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 active:scale-95 border border-slate-200/60 cursor-pointer'
-                }`}
-              >
-                {btn.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Dedicated 5-Column Scientific Pad */}
-          {calculatorView === 'scientific' && (
-            <div className="grid grid-cols-5 gap-1 sm:gap-1.5 shrink-0">
-              {/* Row 1: 2nd, HYP, DEG/RAD, (, ) */}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSecondFunction((prev) => !prev);
-                  triggerVibration('click');
-                }}
-                className={`py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold transition-all border cursor-pointer active:scale-95 ${
-                  isSecondFunction
-                    ? 'bg-purple-600 text-white border-purple-700 shadow-xs'
-                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200/80'
-                }`}
-              >
-                2nd
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setIsHyperbolic((prev) => !prev);
-                  triggerVibration('click');
-                }}
-                className={`py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold transition-all border cursor-pointer active:scale-95 ${
-                  isHyperbolic
-                    ? 'bg-cyan-600 text-white border-cyan-700 shadow-xs'
-                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200/80'
-                }`}
-                title="Toggle Hyperbolic Functions"
-              >
-                HYP
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  dispatch({ type: 'TOGGLE_ANGLE' });
-                  triggerVibration('click');
-                }}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-slate-100 hover:bg-slate-200 text-indigo-700 border border-slate-200/80 transition-all active:scale-95 cursor-pointer"
-                title="Toggle Degrees / Radians"
-              >
-                {angleMode}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleParenthesis('(')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 transition-all active:scale-95 cursor-pointer"
-              >
-                (
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleParenthesis(')')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 transition-all active:scale-95 cursor-pointer"
-              >
-                )
-              </button>
-
-              {/* Row 2: sin, cos, tan, ln/e^x, log/10^x */}
-              <button
-                type="button"
-                onClick={() => handleFunction(trigSinFn)}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 transition-all active:scale-95 cursor-pointer"
-              >
-                {trigSinLabel}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleFunction(trigCosFn)}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 transition-all active:scale-95 cursor-pointer"
-              >
-                {trigCosLabel}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleFunction(trigTanFn)}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 transition-all active:scale-95 cursor-pointer"
-              >
-                {trigTanLabel}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleFunction(isSecondFunction ? 'exp' : 'ln')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 transition-all active:scale-95 cursor-pointer"
-              >
-                {isSecondFunction ? 'eˣ' : 'ln'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleFunction(isSecondFunction ? 'tenpow' : 'log')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 transition-all active:scale-95 cursor-pointer"
-              >
-                {isSecondFunction ? '10ˣ' : 'log'}
-              </button>
-
-              {/* Row 3: x^2/x^3, sqrt/cbrt, x^y/yroot, 1/x/2^x, |x|/n! */}
-              <button
-                type="button"
-                onClick={() => handleFunction(isSecondFunction ? 'cube' : 'sq')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 transition-all active:scale-95 cursor-pointer"
-              >
-                {isSecondFunction ? 'x³' : 'x²'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleFunction(isSecondFunction ? 'cbrt' : 'sqrt')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 transition-all active:scale-95 cursor-pointer"
-              >
-                {isSecondFunction ? '∛x' : '√x'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleFunction(isSecondFunction ? 'yroot' : 'pow')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 transition-all active:scale-95 cursor-pointer"
-              >
-                {isSecondFunction ? 'ʸ√x' : 'xʸ'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleFunction(isSecondFunction ? 'twopow' : 'reciprocal')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 transition-all active:scale-95 cursor-pointer"
-              >
-                {isSecondFunction ? '2ˣ' : '1/x'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleFunction(isSecondFunction ? 'factorial' : 'abs')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 transition-all active:scale-95 cursor-pointer"
-              >
-                {isSecondFunction ? 'n!' : '|x|'}
-              </button>
-
-              {/* Row 4: pi, e, EE, mod, Ans */}
-              <button
-                type="button"
-                onClick={() => handleConstant('π')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 transition-all active:scale-95 cursor-pointer"
-              >
-                π
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleConstant('e')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 transition-all active:scale-95 cursor-pointer"
-              >
-                e
-              </button>
-
-              <button
-                type="button"
-                onClick={handleScientificExponent}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 transition-all active:scale-95 cursor-pointer"
-                title="Scientific notation exponent (×10ˣ)"
-              >
-                EE
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleOperator('mod')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 transition-all active:scale-95 cursor-pointer"
-                title="Modulo remainder"
-              >
-                mod
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleConstant('Ans')}
-                className="py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/70 transition-all active:scale-95 cursor-pointer"
-                title="Insert last calculated answer"
-              >
-                Ans
-              </button>
+                    <div
+                      className={`text-xl sm:text-2xl font-medium tabular-nums leading-tight mt-0.5 whitespace-normal break-words ${
+                        isDark ? 'text-zinc-200' : 'text-zinc-700'
+                      }`}
+                    >
+                      = {item.res}
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* Standard Numeric & Arithmetic Keypad (4 Columns, Expands to Fill Viewport Height on Mobile) */}
-          <div className="flex-1 grid grid-cols-4 grid-rows-5 gap-1.5 sm:gap-2">
-            {/* Row 1: AC, CE, %, ÷ */}
+          {/* Active Input Area */}
+          <div className="shrink-0">
+            {openParenCount > 0 && (
+              <div className="flex justify-end mb-1.5">
+                <span
+                  className={`px-2 py-0.5 rounded-md text-xs font-semibold tabular-nums ${
+                    isDark ? 'bg-zinc-800 text-zinc-300' : 'bg-black/5 text-zinc-700'
+                  }`}
+                  title="Open parentheses awaiting closing ')'"
+                >
+                  {openParenCount} (
+                </span>
+              </div>
+            )}
+
+            {/* Large Right-Aligned Wrapping Equation Line */}
+            {equationDisplay && (
+              <div
+                className={`text-right text-[26px] sm:text-[32px] font-normal tabular-nums tracking-tight leading-[1.24] whitespace-normal break-words ${
+                  isDark ? 'text-zinc-300' : 'text-zinc-700'
+                }`}
+              >
+                {equationDisplay}
+              </div>
+            )}
+
+            {/* Significantly Larger Primary Result / Input Value + Burnt-Orange Caret */}
+            <div className="mt-2 flex items-end justify-end gap-1.5">
+              <span
+                className={`text-[50px] sm:text-[60px] font-semibold tabular-nums tracking-tight leading-[1.06] text-right whitespace-normal break-all ${
+                  errorMessage
+                    ? 'text-rose-500'
+                    : isDark
+                    ? 'text-white'
+                    : 'text-zinc-950'
+                }`}
+              >
+                {mainResultDisplay}
+              </span>
+              <span
+                aria-hidden="true"
+                className="w-[2.5px] h-12 sm:h-14 mb-1 rounded-full bg-[#C25215] shrink-0"
+              />
+            </div>
+
+            {/* Error Feedback Only (No Duplicate Readout Below Result) */}
+            {errorMessage && (
+              <div className="mt-2 flex items-center justify-end">
+                <span className="inline-flex items-center gap-1.5 text-rose-500 text-sm font-medium text-right whitespace-normal break-words">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{errorMessage}</span>
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Keypad Grid */}
+        {calculatorView === 'scientific' ? (
+          <div className="grid grid-cols-5 gap-2.5 sm:gap-3 shrink-0">
+            {/* Row 1: 2nd, deg, sin, cos, tan */}
             <button
               type="button"
-              onClick={handleClearAll}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-sm font-black bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200/80 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              onClick={() => {
+                setIsSecondFunction((prev) => !prev);
+                triggerVibration('click');
+              }}
+              className={isSecondFunction ? sciKeyActiveClass : sciKeyClass}
             >
-              AC
+              2nd
             </button>
 
             <button
               type="button"
-              onClick={handleClearEntry}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-sm font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              onClick={() => {
+                dispatch({ type: 'TOGGLE_ANGLE' });
+                triggerVibration('click');
+              }}
+              className={angleMode === 'RAD' ? sciKeyActiveClass : sciKeyClass}
+              title="Toggle Degrees / Radians"
             >
-              CE
+              {angleMode.toLowerCase()}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleFunction(trigSinFn)}
+              className={sciKeyClass}
+            >
+              {trigSinLabel}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleFunction(trigCosFn)}
+              className={sciKeyClass}
+            >
+              {trigCosLabel}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleFunction(trigTanFn)}
+              className={sciKeyClass}
+            >
+              {trigTanLabel}
+            </button>
+
+            {/* Row 2: x^y, lg, ln, (, ) */}
+            <button
+              type="button"
+              onClick={() => handleFunction(isSecondFunction ? 'yroot' : 'pow')}
+              className={sciKeyClass}
+            >
+              {isSecondFunction ? 'ʸ√x' : 'xʸ'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleFunction(isSecondFunction ? 'tenpow' : 'log')}
+              className={sciKeyClass}
+            >
+              {isSecondFunction ? '10ˣ' : 'lg'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleFunction(isSecondFunction ? 'exp' : 'ln')}
+              className={sciKeyClass}
+            >
+              {isSecondFunction ? 'eˣ' : 'ln'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleParenthesis('(')}
+              className={sciKeyClass}
+            >
+              (
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleParenthesis(')')}
+              className={sciKeyClass}
+            >
+              )
+            </button>
+
+            {/* Row 3: √x, C, Backspace, %, ÷ */}
+            <button
+              type="button"
+              onClick={() => handleFunction(isSecondFunction ? 'cbrt' : 'sqrt')}
+              className={sciKeyClass}
+            >
+              {isSecondFunction ? '∛x' : '√x'}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleClearAll}
+              className={accentKeyClass}
+              aria-label="Clear all"
+            >
+              C
+            </button>
+
+            <button
+              type="button"
+              onClick={handleBackspace}
+              className={operatorKeyClass}
+              aria-label="Backspace"
+            >
+              <Delete className="w-5 h-5" />
             </button>
 
             <button
               type="button"
               onClick={handlePercent}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-sm font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={operatorKeyClass}
             >
               %
             </button>
@@ -831,7 +717,165 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={() => handleOperator('÷')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-black bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/80 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={operatorKeyClass}
+            >
+              ÷
+            </button>
+
+            {/* Row 4: x!, 7, 8, 9, × */}
+            <button
+              type="button"
+              onClick={() => handleFunction(isSecondFunction ? 'sq' : 'factorial')}
+              className={sciKeyClass}
+            >
+              {isSecondFunction ? 'x²' : 'x!'}
+            </button>
+
+            <button type="button" onClick={() => handleDigit('7')} className={numKeyClass}>
+              7
+            </button>
+            <button type="button" onClick={() => handleDigit('8')} className={numKeyClass}>
+              8
+            </button>
+            <button type="button" onClick={() => handleDigit('9')} className={numKeyClass}>
+              9
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleOperator('×')}
+              className={operatorKeyClass}
+            >
+              ×
+            </button>
+
+            {/* Row 5: 1/x, 4, 5, 6, − */}
+            <button
+              type="button"
+              onClick={() => handleFunction(isSecondFunction ? 'cube' : 'reciprocal')}
+              className={sciKeyClass}
+            >
+              {isSecondFunction ? 'x³' : '1/x'}
+            </button>
+
+            <button type="button" onClick={() => handleDigit('4')} className={numKeyClass}>
+              4
+            </button>
+            <button type="button" onClick={() => handleDigit('5')} className={numKeyClass}>
+              5
+            </button>
+            <button type="button" onClick={() => handleDigit('6')} className={numKeyClass}>
+              6
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleOperator('−')}
+              className={operatorKeyClass}
+            >
+              −
+            </button>
+
+            {/* Row 6: π, 1, 2, 3, + */}
+            <button
+              type="button"
+              onClick={() => (isSecondFunction ? handleFunction('abs') : handleConstant('π'))}
+              className={sciKeyClass}
+            >
+              {isSecondFunction ? '|x|' : 'π'}
+            </button>
+
+            <button type="button" onClick={() => handleDigit('1')} className={numKeyClass}>
+              1
+            </button>
+            <button type="button" onClick={() => handleDigit('2')} className={numKeyClass}>
+              2
+            </button>
+            <button type="button" onClick={() => handleDigit('3')} className={numKeyClass}>
+              3
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleOperator('+')}
+              className={operatorKeyClass}
+            >
+              +
+            </button>
+
+            {/* Row 7: Mode Switch, e, 0, ., = */}
+            <button
+              type="button"
+              onClick={() => {
+                setCalculatorView('standard');
+                triggerVibration('click');
+              }}
+              className={modeSwitchKeyClass}
+              aria-label="Switch to Standard keypad"
+              title="Switch to Standard keypad"
+            >
+              <ArrowLeftRight className="w-5 h-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleConstant(isSecondFunction ? 'Ans' : 'e')}
+              className={sciKeyClass}
+            >
+              {isSecondFunction ? 'Ans' : 'e'}
+            </button>
+
+            <button type="button" onClick={() => handleDigit('0')} className={numKeyClass}>
+              0
+            </button>
+
+            <button type="button" onClick={handleDecimal} className={numKeyClass}>
+              .
+            </button>
+
+            <button
+              type="button"
+              onClick={handleEqual}
+              className={accentKeyClass}
+              aria-label="Equals"
+            >
+              =
+            </button>
+          </div>
+        ) : (
+          /* Standard 4-Column Minimalist Keypad */
+          <div className="grid grid-cols-4 gap-2.5 sm:gap-3 shrink-0">
+            {/* Row 1: C, Backspace, %, ÷ */}
+            <button
+              type="button"
+              onClick={handleClearAll}
+              className={`${accentKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              aria-label="Clear all"
+            >
+              C
+            </button>
+
+            <button
+              type="button"
+              onClick={handleBackspace}
+              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              aria-label="Backspace"
+            >
+              <Delete className="w-5 h-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={handlePercent}
+              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
+            >
+              %
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleOperator('÷')}
+              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               ÷
             </button>
@@ -840,31 +884,28 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={() => handleDigit('7')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-bold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               7
             </button>
-
             <button
               type="button"
               onClick={() => handleDigit('8')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-bold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               8
             </button>
-
             <button
               type="button"
               onClick={() => handleDigit('9')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-bold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               9
             </button>
-
             <button
               type="button"
               onClick={() => handleOperator('×')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-black bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/80 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               ×
             </button>
@@ -873,31 +914,28 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={() => handleDigit('4')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-bold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               4
             </button>
-
             <button
               type="button"
               onClick={() => handleDigit('5')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-bold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               5
             </button>
-
             <button
               type="button"
               onClick={() => handleDigit('6')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-bold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               6
             </button>
-
             <button
               type="button"
               onClick={() => handleOperator('−')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-black bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/80 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               −
             </button>
@@ -906,82 +944,72 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={() => handleDigit('1')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-bold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               1
             </button>
-
             <button
               type="button"
               onClick={() => handleDigit('2')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-bold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               2
             </button>
-
             <button
               type="button"
               onClick={() => handleDigit('3')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-bold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               3
             </button>
-
             <button
               type="button"
               onClick={() => handleOperator('+')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-black bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/80 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${operatorKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               +
             </button>
 
-            {/* Row 5: ±, 0, ., Backspace, = */}
+            {/* Row 5: Switch to Scientific, 0, ., = */}
             <button
               type="button"
-              onClick={handleToggleSign}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-base font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
-              title="Toggle positive/negative sign"
+              onClick={() => {
+                setCalculatorView('scientific');
+                triggerVibration('click');
+              }}
+              className={`${modeSwitchKeyClass} min-h-[58px] sm:min-h-[64px]`}
+              aria-label="Switch to Scientific keypad"
+              title="Switch to Scientific keypad"
             >
-              ±
+              <ArrowLeftRight className="w-5 h-5" />
             </button>
 
             <button
               type="button"
               onClick={() => handleDigit('0')}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-bold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
             >
               0
             </button>
 
-            <div className="grid grid-cols-2 gap-1.5 h-full">
-              <button
-                type="button"
-                onClick={handleDecimal}
-                className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-bold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/60 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
-              >
-                .
-              </button>
-
-              <button
-                type="button"
-                onClick={handleBackspace}
-                className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-sm font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 flex items-center justify-center transition-all active:scale-95 cursor-pointer"
-                aria-label="Backspace"
-              >
-                <Delete className="w-4 h-4" />
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={handleDecimal}
+              className={`${numKeyClass} min-h-[58px] sm:min-h-[64px]`}
+            >
+              .
+            </button>
 
             <button
               type="button"
               onClick={handleEqual}
-              className="h-full min-h-[46px] sm:min-h-[52px] rounded-xl text-lg font-black bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white shadow-md shadow-indigo-200 flex items-center justify-center transition-all active:scale-95 cursor-pointer"
+              className={`${accentKeyClass} min-h-[58px] sm:min-h-[64px]`}
               aria-label="Equals"
             >
-              <Equal className="w-5 h-5" />
+              =
             </button>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

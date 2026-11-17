@@ -626,8 +626,8 @@ test('Calculator Reducer: standard & scientific interactive button sequences and
   assert.equal(signEval.evaluatedResult, '-6');
 });
 
-test('Calculator Reducer: repeated =, memory operations, parens, backspace, EE, error recovery', () => {
-  // Repeated '=' repeats last binary operation: 2 + 3 = = = -> 5, 8, 11
+test('Calculator Reducer: successive = does not repeat, memory operations, parens, backspace, EE, error recovery', () => {
+  // Successive '=' presses must NOT repeat the last binary operation: 2 + 3 = = = -> stays 5
   const repeatEq = runSequence([
     { type: 'DIGIT', digit: '2' },
     { type: 'OPERATOR', op: '+' },
@@ -636,8 +636,8 @@ test('Calculator Reducer: repeated =, memory operations, parens, backspace, EE, 
     { type: 'EQUAL', timeStr: '10:01 AM' },
     { type: 'EQUAL', timeStr: '10:01 AM' },
   ]);
-  assert.equal(repeatEq.evaluatedResult, '11');
-  assert.equal(repeatEq.tape.length, 3);
+  assert.equal(repeatEq.evaluatedResult, '5');
+  assert.equal(repeatEq.tape.length, 1);
 
   // Memory workflow: 10 MS -> 5 M+ -> 2 M- -> C -> MR = -> 13
   const memSeq = runSequence([

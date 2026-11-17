@@ -342,6 +342,7 @@ export default function RetailCalc() {
   const [profileCloseSignal, setProfileCloseSignal] = useState(0);
   const [noteEditorCloseSignal, setNoteEditorCloseSignal] = useState(0);
   const [isNoteFullScreen, setIsNoteFullScreen] = useState(false);
+  const [calculatorViewMode, setCalculatorViewMode] = useState<'scientific' | 'standard'>('scientific');
   const [isManagerSubOverlayOpen, setIsManagerSubOverlayOpen] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [profileOpenSignal, setProfileOpenSignal] = useState(0);
@@ -1047,12 +1048,14 @@ export default function RetailCalc() {
     showSignOutConfirm,
   ]);
 
+  const isCalcFullScreen = activeTab === 'calculator' && calculatorViewMode === 'scientific';
+
   useEffect(() => {
-    setBottomNavVisible(!isNoteFullScreen);
+    setBottomNavVisible(!isNoteFullScreen && !isCalcFullScreen);
     return () => {
       setBottomNavVisible(false);
     };
-  }, [isNoteFullScreen]);
+  }, [isNoteFullScreen, isCalcFullScreen]);
 
   const handleRefreshActiveView = useCallback(async () => {
     if (isPullRefreshingRef.current) return;
@@ -2650,7 +2653,9 @@ export default function RetailCalc() {
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
               className={`w-full min-h-[100dvh] flex-1 flex flex-col ${
                 activeTab === 'calculator'
-                  ? 'p-0 pb-20 sm:px-6 sm:pt-3 sm:pb-24 md:px-8 space-y-0 sm:space-y-4'
+                  ? isCalcFullScreen
+                    ? 'p-0 pb-0 sm:px-6 sm:py-3 space-y-0'
+                    : 'p-0 pb-20 sm:px-6 sm:pt-3 sm:pb-24 md:px-8 space-y-0 sm:space-y-4'
                   : activeTab === 'home'
                   ? 'p-0 pb-20 space-y-0'
                   : activeTab === 'notes' || activeTab === 'tasks' || activeTab === 'history'
@@ -2779,6 +2784,9 @@ export default function RetailCalc() {
                     <ScientificCalculator
                       triggerVibration={triggerVibration}
                       onSaveHistory={(type, details, result) => saveHistoryItem(type, details, result)}
+                      onBackHome={() => handleTabChange('home')}
+                      onOpenHistory={() => handleTabChange('history')}
+                      onViewModeChange={setCalculatorViewMode}
                     />
                   </CalculatorErrorBoundary>
                 </section>
@@ -3021,8 +3029,8 @@ export default function RetailCalc() {
           </AnimatePresence>
         </main>
 
-        {/* Bottom Navigation Bar: Home, History, Search, Notes, Tasks (hidden when viewing/editing an individual note or full-screen detail) */}
-        {!isNoteFullScreen && (
+        {/* Bottom Navigation Bar: Home, History, Search, Notes, Tasks (hidden when viewing/editing an individual note or in full-screen scientific calculator mode) */}
+        {!isNoteFullScreen && !isCalcFullScreen && (
           <nav
             aria-label="Primary bottom navigation"
             className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/80 shadow-[0_-4px_20px_rgba(15,23,42,0.04)] pb-[env(safe-area-inset-bottom)] transition-colors"

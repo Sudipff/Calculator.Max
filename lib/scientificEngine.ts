@@ -1778,34 +1778,9 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
         return calcReducer(state, { type: 'CLEAR_ALL' });
       }
 
-      // Repeated '=' repeats the last binary operation when evaluatedResult is active
+      // Prevent repeating operations on successive '=' presses when a result is already evaluated
       if (state.evaluatedResult !== null) {
-        if (!state.lastBinaryOp) {
-          return { ...state, errorMessage: null };
-        }
-        const repeatExpr = `${state.evaluatedResult} ${state.lastBinaryOp.op} ${state.lastBinaryOp.operand}`;
-        try {
-          const { display } = safeEvaluateMath(repeatExpr, state.angleMode, state.lastAnswer, { allowAutoClose: false });
-          return {
-            ...state,
-            evaluatedResult: display,
-            lastAnswer: display,
-            currentInput: display,
-            expression: '',
-            isNewInput: true,
-            errorMessage: null,
-            tape: [{ expr: repeatExpr, res: display, time: action.timeStr }, ...state.tape.slice(0, MAX_TAPE_ENTRIES - 1)],
-          };
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'Invalid mathematical expression';
-          return {
-            ...state,
-            errorMessage: msg,
-            currentInput: 'Error',
-            evaluatedResult: null,
-            isNewInput: true,
-          };
-        }
+        return state.errorMessage ? { ...state, errorMessage: null } : state;
       }
 
       // Enforce strict parenthesis validation on EQUAL (do NOT silently auto-close unbalanced parens)
