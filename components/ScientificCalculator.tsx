@@ -20,6 +20,7 @@ import {
   MoreVertical,
   Plus,
   Trash2,
+  Vibrate,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -33,12 +34,20 @@ import {
 } from '../lib/scientificEngine';
 import { showNotification } from '@/lib/notifications';
 import { useTheme } from '@/components/ThemeProvider';
+import {
+  getHapticEnabled,
+  setHapticEnabled,
+  triggerHaptic,
+  HAPTIC_CHANGED_EVENT,
+} from '@/lib/haptics';
 
 const CALC_HISTORY_STORAGE_KEY = 'calcmax_scientific_tape_v1';
 const CALC_SAVED_HISTORY_KEYS_STORAGE = 'calcmax_scientific_saved_keys_v1';
 
 interface ScientificCalculatorProps {
   triggerVibration: (type?: 'success' | 'error' | 'click' | 'reset') => void;
+  hapticEnabled?: boolean;
+  onToggleHaptic?: (enabled: boolean) => void;
   onSaveHistory?: (type: string, details: string, result: string) => void | Promise<void>;
   onBackHome?: () => void;
   onViewModeChange?: (mode: 'scientific' | 'standard') => void;
@@ -47,6 +56,8 @@ interface ScientificCalculatorProps {
 
 export default function ScientificCalculator({
   triggerVibration,
+  hapticEnabled: controlledHapticEnabled,
+  onToggleHaptic,
   onSaveHistory,
   onBackHome,
   onViewModeChange,
@@ -63,10 +74,25 @@ export default function ScientificCalculator({
   const [savedHistoryKeys, setSavedHistoryKeys] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState<boolean>(false);
   const [copiedHistoryId, setCopiedHistoryId] = useState<string | null>(null);
+  const [localHapticEnabled, setLocalHapticEnabled] = useState<boolean>(true);
+  const isHapticOn = controlledHapticEnabled ?? localHapticEnabled;
+
+  const [viewportMetrics, setViewportMetrics] = useState<{
+    viewportHeight: number;
+    isDesktop: boolean;
+  }>({ viewportHeight: 844, isDesktop: false });
+  const [measuredHeights, setMeasuredHeights] = useState<{
+    topBar: number;
+    activeInput: number;
+    keypad: number;
+  }>({ topBar: 44, activeInput: 108, keypad: 396 });
 
   const [livePreview, setLivePreview] = useState<string | null>(null);
   const computeReqIdRef = useRef<number>(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const topBarRef = useRef<HTMLDivElement | null>(null);
+  const activeInputRef = useRef<HTMLDivElement | null>(null);
+  const keypadRef = useRef<HTMLDivElement | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasHydratedTapeRef = useRef<boolean>(false);
@@ -173,6 +199,65 @@ export default function ScientificCalculator({
       document.removeEventListener('touchstart', handlePointerDown);
     };
   }, [showMenu]);
+
+  // Sync haptic preference with shared storage
+  useEffect(() => {
+    setLocalHapticEnabled(getHapticEnabled());
+    const onHapticChange = (e: Event) => {
+      const next = (e as CustomEvent)?.detail?.enabled;
+      setLocalHapticEnabled(typeof next === 'boolean' ? next : getHapticEnabled());
+    };
+    window.addEventListener(HAPTIC_CHANGED_EVENT, onHapticChange);
+    return () => window.removeEventListener(HAPTIC_CHANGED_EVENT, onHapticChange);
+  }, []);
+
+  // Measure viewport height and active input / chrome heights so history adapts dynamically
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const updateViewport = () => {
+      const nextHeight = Math.round(window.visualViewport?.height ?? window.innerHeight);
+      const nextDesktop = window.innerWidth >= 640;
+      setViewportMetrics((prev) =>
+        prev.viewportHeight === nextHeight && prev.isDesktop === nextDesktop
+          ? prev
+          : { viewportHeight: nextHeight, isDesktop: nextDesktop }
+      );
+    };
+
+    updateViewport();
+    window.addEventListener('resize', updateViewport);
+    window.visualViewport?.addEventListener('resize', updateViewport);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      const syncElementHeights = () => {
+        const nextTopBar = Math.round(topBarRef.current?.getBoundingClientRect().height || 44);
+        const nextActiveInput = Math.round(
+          activeInputRef.current?.getBoundingClientRect().height || 108
+        );
+        const nextKeypad = Math.round(keypadRef.current?.getBoundingClientRect().height || 396);
+        setMeasuredHeights((prev) =>
+          prev.topBar === nextTopBar &&
+          prev.activeInput === nextActiveInput &&
+          prev.keypad === nextKeypad
+            ? prev
+            : { topBar: nextTopBar, activeInput: nextActiveInput, keypad: nextKeypad }
+        );
+      };
+      observer = new ResizeObserver(syncElementHeights);
+      if (topBarRef.current) observer.observe(topBarRef.current);
+      if (activeInputRef.current) observer.observe(activeInputRef.current);
+      if (keypadRef.current) observer.observe(keypadRef.current);
+      syncElementHeights();
+    }
+
+    return () => {
+      window.removeEventListener('resize', updateViewport);
+      window.visualViewport?.removeEventListener('resize', updateViewport);
+      observer?.disconnect();
+    };
+  }, [calculatorView, showHistoryPage]);
 
   // Defer preview inputs so keystrokes & keypad presses always render immediately without blocking
   const deferredExpr = useDeferredValue(expression);
@@ -497,77 +582,193 @@ export default function ScientificCalculator({
     }
   };
 
-  const displayScale = useMemo(() => {
-    const activeLen = Math.max(
-      equationDisplay.length,
-      mainResultDisplay.length > 14 ? mainResultDisplay.length : 0
+  const handleToggleHapticSetting = () => {
+    const next = !isHapticOn;
+    setLocalHapticEnabled(next);
+    if (onToggleHaptic) {
+      onToggleHaptic(next);
+    } else {
+      setHapticEnabled(next);
+      if (next) {
+        triggerHaptic('click', { force: true, source: 'explicit' });
+      }
+    }
+    showNotification({
+      id: 'calc-haptic-toggle',
+      message: next ? 'Haptic feedback on' : 'Haptic feedback off',
+      type: 'success',
+      duration: 1500,
+    });
+  };
+
+  // Graduated typographic scaling:
+  // Main Result (largest) > Active Equation > Newest History > Older History
+  // History height & visible entry count dynamically adapt to available screen height & input growth.
+  const availableHistoryHeightPx = useMemo(() => {
+    const shellBudget = viewportMetrics.isDesktop
+      ? Math.min(Math.max(viewportMetrics.viewportHeight - 28, 660), 880)
+      : viewportMetrics.viewportHeight;
+    const chromePadding = viewportMetrics.isDesktop ? 56 : 38;
+    return Math.max(
+      0,
+      Math.floor(
+        shellBudget -
+          measuredHeights.topBar -
+          measuredHeights.keypad -
+          measuredHeights.activeInput -
+          chromePadding
+      )
     );
+  }, [viewportMetrics, measuredHeights]);
 
-    if (activeLen <= 18) {
-      return {
-        tier: 0 as const,
-        entryLimit: 4,
-        historyMaxHeight: 'max-h-[168px] sm:max-h-[204px]',
-        historyExprClass: 'text-[21px] sm:text-[24px] leading-[1.24]',
-        historyLongExprClass: 'text-[19px] sm:text-[21px] leading-[1.24]',
-        historyResClass: 'text-[22px] sm:text-[26px]',
-        historyLongResClass: 'text-[20px] sm:text-[22px]',
-        inputExprClass: 'text-[17px] sm:text-[19px] leading-[1.28]',
-      };
-    }
-    if (activeLen <= 38) {
-      return {
-        tier: 1 as const,
-        entryLimit: 2,
-        historyMaxHeight: 'max-h-[108px] sm:max-h-[128px]',
-        historyExprClass: 'text-[19px] sm:text-[21px] leading-[1.24]',
-        historyLongExprClass: 'text-[17px] sm:text-[19px] leading-[1.24]',
-        historyResClass: 'text-[20px] sm:text-[23px]',
-        historyLongResClass: 'text-[18px] sm:text-[20px]',
-        inputExprClass: 'text-[16px] sm:text-[18px] leading-[1.28]',
-      };
-    }
-    if (activeLen <= 68) {
-      return {
-        tier: 2 as const,
-        entryLimit: 2,
-        historyMaxHeight: 'max-h-[76px] sm:max-h-[90px]',
-        historyExprClass: 'text-[17px] sm:text-[19px] leading-[1.22]',
-        historyLongExprClass: 'text-[16px] sm:text-[18px] leading-[1.22]',
-        historyResClass: 'text-[18px] sm:text-[20px]',
-        historyLongResClass: 'text-[17px] sm:text-[19px]',
-        inputExprClass: 'text-[15px] sm:text-[16px] leading-[1.26]',
-      };
-    }
-    return {
-      tier: 3 as const,
-      entryLimit: 1,
-      historyMaxHeight: 'max-h-[52px] sm:max-h-[60px]',
-      historyExprClass: 'text-[16px] sm:text-[17px] leading-[1.2]',
-      historyLongExprClass: 'text-[15px] sm:text-[16px] leading-[1.2]',
-      historyResClass: 'text-[17px] sm:text-[18px]',
-      historyLongResClass: 'text-[16px] sm:text-[17px]',
-      inputExprClass: 'text-[14px] sm:text-[15px] leading-[1.24]',
-    };
-  }, [equationDisplay.length, mainResultDisplay.length]);
-
-  const previewTapeEntries = useMemo(() => {
-    return [...priorSource.slice(0, displayScale.entryLimit)].reverse();
-  }, [priorSource, displayScale.entryLimit]);
+  const resLen = mainResultDisplay.length;
+  const resTier = resLen <= 9 ? 0 : resLen <= 14 ? 1 : resLen <= 20 ? 2 : 3;
 
   const mainResultSizeClass =
-    mainResultDisplay.length > 16
-      ? 'text-[28px] sm:text-[34px] leading-[1.12]'
-      : mainResultDisplay.length > 10
-      ? 'text-[36px] sm:text-[44px] leading-[1.1]'
-      : 'text-[46px] sm:text-[56px] leading-[1.06]';
+    resTier === 0
+      ? 'text-[48px] sm:text-[56px] leading-[1.05]'
+      : resTier === 1
+      ? 'text-[38px] sm:text-[46px] leading-[1.08]'
+      : resTier === 2
+      ? 'text-[30px] sm:text-[36px] leading-[1.12]'
+      : 'text-[24px] sm:text-[28px] leading-[1.15]';
 
   const caretHeightClass =
-    mainResultDisplay.length > 16
-      ? 'h-8 sm:h-9'
-      : mainResultDisplay.length > 10
+    resTier === 0
+      ? 'h-11 sm:h-14'
+      : resTier === 1
       ? 'h-9 sm:h-11'
-      : 'h-11 sm:h-14';
+      : resTier === 2
+      ? 'h-8 sm:h-9'
+      : 'h-6 sm:h-7';
+
+  const displayScale = useMemo(() => {
+    const exprLen = equationDisplay.length;
+    const exprTier = exprLen <= 18 ? 0 : exprLen <= 36 ? 1 : exprLen <= 64 ? 2 : 3;
+    const tightBudgetTier =
+      availableHistoryHeightPx < 56 ? 2 : availableHistoryHeightPx < 110 ? 1 : 0;
+    const eqTier = Math.min(3, Math.max(exprTier, resTier, tightBudgetTier > 1 ? 1 : 0)) as
+      | 0
+      | 1
+      | 2
+      | 3;
+
+    const equationClass =
+      eqTier === 0
+        ? 'text-[22px] sm:text-[25px] leading-[1.24]'
+        : eqTier === 1
+        ? 'text-[19px] sm:text-[22px] leading-[1.24]'
+        : eqTier === 2
+        ? 'text-[17px] sm:text-[19px] leading-[1.22]'
+        : 'text-[15px] sm:text-[17px] leading-[1.22]';
+
+    const estimatedRowHeight = eqTier === 0 ? 32 : eqTier === 1 ? 29 : 26;
+    const heightBasedLimit =
+      availableHistoryHeightPx < 36
+        ? 0
+        : Math.max(1, Math.floor(availableHistoryHeightPx / estimatedRowHeight));
+    const tierMaxEntries = eqTier === 0 ? 8 : eqTier === 1 ? 5 : eqTier === 2 ? 3 : 1;
+    const entryLimit = Math.min(heightBasedLimit, tierMaxEntries);
+
+    return {
+      eqTier,
+      entryLimit,
+      historyMaxHeightPx: availableHistoryHeightPx,
+      equationClass,
+    };
+  }, [equationDisplay.length, resTier, availableHistoryHeightPx]);
+
+  const getHistoryEntryTypography = useCallback(
+    (ageFromBottom: number, isLongItem: boolean) => {
+      const effectiveAge = ageFromBottom + (isLongItem ? 1 : 0);
+      const { eqTier } = displayScale;
+
+      if (eqTier === 0) {
+        if (effectiveAge === 0) {
+          return {
+            exprClass: 'text-[18px] sm:text-[20px] leading-[1.24]',
+            resClass: 'text-[19px] sm:text-[21px]',
+            opacity: 0.86,
+          };
+        }
+        if (effectiveAge === 1) {
+          return {
+            exprClass: 'text-[16px] sm:text-[18px] leading-[1.22]',
+            resClass: 'text-[17px] sm:text-[19px]',
+            opacity: 0.64,
+          };
+        }
+        if (effectiveAge === 2) {
+          return {
+            exprClass: 'text-[14px] sm:text-[16px] leading-[1.2]',
+            resClass: 'text-[15px] sm:text-[17px]',
+            opacity: 0.44,
+          };
+        }
+        return {
+          exprClass: 'text-[13px] sm:text-[14px] leading-[1.18]',
+          resClass: 'text-[13.5px] sm:text-[14.5px]',
+          opacity: Math.max(0.16, 0.3 - (effectiveAge - 3) * 0.045),
+        };
+      }
+
+      if (eqTier === 1) {
+        if (effectiveAge === 0) {
+          return {
+            exprClass: 'text-[16px] sm:text-[18px] leading-[1.22]',
+            resClass: 'text-[17px] sm:text-[19px]',
+            opacity: 0.82,
+          };
+        }
+        if (effectiveAge === 1) {
+          return {
+            exprClass: 'text-[14.5px] sm:text-[16px] leading-[1.2]',
+            resClass: 'text-[15px] sm:text-[17px]',
+            opacity: 0.56,
+          };
+        }
+        return {
+          exprClass: 'text-[13px] sm:text-[14px] leading-[1.18]',
+          resClass: 'text-[13.5px] sm:text-[14.5px]',
+          opacity: Math.max(0.18, 0.36 - (effectiveAge - 2) * 0.06),
+        };
+      }
+
+      if (eqTier === 2) {
+        if (effectiveAge === 0) {
+          return {
+            exprClass: 'text-[14.5px] sm:text-[16px] leading-[1.2]',
+            resClass: 'text-[15px] sm:text-[17px]',
+            opacity: 0.78,
+          };
+        }
+        return {
+          exprClass: 'text-[13px] sm:text-[14px] leading-[1.18]',
+          resClass: 'text-[13.5px] sm:text-[14.5px]',
+          opacity: Math.max(0.22, 0.46 - (effectiveAge - 1) * 0.08),
+        };
+      }
+
+      if (effectiveAge === 0) {
+        return {
+          exprClass: 'text-[13px] sm:text-[14px] leading-[1.18]',
+          resClass: 'text-[13.5px] sm:text-[14.5px]',
+          opacity: 0.72,
+        };
+      }
+      return {
+        exprClass: 'text-[12px] sm:text-[13px] leading-[1.16]',
+        resClass: 'text-[12.5px] sm:text-[13.5px]',
+        opacity: 0.38,
+      };
+    },
+    [displayScale]
+  );
+
+  const previewTapeEntries = useMemo(() => {
+    if (displayScale.entryLimit <= 0) return [];
+    return [...priorSource.slice(0, displayScale.entryLimit)].reverse();
+  }, [priorSource, displayScale.entryLimit]);
 
   // Adaptive color classes (Light warm-stone palette + Dark obsidian sibling)
   const shellBg = isDark
@@ -575,7 +776,7 @@ export default function ScientificCalculator({
     : 'bg-[#ECEBE7] text-zinc-900 sm:border sm:border-[#DFDDD7]';
 
   const keyBase =
-    'min-h-[48px] sm:min-h-[54px] rounded-[20px] sm:rounded-[22px] flex items-center justify-center transition-all duration-150 active:scale-[0.94] cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215]';
+    'min-h-[48px] sm:min-h-[54px] rounded-[20px] sm:rounded-[22px] flex items-center justify-center transition-all duration-150 active:scale-[0.94] cursor-pointer select-none touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215]';
 
   const sciKeyClass = isDark
     ? `${keyBase} bg-[#1C1F26] hover:bg-[#252932] text-zinc-300 text-sm sm:text-[15px] font-medium border border-zinc-800/70`
@@ -851,8 +1052,8 @@ export default function ScientificCalculator({
       <div
         className={`flex-1 flex flex-col justify-between rounded-none sm:rounded-[34px] px-4 pt-2.5 pb-[max(0.85rem,env(safe-area-inset-bottom))] sm:p-5 sm:shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition-colors ${shellBg}`}
       >
-        {/* Minimalist Top Bar: Back Arrow Left (Home), No Title, Visible Three-Dot Menu Right (History & Copy) */}
-        <div className="flex items-center justify-between h-11 shrink-0 relative z-30">
+        {/* Minimalist Top Bar: Back Arrow Left (Home), No Title, Visible Three-Dot Menu Right */}
+        <div ref={topBarRef} className="flex items-center justify-between h-11 shrink-0 relative z-30">
           <button
             type="button"
             onClick={() => {
@@ -895,7 +1096,7 @@ export default function ScientificCalculator({
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.94, y: -6 }}
                   transition={{ duration: 0.14 }}
-                  className={`absolute right-0 top-12 z-40 w-44 rounded-2xl p-1.5 shadow-xl border ${
+                  className={`absolute right-0 top-12 z-40 w-56 rounded-2xl p-1.5 shadow-xl border ${
                     isDark
                       ? 'bg-[#1C1F26] border-zinc-700/80 text-zinc-100'
                       : 'bg-[#FAF9F6] border-[#DFDDD7] text-zinc-800'
@@ -909,11 +1110,11 @@ export default function ScientificCalculator({
                       setShowHistoryPage(true);
                       triggerVibration('click');
                     }}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
+                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer whitespace-nowrap ${
                       isDark ? 'hover:bg-zinc-800' : 'hover:bg-black/5'
                     }`}
                   >
-                    <History className="w-4 h-4 text-[#C25215]" />
+                    <History className="w-4 h-4 text-[#C25215] shrink-0" />
                     <span>Histories</span>
                   </button>
 
@@ -924,16 +1125,53 @@ export default function ScientificCalculator({
                       handleCopy();
                       setShowMenu(false);
                     }}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer disabled:opacity-40 ${
+                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer disabled:opacity-40 whitespace-nowrap ${
                       isDark ? 'hover:bg-zinc-800' : 'hover:bg-black/5'
                     }`}
                   >
                     {copied ? (
-                      <Check className="w-4 h-4 text-emerald-500" />
+                      <Check className="w-4 h-4 text-emerald-500 shrink-0" />
                     ) : (
-                      <Copy className="w-4 h-4 text-[#C25215]" />
+                      <Copy className="w-4 h-4 text-[#C25215] shrink-0" />
                     )}
                     <span>{copied ? 'Copied' : 'Copy'}</span>
+                  </button>
+
+                  <div
+                    className={`my-1 h-px ${isDark ? 'bg-zinc-800' : 'bg-[#E3E1DA]'}`}
+                    aria-hidden="true"
+                  />
+
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={isHapticOn}
+                    data-haptic={isHapticOn ? 'off' : 'custom'}
+                    onClick={handleToggleHapticSetting}
+                    className={`w-full flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                      isDark ? 'hover:bg-zinc-800' : 'hover:bg-black/5'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <Vibrate className="w-4 h-4 text-[#C25215] shrink-0" />
+                      <span>Haptic Feedback</span>
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                        isHapticOn
+                          ? 'bg-[#C25215]'
+                          : isDark
+                          ? 'bg-zinc-700'
+                          : 'bg-zinc-300'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-xs transition-transform ${
+                          isHapticOn ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                        }`}
+                      />
+                    </span>
                   </button>
                 </motion.div>
               )}
@@ -941,39 +1179,33 @@ export default function ScientificCalculator({
           </div>
         </div>
 
-        {/* Display Area: Dynamically Scaling & Shortening History Above + Active Input / Result Display */}
+        {/* Display Area: Height-Adaptive History Above + Graduated Equation & Largest Main Result */}
         <div className="flex-1 min-h-[168px] sm:min-h-[210px] flex flex-col justify-end overflow-hidden px-1 pb-4 pt-1">
-          {/* Dynamic History Section: Automatically shortens & scales down as active equation grows; older entries fade out */}
-          {previewTapeEntries.length > 0 && (
+          {/* Dynamic History Section: Adapts to available screen height & scales back as active input grows */}
+          {previewTapeEntries.length > 0 && displayScale.historyMaxHeightPx >= 36 && (
             <div
               aria-label="Recent calculations preview"
+              style={{ maxHeight: `${displayScale.historyMaxHeightPx}px` }}
               className={`mb-2.5 pb-2.5 border-b overflow-hidden flex flex-col justify-end transition-all duration-200 ${
-                displayScale.historyMaxHeight
-              } ${isDark ? 'border-zinc-800/75' : 'border-zinc-300/75'} ${
+                isDark ? 'border-zinc-800/75' : 'border-zinc-300/75'
+              } ${
                 previewTapeEntries.length > 1
                   ? '[mask-image:linear-gradient(to_bottom,transparent_0%,rgba(0,0,0,0.45)_34%,rgba(0,0,0,1)_82%)]'
-                  : '[mask-image:linear-gradient(to_bottom,rgba(0,0,0,0.6)_0%,rgba(0,0,0,1)_45%)]'
+                  : '[mask-image:linear-gradient(to_bottom,rgba(0,0,0,0.65)_0%,rgba(0,0,0,1)_45%)]'
               }`}
             >
               <div className="flex flex-col items-end justify-end gap-1.5">
                 <AnimatePresence initial={false} mode="popLayout">
                   {previewTapeEntries.map((item, idx) => {
                     const ageFromBottom = previewTapeEntries.length - 1 - idx;
-                    const targetOpacity =
-                      ageFromBottom === 0
-                        ? 0.88
-                        : ageFromBottom === 1
-                        ? 0.52
-                        : ageFromBottom === 2
-                        ? 0.28
-                        : 0.14;
-                    const isLongHistoryItem = item.expr.length + item.res.length > 36;
+                    const isLongHistoryItem = item.expr.length + item.res.length > 34;
+                    const entryTypo = getHistoryEntryTypography(ageFromBottom, isLongHistoryItem);
                     return (
                       <motion.button
                         key={item.id ?? `${item.expr}-${item.res}-${item.time}-${idx}`}
                         layout
                         initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: targetOpacity, y: 0 }}
+                        animate={{ opacity: entryTypo.opacity, y: 0 }}
                         exit={{ opacity: 0, y: -12 }}
                         transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
                         type="button"
@@ -988,18 +1220,14 @@ export default function ScientificCalculator({
                       >
                         <div
                           className={`font-normal tabular-nums whitespace-normal break-words transition-all duration-150 ${
-                            isLongHistoryItem
-                              ? displayScale.historyLongExprClass
-                              : displayScale.historyExprClass
+                            entryTypo.exprClass
                           } ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}
                         >
                           {item.expr} ={' '}
                           <span
-                            className={`font-medium ${
-                              isLongHistoryItem
-                                ? displayScale.historyLongResClass
-                                : displayScale.historyResClass
-                            } ${isDark ? 'text-zinc-200' : 'text-zinc-700'}`}
+                            className={`font-medium ${entryTypo.resClass} ${
+                              isDark ? 'text-zinc-200' : 'text-zinc-700'
+                            }`}
                           >
                             {item.res}
                           </span>
@@ -1013,7 +1241,7 @@ export default function ScientificCalculator({
           )}
 
           {/* Active Input Area */}
-          <div className="shrink-0">
+          <div ref={activeInputRef} className="shrink-0">
             {openParenCount > 0 && (
               <div className="flex justify-end mb-1.5">
                 <span
@@ -1027,18 +1255,18 @@ export default function ScientificCalculator({
               </div>
             )}
 
-            {/* Right-Aligned Wrapping Input Equation (sized smaller than history items above) */}
+            {/* Right-Aligned Wrapping Equation (gradually smaller than main result, larger than history) */}
             {equationDisplay && (
               <div
                 className={`text-right font-normal tabular-nums tracking-tight whitespace-normal break-words transition-all duration-150 ${
-                  displayScale.inputExprClass
+                  displayScale.equationClass
                 } ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}
               >
                 {equationDisplay}
               </div>
             )}
 
-            {/* Primary Result / Active Value + Burnt-Orange Caret */}
+            {/* Primary Result / Active Value (largest) + Burnt-Orange Caret */}
             <div className="mt-1.5 flex items-end justify-end gap-1.5">
               <span
                 className={`font-semibold tabular-nums tracking-tight text-right whitespace-normal break-all transition-all duration-150 ${mainResultSizeClass} ${
@@ -1070,6 +1298,7 @@ export default function ScientificCalculator({
         </div>
 
         {/* Keypad Grid (locked height across Scientific & Standard modes to prevent display shift) */}
+        <div ref={keypadRef} className="shrink-0">
         {calculatorView === 'scientific' ? (
           <div className="grid grid-cols-5 grid-rows-7 gap-2.5 sm:gap-3 h-[396px] sm:h-[450px] shrink-0">
             {/* Row 1: 2nd, deg, sin, cos, tan */}
@@ -1492,6 +1721,7 @@ export default function ScientificCalculator({
             </button>
           </div>
         )}
+        </div>
       </div>
     </div>
   );

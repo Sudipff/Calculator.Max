@@ -91,9 +91,16 @@ import { getBackupPermissions } from '../lib/backupPermissions';
 import type { NoteItem, SourceHistoryMeta } from '../lib/types/notes-tasks';
 import { exportAllHistoryPDF, exportSingleItemPDF } from '../lib/pdfExport';
 import { sanitizeCsvCell } from '../lib/validation';
+import {
+  getHapticEnabled,
+  setHapticEnabled,
+  triggerHaptic,
+  HAPTIC_CHANGED_EVENT,
+  type VibrationType,
+} from '../lib/haptics';
 
 type ActiveTab = 'home' | 'age' | 'calculator' | 'emi' | 'wishlist' | 'discount' | 'weight' | 'unit' | 'currency' | 'quick' | 'notes' | 'tasks' | 'history' | 'profile';
-export type VibrationType = 'success' | 'error' | 'click' | 'reset';
+export type { VibrationType };
 
 const TAB_ORDER: Record<ActiveTab, number> = {
   home: 0,
@@ -753,10 +760,37 @@ export default function RetailCalc() {
       setHistory(getCalculationHistory());
     }
 
+    const handleHapticSync = (e: Event) => {
+      const next = (e as CustomEvent)?.detail?.enabled;
+      if (typeof next === 'boolean') {
+        setHapticEnabledState(next);
+      } else {
+        setHapticEnabledState(getHapticEnabled());
+      }
+    };
+    setHapticEnabledState(getHapticEnabled());
+    window.addEventListener(HAPTIC_CHANGED_EVENT, handleHapticSync);
+
+    const handleGlobalButtonClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const interactive = target.closest(
+        'button:not(:disabled), [role="button"]:not([aria-disabled="true"]), [role="switch"]:not([aria-disabled="true"]), a[href], summary'
+      ) as HTMLElement | null;
+      if (!interactive) return;
+      if (interactive.getAttribute('data-haptic') === 'off') return;
+      triggerHaptic('click', { source: 'global' });
+    };
+    document.addEventListener('click', handleGlobalButtonClick, { capture: true });
+
     return () => {
       window.removeEventListener('calcmax:theme-changed', handleThemeSync);
+      window.removeEventListener(HAPTIC_CHANGED_EVENT, handleHapticSync);
+      document.removeEventListener('click', handleGlobalButtonClick, { capture: true });
     };
   }, [loadUserHistory]);
+
+  const [hapticEnabled, setHapticEnabledState] = useState<boolean>(true);
 
   useEffect(() => {
     if (isClient) {
@@ -802,9 +836,17 @@ export default function RetailCalc() {
     }
   }, []);
 
-  const triggerVibration = (_type: VibrationType = 'click') => {
-    // UI vibration completely removed as requested
-  };
+  const triggerVibration = useCallback((type: VibrationType = 'click') => {
+    triggerHaptic(type, { source: 'explicit' });
+  }, []);
+
+  const handleToggleHaptic = useCallback((nextEnabled: boolean) => {
+    setHapticEnabledState(nextEnabled);
+    setHapticEnabled(nextEnabled);
+    if (nextEnabled) {
+      triggerHaptic('click', { force: true, source: 'explicit' });
+    }
+  }, []);
 
   const handleTabChange = useCallback(
     (newTab: ActiveTab) => {
@@ -1206,6 +1248,7 @@ export default function RetailCalc() {
   }, []);
 
   const handleFocusDashboardSearch = () => {
+    triggerVibration('click');
     if (activeTab !== 'home') {
       handleTabChange('home');
     }
@@ -2780,6 +2823,8 @@ export default function RetailCalc() {
                   <CalculatorErrorBoundary>
                     <ScientificCalculator
                       triggerVibration={triggerVibration}
+                      hapticEnabled={hapticEnabled}
+                      onToggleHaptic={handleToggleHaptic}
                       onSaveHistory={(type, details, result) => saveHistoryItem(type, details, result)}
                       onBackHome={() => handleTabChange('home')}
                     />
