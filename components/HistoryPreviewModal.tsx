@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   X,
   CalendarDays,
@@ -16,7 +16,7 @@ import {
   Check,
   Sparkles,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useMotionValue, useTransform, animate } from 'motion/react';
 import { HistoryItem, parseSavedAmountFromText } from '../lib/historyStorage';
 
 type ToolTabTarget =
@@ -266,7 +266,13 @@ function parseSessionParameters(item: HistoryItem): {
       const resultParts = result.split(/\s*\|\s*/).filter(Boolean);
       resultParts.forEach((part, idx) => {
         const colonIdx = part.indexOf(':');
-        if (colonIdx !== -1) {
+        const eqMatch = part.match(/^(Quantity|Price)\s*=\s*(.+)$/i);
+        if (eqMatch) {
+          outcomes.push({
+            label: eqMatch[1].charAt(0).toUpperCase() + eqMatch[1].slice(1).toLowerCase(),
+            value: eqMatch[2].trim(),
+          });
+        } else if (colonIdx !== -1) {
           outcomes.push({
             label: part.slice(0, colonIdx).trim(),
             value: part.slice(colonIdx + 1).trim(),
@@ -362,6 +368,133 @@ export default function HistoryPreviewModal({
   onClose,
 }: HistoryPreviewModalProps) {
   const [copied, setCopied] = useState(false);
+  const backdropRef = useRef<HTMLDivElement | null>(null);
+  const scrollBodyRef = useRef<HTMLDivElement | null>(null);
+  const pointerDownOnBackdropRef = useRef(false);
+  const dragY = useMotionValue(0);
+  const dragScaleOpacity = useTransform(dragY, [0, 260], [1, 0.35]);
+
+  const dragSessionRef = useRef<{
+    active: boolean;
+    mode: 'header' | 'body' | null;
+    startY: number;
+    startX: number;
+    lastY: number;
+    lastTime: number;
+    velocityY: number;
+    moved: boolean;
+  }>({
+    active: false,
+    mode: null,
+    startY: 0,
+    startX: 0,
+    lastY: 0,
+    lastTime: 0,
+    velocityY: 0,
+    moved: false,
+  });
+
+  const isOpen = Boolean(item);
+
+  // Reset drag offset whenever a modal session opens
+  useEffect(() => {
+    if (isOpen) {
+      dragY.set(0);
+    }
+  }, [isOpen, dragY]);
+
+  // Strict modal backdrop scroll lock across desktop & mobile browsers (html + body + fixed position restore)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const html = document.documentElement;
+    const body = document.body;
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    const scrollbarWidth = Math.max(0, window.innerWidth - html.clientWidth);
+
+    const prevHtmlOverflow = html.style.overflow;
+    const prevHtmlOverscroll = html.style.overscrollBehavior;
+    const prevBodyOverflow = body.style.overflow;
+    const prevBodyOverscroll = body.style.overscrollBehavior;
+    const prevBodyPosition = body.style.position;
+    const prevBodyTop = body.style.top;
+    const prevBodyLeft = body.style.left;
+    const prevBodyRight = body.style.right;
+    const prevBodyWidth = body.style.width;
+    const prevBodyPaddingRight = body.style.paddingRight;
+
+    html.style.overflow = 'hidden';
+    html.style.overscrollBehavior = 'none';
+    body.style.overflow = 'hidden';
+    body.style.overscrollBehavior = 'none';
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.left = '0';
+    body.style.right = '0';
+    body.style.width = '100%';
+    if (scrollbarWidth > 0) {
+      body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      html.style.overscrollBehavior = prevHtmlOverscroll;
+      body.style.overflow = prevBodyOverflow;
+      body.style.overscrollBehavior = prevBodyOverscroll;
+      body.style.position = prevBodyPosition;
+      body.style.top = prevBodyTop;
+      body.style.left = prevBodyLeft;
+      body.style.right = prevBodyRight;
+      body.style.width = prevBodyWidth;
+      body.style.paddingRight = prevBodyPaddingRight;
+      window.scrollTo(0, scrollY);
+    };
+  }, [isOpen]);
+
+  // Block wheel and touchmove events on backdrop or non-scrollable areas from bubbling to background
+  useEffect(() => {
+    if (!isOpen) return;
+    const backdropEl = backdropRef.current;
+    if (!backdropEl) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      const scrollEl = scrollBodyRef.current;
+      if (!scrollEl || !scrollEl.contains(e.target as Node)) {
+        e.preventDefault();
+        return;
+      }
+      const { scrollTop, scrollHeight, clientHeight } = scrollEl;
+      const atTop = scrollTop <= 0 && e.deltaY < 0;
+      const atBottom = scrollTop + clientHeight >= scrollHeight - 1 && e.deltaY > 0;
+      if (scrollHeight <= clientHeight || atTop || atBottom) {
+        e.preventDefault();
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      const scrollEl = scrollBodyRef.current;
+      if (!scrollEl || !scrollEl.contains(e.target as Node)) {
+        e.preventDefault();
+        return;
+      }
+      if (dragSessionRef.current.active && dragSessionRef.current.mode === 'body') {
+        const touch = e.touches[0];
+        if (touch) {
+          const deltaY = touch.clientY - dragSessionRef.current.startY;
+          if (dragSessionRef.current.moved || (scrollEl.scrollTop <= 0 && deltaY > 4)) {
+            e.preventDefault();
+          }
+        }
+      }
+    };
+
+    backdropEl.addEventListener('wheel', handleWheel, { passive: false });
+    backdropEl.addEventListener('touchmove', handleTouchMove, { passive: false });
+    return () => {
+      backdropEl.removeEventListener('wheel', handleWheel);
+      backdropEl.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, [isOpen]);
 
   // Close on Escape key
   useEffect(() => {
@@ -374,6 +507,117 @@ export default function HistoryPreviewModal({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [item, onClose]);
+
+  const finishDrag = useCallback(() => {
+    const session = dragSessionRef.current;
+    if (!session.active) return;
+
+    const currentY = dragY.get();
+    const shouldDismiss = currentY > 90 || (currentY > 24 && session.velocityY > 0.45);
+
+    session.active = false;
+    session.mode = null;
+
+    if (shouldDismiss) {
+      onClose();
+    } else if (currentY > 0) {
+      animate(dragY, 0, {
+        type: 'spring',
+        stiffness: 420,
+        damping: 34,
+      });
+    }
+  }, [dragY, onClose]);
+
+  const handleDragStart = useCallback(
+    (clientX: number, clientY: number, mode: 'header' | 'body', target: EventTarget | null) => {
+      // Never hijack interactive controls like close or copy buttons
+      if (
+        target instanceof Element &&
+        target.closest('button, a, input, select, textarea, [data-no-drag="true"]')
+      ) {
+        return;
+      }
+      dragSessionRef.current = {
+        active: true,
+        mode,
+        startY: clientY,
+        startX: clientX,
+        lastY: clientY,
+        lastTime: performance.now(),
+        velocityY: 0,
+        moved: false,
+      };
+    },
+    []
+  );
+
+  const handleDragMove = useCallback(
+    (clientX: number, clientY: number, preventDefault?: () => void) => {
+      const session = dragSessionRef.current;
+      if (!session.active) return;
+
+      const deltaY = clientY - session.startY;
+      const deltaX = clientX - session.startX;
+
+      if (session.mode === 'body') {
+        const scrollTop = scrollBodyRef.current?.scrollTop ?? 0;
+        // If user hasn't started dragging the sheet and is scrolling up or body is already scrolled, let native scroll handle it
+        if (!session.moved) {
+          if (scrollTop > 0 || deltaY <= 4 || Math.abs(deltaX) > Math.abs(deltaY)) {
+            if (deltaY < -4 || scrollTop > 0) {
+              session.active = false;
+            }
+            return;
+          }
+        }
+      }
+
+      if (deltaY > 0 || session.moved) {
+        const clampedY = Math.max(0, deltaY);
+        if (clampedY > 3) {
+          session.moved = true;
+        }
+        const now = performance.now();
+        const dt = Math.max(1, now - session.lastTime);
+        session.velocityY = (clientY - session.lastY) / dt;
+        session.lastY = clientY;
+        session.lastTime = now;
+
+        dragY.set(clampedY);
+        if (session.moved && preventDefault) {
+          preventDefault();
+        }
+      }
+    },
+    [dragY]
+  );
+
+  // Global mouse/pointer tracking while header drag is active on desktop
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleWindowPointerMove = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return;
+      if (!dragSessionRef.current.active) return;
+      handleDragMove(e.clientX, e.clientY);
+    };
+
+    const handleWindowPointerUp = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return;
+      if (!dragSessionRef.current.active) return;
+      finishDrag();
+    };
+
+    window.addEventListener('pointermove', handleWindowPointerMove);
+    window.addEventListener('pointerup', handleWindowPointerUp);
+    window.addEventListener('pointercancel', handleWindowPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove);
+      window.removeEventListener('pointerup', handleWindowPointerUp);
+      window.removeEventListener('pointercancel', handleWindowPointerUp);
+    };
+  }, [isOpen, handleDragMove, finishDrag]);
 
   const parsed = useMemo(() => {
     if (!item) return { parameters: [], outcomes: [] };
@@ -417,24 +661,68 @@ export default function HistoryPreviewModal({
   return (
     <AnimatePresence>
       {item && (
-        <div
+        <motion.div
+          ref={backdropRef}
           id="history-preview-backdrop"
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs"
-          onClick={onClose}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs overscroll-none touch-none select-none sm:select-auto"
+          onPointerDown={(e) => {
+            pointerDownOnBackdropRef.current = e.target === e.currentTarget;
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && pointerDownOnBackdropRef.current) {
+              onClose();
+            }
+            pointerDownOnBackdropRef.current = false;
+          }}
           role="dialog"
           aria-modal="true"
           aria-labelledby="history-preview-title"
         >
         <motion.div
-          initial={{ opacity: 0, y: 24, scale: 0.97 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 24, scale: 0.97 }}
-          transition={{ duration: 0.2, ease: 'easeOut' }}
+          initial={{ opacity: 0, y: '100%' }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: '100%' }}
+          transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-100 max-w-2xl w-full max-h-[92dvh] sm:max-h-[88dvh] flex flex-col overflow-hidden relative"
+          className="max-w-2xl w-full max-h-[92dvh] sm:max-h-[88dvh] flex flex-col"
         >
-          {/* Header Banner */}
-          <div className={`bg-gradient-to-br ${theme.headerGradient} px-5 py-4 sm:px-6 sm:py-5 border-b border-slate-100 shrink-0`}>
+        <motion.div
+          style={{ y: dragY, opacity: dragScaleOpacity }}
+          className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-100 w-full max-h-[92dvh] sm:max-h-[88dvh] flex flex-col overflow-hidden relative will-change-transform"
+        >
+          {/* Swipeable Header Banner with Top Drag Handle */}
+          <div
+            data-drag-handle="true"
+            onPointerDown={(e) => {
+              if (e.pointerType === 'touch') return;
+              handleDragStart(e.clientX, e.clientY, 'header', e.target);
+            }}
+            onTouchStart={(e) => {
+              const touch = e.touches[0];
+              if (!touch) return;
+              handleDragStart(touch.clientX, touch.clientY, 'header', e.target);
+            }}
+            onTouchMove={(e) => {
+              const touch = e.touches[0];
+              if (!touch) return;
+              handleDragMove(touch.clientX, touch.clientY, () => e.preventDefault());
+            }}
+            onTouchEnd={finishDrag}
+            onTouchCancel={finishDrag}
+            className={`bg-gradient-to-br ${theme.headerGradient} px-5 pt-2.5 pb-4 sm:px-6 sm:pt-3 sm:pb-5 border-b border-slate-100 shrink-0 touch-none cursor-grab active:cursor-grabbing select-none`}
+          >
+            {/* Bottom-sheet Swipe Handle Indicator */}
+            <div className="flex justify-center pb-2.5">
+              <div
+                className="w-11 h-1.5 rounded-full bg-slate-300/90"
+                aria-hidden="true"
+              />
+            </div>
+
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-start gap-3.5 min-w-0">
                 <div className={`w-11 h-11 sm:w-12 sm:h-12 rounded-2xl ${theme.iconBg} ${theme.iconText} flex items-center justify-center shrink-0 shadow-xs`}>
@@ -458,6 +746,9 @@ export default function HistoryPreviewModal({
 
               <button
                 type="button"
+                data-no-drag="true"
+                onPointerDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
                 onClick={onClose}
                 className="p-2 rounded-xl bg-white/80 hover:bg-white text-slate-500 hover:text-slate-800 border border-slate-200/70 transition-colors cursor-pointer shrink-0"
                 aria-label="Close session preview"
@@ -467,8 +758,25 @@ export default function HistoryPreviewModal({
             </div>
           </div>
 
-          {/* Scrollable Body */}
-          <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5">
+          {/* Scrollable Body (supports downward pull-to-dismiss when scrolled to top) */}
+          <div
+            ref={scrollBodyRef}
+            onTouchStart={(e) => {
+              const touch = e.touches[0];
+              if (!touch) return;
+              if ((scrollBodyRef.current?.scrollTop ?? 0) <= 0) {
+                handleDragStart(touch.clientX, touch.clientY, 'body', e.target);
+              }
+            }}
+            onTouchMove={(e) => {
+              const touch = e.touches[0];
+              if (!touch) return;
+              handleDragMove(touch.clientX, touch.clientY);
+            }}
+            onTouchEnd={finishDrag}
+            onTouchCancel={finishDrag}
+            className="flex-1 overflow-y-auto overscroll-contain touch-pan-y p-5 sm:p-6 space-y-5 select-text"
+          >
             {/* Highlighted Calculation Outcomes */}
             <div className="bg-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-inner space-y-3">
               <div className="flex items-center justify-between gap-2">
@@ -561,7 +869,8 @@ export default function HistoryPreviewModal({
             </div>
           </div>
         </motion.div>
-      </div>
+        </motion.div>
+      </motion.div>
       )}
     </AnimatePresence>
   );

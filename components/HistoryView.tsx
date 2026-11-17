@@ -249,6 +249,17 @@ function getDateGroupMeta(item: HistoryItem): {
 function formatCleanResult(rawResult: string): string {
   const cleaned = (rawResult || '').replace(/^Converted Result:\s*/i, '').trim();
   if (!cleaned) return '=';
+
+  const qtyMatch = cleaned.match(/^(?:Calculated Purchase Quantity:\s*|Quantity\s*=\s*)(.+)$/i);
+  if (qtyMatch) {
+    return `Quantity = ${qtyMatch[1].trim()}`;
+  }
+
+  const priceMatch = cleaned.match(/^(?:Calculated Total Price:\s*|Price\s*=\s*)(.+)$/i);
+  if (priceMatch) {
+    return `Price = ${priceMatch[1].trim()}`;
+  }
+
   return cleaned.startsWith('=') ? cleaned : `= ${cleaned}`;
 }
 
@@ -1156,7 +1167,7 @@ export default function HistoryView({
                         }
                         onInspectItem(item);
                       }}
-                      className={`bg-white rounded-2xl p-4 border shadow-[0_2px_10px_rgba(15,23,42,0.04)] transition-all cursor-pointer flex flex-col justify-between gap-2.5 text-left relative select-none ${
+                      className={`min-w-0 bg-white rounded-2xl p-4 sm:p-5 border shadow-[0_2px_10px_rgba(15,23,42,0.04)] transition-all cursor-pointer flex flex-col justify-between gap-3 text-left relative select-none ${
                         isSelected
                           ? 'border-indigo-600 ring-2 ring-indigo-600/30 bg-indigo-50/20'
                           : 'border-slate-200/80 hover:border-slate-300 hover:shadow-md'
@@ -1337,13 +1348,13 @@ export default function HistoryView({
                       </div>
 
                       {/* Equation / Input Summary */}
-                      <p className="text-xs sm:text-sm font-medium text-slate-600 line-clamp-2 leading-snug">
+                      <p className="min-w-0 text-xs sm:text-sm font-medium text-slate-600 line-clamp-2 leading-snug break-words">
                         {item.details}
                       </p>
 
                       {/* Primary Result Display */}
-                      <div className="flex items-baseline justify-between gap-2 pt-0.5">
-                        <p className="text-lg sm:text-xl font-black text-slate-900 tabular-nums tracking-tight truncate">
+                      <div className="min-w-0 flex items-baseline justify-between gap-2 pt-0.5">
+                        <p className="min-w-0 flex-1 text-base sm:text-lg font-black text-slate-900 tabular-nums tracking-tight leading-snug break-words">
                           {cleanResult}
                         </p>
 

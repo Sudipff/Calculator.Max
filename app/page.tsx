@@ -362,15 +362,6 @@ export default function RetailCalc() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [storageFullSnapshot, setStorageFullSnapshot] = useState<StorageSnapshot | null>(null);
 
-  useEffect(() => {
-    if (!previewHistoryItem) return;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [previewHistoryItem]);
-
   // Quick Tools States
   const [originalPrice, setOriginalPrice] = useState('');
   const [discount, setDiscount] = useState('');
@@ -1570,7 +1561,7 @@ export default function RetailCalc() {
         saveHistoryItem(
           'Weight',
           `Price Rate: ${currency}${computedCost.pricePerUnit.toFixed(2)} / ${unitLabel} | Target Weight: ${computedCost.formattedWeight}`,
-          `Calculated Total Price: ${currency}${computedCost.totalCost.toFixed(2)}`
+          `Price = ${currency}${computedCost.totalCost.toFixed(2)}`
         );
       } else {
         triggerVibration('error');
@@ -1596,7 +1587,7 @@ export default function RetailCalc() {
       saveHistoryItem(
         'Weight',
         `Price Rate: ${currency}${computed.pricePerUnit.toFixed(2)} / ${unitLabel} | Shopping Budget: ${currency}${computed.budget.toFixed(2)}`,
-        `Calculated Purchase Quantity: ${computed.formattedQty}`
+        `Quantity = ${computed.formattedQty}`
       );
     } else {
       triggerVibration('error');
@@ -2592,12 +2583,14 @@ export default function RetailCalc() {
 
         {/* Main Content Area */}
         <main
-          className={`flex-1 flex flex-col relative pb-20 ${
+          className={`flex-1 flex flex-col relative ${
             activeTab === 'calculator'
-              ? 'p-0 sm:px-6 sm:pt-3 sm:pb-24 md:px-8 space-y-0 sm:space-y-4'
+              ? 'p-0 pb-20 sm:px-6 sm:pt-3 sm:pb-24 md:px-8 space-y-0 sm:space-y-4'
               : activeTab === 'home'
               ? 'p-0 pb-20'
-              : activeTab === 'history' || activeTab === 'notes' || activeTab === 'tasks'
+              : activeTab === 'notes' || activeTab === 'tasks'
+              ? 'px-3 sm:px-6 md:px-8 pt-0 pb-6'
+              : activeTab === 'history'
               ? 'px-3 sm:px-6 md:px-8 pt-0 pb-24'
               : 'px-3 sm:px-6 md:px-8 pt-2.5 sm:pt-4 pb-24 space-y-3 sm:space-y-5'
           }`}
@@ -2789,6 +2782,11 @@ export default function RetailCalc() {
                     closeEditorSignal={noteEditorCloseSignal}
                     refreshSignal={notesRefreshSignal}
                     onOpenProfile={() => handleTabChange('profile')}
+                    onBack={() => {
+                      if (!handleStepBackHierarchy()) {
+                        handleTabChange('home');
+                      }
+                    }}
                     onReturnToHistory={(source) => handleRestoreToHistory(source)}
                   />
                 </section>
@@ -2805,6 +2803,11 @@ export default function RetailCalc() {
                     closeEditorSignal={noteEditorCloseSignal}
                     refreshSignal={tasksRefreshSignal}
                     onOpenProfile={() => handleTabChange('profile')}
+                    onBack={() => {
+                      if (!handleStepBackHierarchy()) {
+                        handleTabChange('home');
+                      }
+                    }}
                     onReturnToHistory={(source) => handleRestoreToHistory(source)}
                   />
                 </section>
@@ -2936,8 +2939,8 @@ export default function RetailCalc() {
           </AnimatePresence>
         </main>
 
-        {/* Bottom Navigation Bar: Home, History, Search, Notes, Tasks */}
-        {!isNoteFullScreen && (
+        {/* Bottom Navigation Bar: Home, History, Search, Notes, Tasks (hidden across Notes and Tasks views for minimalist interface) */}
+        {!isNoteFullScreen && activeTab !== 'notes' && activeTab !== 'tasks' && (
           <nav
             aria-label="Primary bottom navigation"
             className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/80 shadow-[0_-4px_20px_rgba(15,23,42,0.04)] pb-[env(safe-area-inset-bottom)] transition-colors"
