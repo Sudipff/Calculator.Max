@@ -37,7 +37,6 @@ import { useTheme } from '@/components/ThemeProvider';
 import {
   getHapticEnabled,
   setHapticEnabled,
-  triggerHaptic,
   HAPTIC_CHANGED_EVENT,
 } from '@/lib/haptics';
 
@@ -430,7 +429,6 @@ export default function ScientificCalculator({
     if (!textToCopy || textToCopy === 'Error') return;
     navigator.clipboard?.writeText(textToCopy);
     setCopied(true);
-    triggerVibration('click');
     showNotification({
       id: 'calc-copy',
       message: 'Copied to clipboard',
@@ -448,7 +446,6 @@ export default function ScientificCalculator({
     if (!res || res === 'Error') return;
     navigator.clipboard?.writeText(res);
     setCopiedHistoryId(entryKey);
-    triggerVibration('click');
     showNotification({
       id: 'calc-history-copy',
       message: 'Result copied',
@@ -554,11 +551,9 @@ export default function ScientificCalculator({
     if (savingHistoryKeys[entryKey] || savedHistoryKeys[entryKey]) return;
 
     setSavingHistoryKeys((prev) => ({ ...prev, [entryKey]: true }));
-    triggerVibration('click');
     try {
       await onSaveHistory?.('Calculator', item.expr, `Result: ${item.res}`);
       setSavedHistoryKeys((prev) => ({ ...prev, [entryKey]: true }));
-      triggerVibration('success');
       showNotification({
         id: `calc-save-${entryKey}`,
         message: 'Saved to main History',
@@ -566,7 +561,6 @@ export default function ScientificCalculator({
         duration: 1800,
       });
     } catch {
-      triggerVibration('error');
       showNotification({
         id: `calc-save-err-${entryKey}`,
         message: 'Could not save calculation',
@@ -589,9 +583,6 @@ export default function ScientificCalculator({
       onToggleHaptic(next);
     } else {
       setHapticEnabled(next);
-      if (next) {
-        triggerHaptic('click', { force: true, source: 'explicit' });
-      }
     }
     showNotification({
       id: 'calc-haptic-toggle',
@@ -816,7 +807,6 @@ export default function ScientificCalculator({
             <button
               type="button"
               onClick={() => {
-                triggerVibration('click');
                 setShowClearConfirm(false);
                 setShowHistoryPage(false);
               }}
@@ -837,7 +827,6 @@ export default function ScientificCalculator({
               <button
                 type="button"
                 onClick={() => {
-                  triggerVibration('click');
                   setShowClearConfirm((prev) => !prev);
                 }}
                 className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-2xl transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] ${
@@ -876,7 +865,6 @@ export default function ScientificCalculator({
                   <button
                     type="button"
                     onClick={() => {
-                      triggerVibration('click');
                       setShowClearConfirm(false);
                     }}
                     className={`px-3 py-1.5 rounded-xl text-xs font-medium cursor-pointer transition-colors ${
@@ -891,7 +879,6 @@ export default function ScientificCalculator({
                       dispatch({ type: 'CLEAR_TAPE' });
                       setSavedHistoryKeys({});
                       setShowClearConfirm(false);
-                      triggerVibration('reset');
                       showNotification({
                         id: 'calc-history-clear',
                         message: 'Calculator histories cleared',
@@ -973,7 +960,6 @@ export default function ScientificCalculator({
                             dispatch({ type: 'LOAD_TAPE', res: item.res });
                             setShowClearConfirm(false);
                             setShowHistoryPage(false);
-                            triggerVibration('click');
                           }}
                           className="flex-1 min-w-0 text-right cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] rounded-xl py-0.5"
                           title="Tap to load result into calculator"
@@ -1057,7 +1043,6 @@ export default function ScientificCalculator({
           <button
             type="button"
             onClick={() => {
-              triggerVibration('click');
               onBackHome?.();
             }}
             className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-2xl transition-colors cursor-pointer ${
@@ -1076,7 +1061,6 @@ export default function ScientificCalculator({
               type="button"
               onClick={() => {
                 setShowMenu((prev) => !prev);
-                triggerVibration('click');
               }}
               className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-2xl transition-colors cursor-pointer ${
                 isDark
@@ -1108,7 +1092,6 @@ export default function ScientificCalculator({
                       setShowMenu(false);
                       setShowClearConfirm(false);
                       setShowHistoryPage(true);
-                      triggerVibration('click');
                     }}
                     className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer whitespace-nowrap ${
                       isDark ? 'hover:bg-zinc-800' : 'hover:bg-black/5'
@@ -1211,7 +1194,6 @@ export default function ScientificCalculator({
                         type="button"
                         onClick={() => {
                           dispatch({ type: 'LOAD_TAPE', res: item.res });
-                          triggerVibration('click');
                         }}
                         className={`w-full text-right rounded-lg px-1.5 py-0.5 transition-colors cursor-pointer hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] ${
                           isDark ? 'hover:bg-white/5' : 'hover:bg-black/[0.04]'

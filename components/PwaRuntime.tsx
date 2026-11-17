@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { WifiOff } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 import {
@@ -75,6 +75,8 @@ function readCachedUserId(): string | null {
 
 export default function PwaRuntime() {
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
+  const swRegistrationRef = useRef<ServiceWorkerRegistration | null>(null);
+  const hasReloadedForSwRef = useRef<boolean>(false);
 
   const runCloudSync = useCallback(async (uid: string | null) => {
     if (!uid || (typeof navigator !== 'undefined' && !navigator.onLine)) {
@@ -101,6 +103,20 @@ export default function PwaRuntime() {
     } catch {
       // Background sync will retry automatically on next trigger
     }
+  }, []);
+
+  const checkServiceWorkerUpdates = useCallback(() => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+    const reg = swRegistrationRef.current;
+    if (reg) {
+      if (reg.waiting) {
+        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
+      reg.update().catch(() => {});
+    }
+    navigator.serviceWorker.controller?.postMessage({ type: 'CHECK_FOR_UPDATES' });
   }, []);
 
   // Resolve user session cleanly & subscribe to auth state updates
@@ -152,23 +168,49 @@ export default function PwaRuntime() {
     }
   }, [activeUserId]);
 
-  // Register Service Worker, Periodic Reminder Sync, and SW-to-Window sync messages
+  // Register Service Worker, handle updatefound/controllerchange lifecycle, and SW-to-Window sync messages
   useEffect(() => {
     if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
       return;
     }
 
     let isMounted = true;
+    const hadControllerInitially = Boolean(navigator.serviceWorker.controller);
+
+    const promptWaitingWorker = (worker: ServiceWorker | null) => {
+      if (!worker) return;
+      worker.postMessage({ type: 'SKIP_WAITING' });
+    };
+
     const registerSW = () => {
       if (!isMounted) return;
       navigator.serviceWorker
         .register('/sw.js', { scope: '/', updateViaCache: 'none' })
         .then((reg) => {
+          if (!isMounted) return;
+          swRegistrationRef.current = reg;
+
           if (reg.waiting) {
-            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+            promptWaitingWorker(reg.waiting);
           }
+
+          reg.addEventListener('updatefound', () => {
+            const installingWorker = reg.installing;
+            if (!installingWorker) return;
+            installingWorker.addEventListener('statechange', () => {
+              if (
+                installingWorker.state === 'installed' &&
+                navigator.serviceWorker.controller
+              ) {
+                promptWaitingWorker(reg.waiting || installingWorker);
+              }
+            });
+          });
+
           reg.update().catch(() => {});
-          // Attempt periodic reminder check registration (Chromium PWAs)
+          reg.active?.postMessage({ type: 'CHECK_FOR_UPDATES' });
+
+          // Attempt periodic reminder & update check registration (Chromium PWAs)
           const periodic = (reg as unknown as {
             periodicSync?: { register: (tag: string, opts: { minInterval: number }) => Promise<void> };
           }).periodicSync;
@@ -185,21 +227,56 @@ export default function PwaRuntime() {
 
     registerSW();
 
+    const handleControllerChange = () => {
+      if (!hadControllerInitially || hasReloadedForSwRef.current) return;
+      hasReloadedForSwRef.current = true;
+      window.location.reload();
+    };
+
     const handleSwMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'CALCMAX_TRIGGER_OFFLINE_SYNC') {
+      const msgType = event.data?.type;
+      if (msgType === 'CALCMAX_TRIGGER_OFFLINE_SYNC') {
         void runCloudSync(activeUserId || readCachedUserId());
+      } else if (msgType === 'CALCMAX_SW_UPDATED' || msgType === 'CALCMAX_SW_ACTIVATED') {
+        const incomingVersion =
+          typeof event.data?.version === 'string' ? event.data.version : null;
+        if (!incomingVersion) return;
+        try {
+          const prevVersion = localStorage.getItem('calcmax_sw_deployment_version');
+          localStorage.setItem('calcmax_sw_deployment_version', incomingVersion);
+          if (
+            msgType === 'CALCMAX_SW_UPDATED' &&
+            prevVersion &&
+            prevVersion !== incomingVersion &&
+            !hasReloadedForSwRef.current
+          ) {
+            hasReloadedForSwRef.current = true;
+            window.location.reload();
+          }
+        } catch {
+          // Ignore storage restrictions
+        }
       }
     };
+
+    navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
     navigator.serviceWorker.addEventListener('message', handleSwMessage);
+
+    // Periodically check for newly deployed service worker / cache version while app is open
+    const updateCheckInterval = setInterval(() => {
+      checkServiceWorkerUpdates();
+    }, 5 * 60 * 1000);
 
     return () => {
       isMounted = false;
+      clearInterval(updateCheckInterval);
       window.removeEventListener('load', registerSW);
+      navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
       navigator.serviceWorker.removeEventListener('message', handleSwMessage);
     };
-  }, [activeUserId, runCloudSync]);
+  }, [activeUserId, checkServiceWorkerUpdates, runCloudSync]);
 
-  // Automatic Offline-to-Cloud Sync on reconnect, focus, visibility restore, and local sync events
+  // Automatic Offline-to-Cloud Sync & SW Update Check on reconnect, focus, and visibility restore
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -210,6 +287,7 @@ export default function PwaRuntime() {
     }
 
     const handleOnline = () => {
+      checkServiceWorkerUpdates();
       const targetUid = activeUserId || readCachedUserId();
       if (targetUid) {
         void runCloudSync(targetUid);
@@ -218,6 +296,7 @@ export default function PwaRuntime() {
 
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
+        checkServiceWorkerUpdates();
         const targetUid = activeUserId || readCachedUserId();
         void syncRemindersToDeviceStore(getLocalNotes(targetUid), getLocalTasks(targetUid));
         void checkAndFireDueReminders();
@@ -234,9 +313,9 @@ export default function PwaRuntime() {
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('focus', handleVisibilityOrFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
-  }, [activeUserId, runCloudSync]);
+  }, [activeUserId, checkServiceWorkerUpdates, runCloudSync]);
 
   // Global cross-tab scheduled reminder monitor & offline catch-up checker
   useEffect(() => {

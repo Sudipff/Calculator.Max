@@ -771,22 +771,9 @@ export default function RetailCalc() {
     setHapticEnabledState(getHapticEnabled());
     window.addEventListener(HAPTIC_CHANGED_EVENT, handleHapticSync);
 
-    const handleGlobalButtonClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      const interactive = target.closest(
-        'button:not(:disabled), [role="button"]:not([aria-disabled="true"]), [role="switch"]:not([aria-disabled="true"]), a[href], summary'
-      ) as HTMLElement | null;
-      if (!interactive) return;
-      if (interactive.getAttribute('data-haptic') === 'off') return;
-      triggerHaptic('click', { source: 'global' });
-    };
-    document.addEventListener('click', handleGlobalButtonClick, { capture: true });
-
     return () => {
       window.removeEventListener('calcmax:theme-changed', handleThemeSync);
       window.removeEventListener(HAPTIC_CHANGED_EVENT, handleHapticSync);
-      document.removeEventListener('click', handleGlobalButtonClick, { capture: true });
     };
   }, [loadUserHistory]);
 
@@ -836,16 +823,17 @@ export default function RetailCalc() {
     }
   }, []);
 
-  const triggerVibration = useCallback((type: VibrationType = 'click') => {
+  const triggerVibration = useCallback((_type: VibrationType = 'click') => {
+    // Non-calculator buttons do not trigger haptic feedback
+  }, []);
+
+  const triggerCalcVibration = useCallback((type: VibrationType = 'click') => {
     triggerHaptic(type, { source: 'explicit' });
   }, []);
 
   const handleToggleHaptic = useCallback((nextEnabled: boolean) => {
     setHapticEnabledState(nextEnabled);
     setHapticEnabled(nextEnabled);
-    if (nextEnabled) {
-      triggerHaptic('click', { force: true, source: 'explicit' });
-    }
   }, []);
 
   const handleTabChange = useCallback(
@@ -2822,7 +2810,7 @@ export default function RetailCalc() {
                 <section className="w-full flex-1 flex flex-col m-0 p-0">
                   <CalculatorErrorBoundary>
                     <ScientificCalculator
-                      triggerVibration={triggerVibration}
+                      triggerVibration={triggerCalcVibration}
                       hapticEnabled={hapticEnabled}
                       onToggleHaptic={handleToggleHaptic}
                       onSaveHistory={(type, details, result) => saveHistoryItem(type, details, result)}

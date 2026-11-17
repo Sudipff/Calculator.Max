@@ -1,7 +1,11 @@
-const CACHE_NAME = 'calculator-max-pwa-v4';
+const CACHE_PREFIX = 'calculator-max-pwa-v5';
+let activeCacheName = CACHE_PREFIX;
+let activeDeploymentVersion = 'v5';
+
 const PUSH_DB_NAME = 'calcMaxPushDB';
 const PUSH_DB_VERSION = 1;
 const REMINDERS_STORE = 'reminders';
+const META_STORE = 'sw_meta';
 
 const PRECACHE_URLS = [
   '/',
@@ -42,11 +46,14 @@ const scheduledTimeouts = new Map();
 function openRemindersDB() {
   return new Promise((resolve) => {
     try {
-      const req = self.indexedDB.open(PUSH_DB_NAME, PUSH_DB_VERSION);
+      const req = self.indexedDB.open(PUSH_DB_NAME, PUSH_DB_VERSION + 1);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(REMINDERS_STORE)) {
           db.createObjectStore(REMINDERS_STORE, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(META_STORE)) {
+          db.createObjectStore(META_STORE, { keyPath: 'key' });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -55,6 +62,131 @@ function openRemindersDB() {
       resolve(null);
     }
   });
+}
+
+async function readMetaValue(key) {
+  const db = await openRemindersDB();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(META_STORE, 'readonly');
+      const store = tx.objectStore(META_STORE);
+      const req = store.get(key);
+      req.onsuccess = () => {
+        db.close();
+        resolve(req.result ? req.result.value : null);
+      };
+      req.onerror = () => {
+        db.close();
+        resolve(null);
+      };
+    } catch {
+      db.close();
+      resolve(null);
+    }
+  });
+}
+
+async function writeMetaValue(key, value) {
+  const db = await openRemindersDB();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(META_STORE, 'readwrite');
+      const store = tx.objectStore(META_STORE);
+      store.put({ key, value });
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        db.close();
+        resolve();
+      };
+    } catch {
+      db.close();
+      resolve();
+    }
+  });
+}
+
+async function hydrateSavedCacheVersion() {
+  const savedVersion = await readMetaValue('deploymentVersion');
+  if (savedVersion && typeof savedVersion === 'string') {
+    activeDeploymentVersion = savedVersion;
+    activeCacheName = `${CACHE_PREFIX}-${savedVersion}`;
+  }
+}
+
+async function precacheCoreAssets(cacheName) {
+  const cache = await caches.open(cacheName);
+  await Promise.allSettled(
+    PRECACHE_URLS.map(async (url) => {
+      try {
+        const response = await fetch(new Request(url, { cache: 'reload' }));
+        if (response && response.status === 200) {
+          await cache.put(url, response.clone());
+        }
+      } catch {
+        // Ignore offline/unreachable URLs during background install
+      }
+    })
+  );
+}
+
+async function purgeOutdatedCaches(keepCacheName) {
+  const keys = await caches.keys();
+  await Promise.all(
+    keys
+      .filter((key) => key !== keepCacheName)
+      .map((oldKey) => caches.delete(oldKey))
+  );
+}
+
+async function syncDeploymentVersionInSW(forceRefresh = false) {
+  await hydrateSavedCacheVersion();
+  try {
+    const res = await fetch('/api/sw-version', {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    if (!res || !res.ok) return false;
+    const data = await res.json();
+    const serverVersion =
+      data && typeof data.version === 'string' && data.version.trim()
+        ? data.version.trim()
+        : 'v5';
+    const nextCacheName = `${CACHE_PREFIX}-${serverVersion}`;
+    const versionChanged =
+      serverVersion !== activeDeploymentVersion || activeCacheName !== nextCacheName;
+
+    if (versionChanged || forceRefresh) {
+      activeDeploymentVersion = serverVersion;
+      activeCacheName = nextCacheName;
+      await writeMetaValue('deploymentVersion', serverVersion);
+      await precacheCoreAssets(nextCacheName);
+      await purgeOutdatedCaches(nextCacheName);
+
+      if (versionChanged) {
+        const clients = await self.clients.matchAll({
+          type: 'window',
+          includeUncontrolled: true,
+        });
+        clients.forEach((client) => {
+          client.postMessage({
+            type: 'CALCMAX_SW_UPDATED',
+            version: serverVersion,
+            cacheName: nextCacheName,
+          });
+        });
+      }
+      return versionChanged;
+    }
+  } catch {
+    // Offline or endpoint unreachable; keep using current activeCacheName
+  }
+  return false;
 }
 
 async function readRemindersFromDB() {
@@ -182,7 +314,7 @@ async function checkAndScheduleRemindersInSW() {
           const freshList = await readRemindersFromDB();
           const current = freshList.find((r) => r.id === rem.id);
           if (current && current.remindAt === rem.remindAt && current.firedAt !== current.remindAt) {
-            current.firedAt = current.remindAt;
+            current.firedAt = rem.remindAt;
             await writeRemindersToDB([current]);
             await fireReminderNotificationInSW(current);
           }
@@ -200,36 +332,35 @@ async function checkAndScheduleRemindersInSW() {
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) =>
-      Promise.allSettled(
-        PRECACHE_URLS.map(async (url) => {
-          try {
-            const response = await fetch(new Request(url, { cache: 'reload' }));
-            if (response && response.status === 200) {
-              await cache.put(url, response.clone());
-            }
-          } catch {
-            // Skip unreachable URLs during background install
-          }
-        })
-      )
-    )
+    (async () => {
+      const updatedByVersion = await syncDeploymentVersionInSW(true);
+      if (!updatedByVersion) {
+        await precacheCoreAssets(activeCacheName);
+      }
+    })()
   );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    Promise.all([
-      self.clients.claim(),
-      caches.keys().then((keys) =>
-        Promise.all(
-          keys
-            .filter((key) => key !== CACHE_NAME)
-            .map((oldKey) => caches.delete(oldKey))
-        )
-      ),
-      checkAndScheduleRemindersInSW(),
-    ])
+    (async () => {
+      await self.clients.claim();
+      await syncDeploymentVersionInSW(false);
+      await purgeOutdatedCaches(activeCacheName);
+      await checkAndScheduleRemindersInSW();
+
+      const clients = await self.clients.matchAll({
+        type: 'window',
+        includeUncontrolled: true,
+      });
+      clients.forEach((client) => {
+        client.postMessage({
+          type: 'CALCMAX_SW_ACTIVATED',
+          version: activeDeploymentVersion,
+          cacheName: activeCacheName,
+        });
+      });
+    })()
   );
 });
 
@@ -268,6 +399,8 @@ self.addEventListener('message', (event) => {
     event.waitUntil(checkAndScheduleRemindersInSW());
   } else if (payload.type === 'SKIP_WAITING') {
     self.skipWaiting();
+  } else if (payload.type === 'CHECK_FOR_UPDATES') {
+    event.waitUntil(syncDeploymentVersionInSW(Boolean(payload.forceRefresh)));
   }
 });
 
@@ -326,11 +459,12 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-// Background Sync: notifies active clients to replay offline queue & checks reminders
+// Background Sync: notifies active clients to replay offline queue & checks reminders + SW updates
 self.addEventListener('sync', (event) => {
   if (event.tag === 'calcmax-offline-sync') {
     event.waitUntil(
       Promise.all([
+        syncDeploymentVersionInSW(false),
         checkAndScheduleRemindersInSW(),
         self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
           clients.forEach((client) => {
@@ -344,10 +478,15 @@ self.addEventListener('sync', (event) => {
   }
 });
 
-// Periodic Background Sync: checks scheduled reminders even when offline / idle
+// Periodic Background Sync: checks scheduled reminders & deployment updates even when idle
 self.addEventListener('periodicsync', (event) => {
   if (event.tag === 'calcmax-reminder-periodic') {
-    event.waitUntil(checkAndScheduleRemindersInSW());
+    event.waitUntil(
+      Promise.all([
+        syncDeploymentVersionInSW(false),
+        checkAndScheduleRemindersInSW(),
+      ])
+    );
   }
 });
 
@@ -369,14 +508,31 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Manifest files: always Network-First so updates apply immediately without stale metadata
+  // Next.js App Router RSC flight requests: always Network-First (no-store) and never mix with HTML cache
+  const isRscRequest =
+    request.headers.get('RSC') === '1' ||
+    request.headers.get('Next-Router-Prefetch') === '1' ||
+    url.searchParams.has('_rsc') ||
+    url.pathname.startsWith('/_next/data/');
+
+  if (isRscRequest) {
+    event.respondWith(
+      fetch(new Request(request, { cache: 'no-store' })).catch(async () => {
+        const cached = await caches.match(request);
+        return cached || Response.error();
+      })
+    );
+    return;
+  }
+
+  // Manifest files: always Network-First (no-cache) so updates apply immediately without stale metadata
   if (url.pathname === '/manifest.webmanifest' || url.pathname === '/manifest.json') {
     event.respondWith(
-      fetch(request)
+      fetch(new Request(request, { cache: 'no-cache' }))
         .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
             const responseClone = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
+            caches.open(activeCacheName).then((cache) => cache.put(request, responseClone));
           }
           return networkResponse;
         })
@@ -388,21 +544,32 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first for HTML page navigations with guaranteed offline fallback
+  // Network-first (no-cache) for HTML page navigations so every online load fetches the latest deployed shell
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
+      fetch(new Request(request, { cache: 'no-cache' }))
         .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
             const responseClone = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
+            const rootClone = url.pathname === '/' ? networkResponse.clone() : null;
+            caches.open(activeCacheName).then((cache) => {
+              cache.put(request, responseClone);
+              if (rootClone) {
+                cache.put('/', rootClone);
+              }
+            });
           }
           return networkResponse;
         })
         .catch(async () => {
-          const cachedPage = await caches.match(request, { ignoreSearch: true });
+          const currentCache = await caches.open(activeCacheName);
+          const cachedPage =
+            (await currentCache.match(request, { ignoreSearch: true })) ||
+            (await caches.match(request, { ignoreSearch: true }));
           if (cachedPage) return cachedPage;
-          const cachedRoot = await caches.match('/', { ignoreSearch: true });
+          const cachedRoot =
+            (await currentCache.match('/', { ignoreSearch: true })) ||
+            (await caches.match('/', { ignoreSearch: true }));
           if (cachedRoot) return cachedRoot;
           return new Response(OFFLINE_SHELL_HTML, {
             status: 200,
@@ -413,37 +580,39 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first for JS/CSS and Next.js bundles with offline cache fallback
+  // Network-first for JS/CSS and Next.js bundles with fresh cache update and offline fallback
   const isCodeBundle =
     url.pathname.startsWith('/_next/static/') ||
     /\.(?:js|css)$/i.test(url.pathname);
 
   if (isCodeBundle) {
     event.respondWith(
-      fetch(request)
+      fetch(new Request(request, { cache: 'no-cache' }))
         .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
             const responseClone = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
+            caches.open(activeCacheName).then((cache) => cache.put(request, responseClone));
           }
           return networkResponse;
         })
         .catch(async () => {
-          const cachedResponse = await caches.match(request);
+          const currentCache = await caches.open(activeCacheName);
+          const cachedResponse =
+            (await currentCache.match(request)) || (await caches.match(request));
           return cachedResponse || Response.error();
         })
     );
     return;
   }
 
-  // Stale-while-revalidate for icons, images, and fonts (never returns undefined)
+  // Stale-while-revalidate (with no-cache background fetch) for icons, images, and fonts
   const isMediaOrFont = /\.(?:png|jpg|jpeg|svg|webp|ico|woff2?)$/i.test(url.pathname);
 
   if (isMediaOrFont) {
     event.respondWith(
-      caches.open(CACHE_NAME).then(async (cache) => {
-        const cachedResponse = await cache.match(request);
-        const networkPromise = fetch(request)
+      caches.open(activeCacheName).then(async (cache) => {
+        const cachedResponse = (await cache.match(request)) || (await caches.match(request));
+        const networkPromise = fetch(new Request(request, { cache: 'no-cache' }))
           .then((networkResponse) => {
             if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
               cache.put(request, networkResponse.clone());
