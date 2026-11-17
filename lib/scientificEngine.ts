@@ -1,6 +1,7 @@
 export type AngleMode = 'DEG' | 'RAD';
 
 export interface TapeEntry {
+  id?: string;
   expr: string;
   res: string;
   time: string;
@@ -37,6 +38,7 @@ export type CalcAction =
   | { type: 'TOGGLE_ANGLE' }
   | { type: 'MEMORY'; action: 'MC' | 'MR' | 'M+' | 'M-' | 'MS' }
   | { type: 'LOAD_TAPE'; res: string }
+  | { type: 'HYDRATE_TAPE'; tape: TapeEntry[] }
   | { type: 'CLEAR_TAPE' };
 
 export const INITIAL_CALC_STATE: CalcState = {
@@ -57,7 +59,7 @@ const MAX_EXPRESSION_LENGTH = 1000;
 const MAX_TOKENS = 400;
 const MAX_PAREN_DEPTH = 64;
 const MAX_EVAL_CACHE = 64;
-const MAX_TAPE_ENTRIES = 20;
+const MAX_TAPE_ENTRIES = 100;
 
 const DEG_TO_RAD = Math.PI / 180;
 const RAD_TO_DEG = 180 / Math.PI;
@@ -1799,7 +1801,15 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
           expression: '',
           isNewInput: true,
           errorMessage: null,
-          tape: [{ expr: fullExpr, res: display, time: action.timeStr }, ...state.tape.slice(0, MAX_TAPE_ENTRIES - 1)],
+          tape: [
+            {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              expr: fullExpr,
+              res: display,
+              time: action.timeStr,
+            },
+            ...state.tape.slice(0, MAX_TAPE_ENTRIES - 1),
+          ],
         };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Invalid mathematical expression';
@@ -1875,6 +1885,12 @@ export function calcReducer(state: CalcState, action: CalcAction): CalcState {
         evaluatedResult: null,
         currentInput: action.res,
         isNewInput: false,
+      };
+
+    case 'HYDRATE_TAPE':
+      return {
+        ...state,
+        tape: action.tape.slice(0, MAX_TAPE_ENTRIES),
       };
 
     case 'CLEAR_TAPE':

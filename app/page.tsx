@@ -343,6 +343,7 @@ export default function RetailCalc() {
   const [noteEditorCloseSignal, setNoteEditorCloseSignal] = useState(0);
   const [isNoteFullScreen, setIsNoteFullScreen] = useState(false);
   const [calculatorViewMode, setCalculatorViewMode] = useState<'scientific' | 'standard'>('scientific');
+  const [isCalcHistoryOpen, setIsCalcHistoryOpen] = useState(false);
   const [isManagerSubOverlayOpen, setIsManagerSubOverlayOpen] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [profileOpenSignal, setProfileOpenSignal] = useState(0);
@@ -1048,7 +1049,7 @@ export default function RetailCalc() {
     showSignOutConfirm,
   ]);
 
-  const isCalcFullScreen = activeTab === 'calculator' && calculatorViewMode === 'scientific';
+  const isCalcFullScreen = activeTab === 'calculator' && (calculatorViewMode === 'scientific' || isCalcHistoryOpen);
 
   useEffect(() => {
     setBottomNavVisible(!isNoteFullScreen && !isCalcFullScreen);
@@ -2783,10 +2784,9 @@ export default function RetailCalc() {
                   <CalculatorErrorBoundary>
                     <ScientificCalculator
                       triggerVibration={triggerVibration}
-                      onSaveHistory={(type, details, result) => saveHistoryItem(type, details, result)}
                       onBackHome={() => handleTabChange('home')}
-                      onOpenHistory={() => handleTabChange('history')}
                       onViewModeChange={setCalculatorViewMode}
+                      onHistoryOpenChange={setIsCalcHistoryOpen}
                     />
                   </CalculatorErrorBoundary>
                 </section>

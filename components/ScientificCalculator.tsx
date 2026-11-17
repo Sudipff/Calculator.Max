@@ -18,6 +18,7 @@ import {
   Delete,
   History,
   MoreVertical,
+  Trash2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -27,36 +28,42 @@ import {
   clearEvaluationCache,
   buildFullExpression,
   countUnclosedParens,
+  type TapeEntry,
 } from '../lib/scientificEngine';
 import { showNotification } from '@/lib/notifications';
 import { useTheme } from '@/components/ThemeProvider';
 
+const CALC_HISTORY_STORAGE_KEY = 'calcmax_scientific_tape_v1';
+
 interface ScientificCalculatorProps {
   triggerVibration: (type?: 'success' | 'error' | 'click' | 'reset') => void;
-  onSaveHistory?: (type: string, details: string, result: string) => void;
   onBackHome?: () => void;
-  onOpenHistory?: () => void;
   onViewModeChange?: (mode: 'scientific' | 'standard') => void;
+  onHistoryOpenChange?: (isOpen: boolean) => void;
 }
 
 export default function ScientificCalculator({
   triggerVibration,
   onBackHome,
-  onOpenHistory,
   onViewModeChange,
+  onHistoryOpenChange,
 }: ScientificCalculatorProps) {
   const { isDark } = useTheme();
   const [state, dispatch] = useReducer(calcReducer, INITIAL_CALC_STATE);
   const [isSecondFunction, setIsSecondFunction] = useState<boolean>(false);
   const [calculatorView, setCalculatorView] = useState<'scientific' | 'standard'>('scientific');
   const [showMenu, setShowMenu] = useState<boolean>(false);
+  const [showHistoryPage, setShowHistoryPage] = useState<boolean>(false);
+  const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
+  const [copiedHistoryId, setCopiedHistoryId] = useState<string | null>(null);
 
   const [livePreview, setLivePreview] = useState<string | null>(null);
   const computeReqIdRef = useRef<number>(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const tapeScrollRef = useRef<HTMLDivElement | null>(null);
+  const historyCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasHydratedTapeRef = useRef<boolean>(false);
 
   const {
     expression,
@@ -73,6 +80,57 @@ export default function ScientificCalculator({
   useEffect(() => {
     onViewModeChange?.(calculatorView);
   }, [calculatorView, onViewModeChange]);
+
+  // Notify parent when dedicated History page is open so bottom navigation stays hidden
+  useEffect(() => {
+    onHistoryOpenChange?.(showHistoryPage);
+    return () => {
+      onHistoryOpenChange?.(false);
+    };
+  }, [showHistoryPage, onHistoryOpenChange]);
+
+  // Hydrate persisted calculator history on mount
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(CALC_HISTORY_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const valid: TapeEntry[] = parsed
+            .filter(
+              (item): item is TapeEntry =>
+                Boolean(item) &&
+                typeof item.expr === 'string' &&
+                typeof item.res === 'string' &&
+                typeof item.time === 'string'
+            )
+            .map((item, idx) => ({
+              id: typeof item.id === 'string' ? item.id : `hydrated-${idx}-${item.time}`,
+              expr: item.expr,
+              res: item.res,
+              time: item.time,
+            }));
+          if (valid.length > 0) {
+            dispatch({ type: 'HYDRATE_TAPE', tape: valid });
+          }
+        }
+      }
+    } catch {
+      // Ignore storage access or malformed data errors
+    } finally {
+      hasHydratedTapeRef.current = true;
+    }
+  }, []);
+
+  // Persist calculator history whenever tape changes (after initial hydration)
+  useEffect(() => {
+    if (!hasHydratedTapeRef.current) return;
+    try {
+      window.localStorage.setItem(CALC_HISTORY_STORAGE_KEY, JSON.stringify(localTape));
+    } catch {
+      // Ignore quota / private browsing errors
+    }
+  }, [localTape]);
 
   // Close overflow menu on outside pointer click
   useEffect(() => {
@@ -181,16 +239,13 @@ export default function ScientificCalculator({
         clearTimeout(copyTimerRef.current);
         copyTimerRef.current = null;
       }
+      if (historyCopyTimerRef.current) {
+        clearTimeout(historyCopyTimerRef.current);
+        historyCopyTimerRef.current = null;
+      }
       clearEvaluationCache();
     };
   }, []);
-
-  // Auto-scroll history tape to newest bottom entry
-  useEffect(() => {
-    if (tapeScrollRef.current) {
-      tapeScrollRef.current.scrollTop = tapeScrollRef.current.scrollHeight;
-    }
-  }, [localTape.length, evaluatedResult]);
 
   // Atomic action dispatchers
   const handleDigit = useCallback(
@@ -278,10 +333,37 @@ export default function ScientificCalculator({
     }, 1800);
   };
 
+  const handleCopyHistoryEntry = (entryKey: string, res: string) => {
+    if (!res || res === 'Error') return;
+    navigator.clipboard?.writeText(res);
+    setCopiedHistoryId(entryKey);
+    triggerVibration('click');
+    showNotification({
+      id: 'calc-history-copy',
+      message: 'Result copied',
+      type: 'success',
+      duration: 1600,
+    });
+    if (historyCopyTimerRef.current) clearTimeout(historyCopyTimerRef.current);
+    historyCopyTimerRef.current = setTimeout(() => {
+      setCopiedHistoryId(null);
+      historyCopyTimerRef.current = null;
+    }, 1600);
+  };
+
   // Keyboard Shortcuts Support
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
+        return;
+      }
+
+      if (showHistoryPage) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setShowHistoryPage(false);
+          setShowClearConfirm(false);
+        }
         return;
       }
 
@@ -317,7 +399,7 @@ export default function ScientificCalculator({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [showHistoryPage]);
 
   // Dynamic scientific function labels based on 2nd state
   const trigSinLabel = isSecondFunction ? 'sin⁻¹' : 'sin';
@@ -328,14 +410,14 @@ export default function ScientificCalculator({
   const trigCosFn = isSecondFunction ? 'acos' : 'cos';
   const trigTanFn = isSecondFunction ? 'atan' : 'tan';
 
-  // Prominent chronological multi-line tape above the active input area (avoids duplicating active evaluated equation)
+  // Small preview of ONLY the last two calculations above the input area (oldest on top, fading out)
   const lastTape = localTape[0];
-  const priorTapeEntries = useMemo(() => {
+  const previewTapeEntries = useMemo(() => {
     const source =
       evaluatedResult !== null && lastTape && lastTape.res === evaluatedResult
         ? localTape.slice(1)
         : localTape;
-    return [...source].reverse();
+    return [...source.slice(0, 2)].reverse();
   }, [localTape, evaluatedResult, lastTape]);
 
   const equationDisplay = useMemo(() => {
@@ -389,6 +471,212 @@ export default function ScientificCalculator({
   const modeSwitchKeyClass = isDark
     ? `${keyBase} bg-[#1C1F26] hover:bg-[#252932] text-[#E8793E] border border-zinc-800/70`
     : `${keyBase} bg-[#F6F5F2] hover:bg-white text-[#C25215] shadow-[0_1px_2px_rgba(24,24,27,0.04)]`;
+
+  if (showHistoryPage) {
+    return (
+      <div className="mobile-edge-calc w-full flex-1 flex flex-col sm:max-w-[460px] sm:mx-auto m-0 p-0">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+          className={`flex-1 flex flex-col rounded-none sm:rounded-[34px] px-4 pt-2.5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-5 sm:shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition-colors ${shellBg}`}
+        >
+          {/* Dedicated History Top Bar: Back Arrow Left, History Title, Clear Action Right */}
+          <div className="flex items-center justify-between h-12 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                triggerVibration('click');
+                setShowClearConfirm(false);
+                setShowHistoryPage(false);
+              }}
+              className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-2xl transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] ${
+                isDark
+                  ? 'text-zinc-200 hover:text-white hover:bg-zinc-800/80'
+                  : 'text-zinc-800 hover:text-zinc-950 hover:bg-black/5'
+              }`}
+              aria-label="Back to calculator"
+              title="Back to calculator"
+            >
+              <ArrowLeft className="w-5 h-5 stroke-[2]" />
+            </button>
+
+            <h2 className="text-base sm:text-lg font-semibold tracking-tight">History</h2>
+
+            {localTape.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  triggerVibration('click');
+                  setShowClearConfirm((prev) => !prev);
+                }}
+                className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-2xl transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] ${
+                  showClearConfirm
+                    ? 'text-[#C25215] bg-[#C25215]/10'
+                    : isDark
+                    ? 'text-zinc-300 hover:text-white hover:bg-zinc-800/80'
+                    : 'text-zinc-700 hover:text-zinc-950 hover:bg-black/5'
+                }`}
+                aria-label="Clear calculation history"
+                title="Clear history"
+              >
+                <Trash2 className="w-[18px] h-[18px] stroke-[2]" />
+              </button>
+            ) : (
+              <div className="w-[44px]" aria-hidden="true" />
+            )}
+          </div>
+
+          {/* Inline Clear Confirmation */}
+          <AnimatePresence>
+            {showClearConfirm && localTape.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.14 }}
+                className={`mt-2 mb-1 px-3.5 py-2.5 rounded-2xl flex items-center justify-between gap-3 border ${
+                  isDark
+                    ? 'bg-[#1C1F26] border-zinc-800 text-zinc-200'
+                    : 'bg-[#F6F5F2] border-[#DFDDD7] text-zinc-800'
+                }`}
+              >
+                <span className="text-sm font-medium">Clear all past calculations?</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerVibration('click');
+                      setShowClearConfirm(false);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-medium cursor-pointer transition-colors ${
+                      isDark ? 'hover:bg-zinc-800 text-zinc-300' : 'hover:bg-black/5 text-zinc-700'
+                    }`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      dispatch({ type: 'CLEAR_TAPE' });
+                      setShowClearConfirm(false);
+                      triggerVibration('reset');
+                      showNotification({
+                        id: 'calc-history-clear',
+                        message: 'Calculator history cleared',
+                        type: 'success',
+                        duration: 1800,
+                      });
+                    }}
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#C25215] hover:bg-[#AE4811] text-white cursor-pointer transition-colors"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Full-Page List of Past Calculations */}
+          <div className="flex-1 min-h-0 overflow-y-auto pt-3 pb-2 pr-0.5">
+            {localTape.length === 0 ? (
+              <div className="h-full min-h-[260px] flex flex-col items-center justify-center text-center px-6">
+                <History
+                  className={`w-10 h-10 stroke-[1.5] mb-3 ${
+                    isDark ? 'text-zinc-600' : 'text-zinc-400'
+                  }`}
+                />
+                <p
+                  className={`text-base font-medium ${
+                    isDark ? 'text-zinc-300' : 'text-zinc-700'
+                  }`}
+                >
+                  No calculations yet
+                </p>
+                <p
+                  className={`text-sm mt-1 ${
+                    isDark ? 'text-zinc-500' : 'text-zinc-500'
+                  }`}
+                >
+                  Completed equations will appear here.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {localTape.map((item, idx) => {
+                  const entryKey = item.id ?? `${item.expr}-${item.res}-${item.time}-${idx}`;
+                  const isEntryCopied = copiedHistoryId === entryKey;
+                  return (
+                    <div
+                      key={entryKey}
+                      className={`flex items-center gap-2 rounded-2xl px-3.5 py-3 transition-colors ${
+                        isDark
+                          ? 'bg-[#1C1F26]/90 hover:bg-[#242832] border border-zinc-800/70'
+                          : 'bg-[#F6F5F2] hover:bg-white shadow-[0_1px_2px_rgba(24,24,27,0.04)]'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleCopyHistoryEntry(entryKey, item.res)}
+                        className={`min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] ${
+                          isDark
+                            ? 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
+                            : 'text-zinc-500 hover:text-zinc-900 hover:bg-black/5'
+                        }`}
+                        aria-label={`Copy result ${item.res}`}
+                        title="Copy result"
+                      >
+                        {isEntryCopied ? (
+                          <Check className="w-4 h-4 text-emerald-500" />
+                        ) : (
+                          <Copy className="w-4 h-4" />
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          dispatch({ type: 'LOAD_TAPE', res: item.res });
+                          setShowClearConfirm(false);
+                          setShowHistoryPage(false);
+                          triggerVibration('click');
+                        }}
+                        className="flex-1 min-w-0 text-right cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] rounded-xl py-0.5"
+                        title="Tap to load result into calculator"
+                      >
+                        <div
+                          className={`text-xs font-normal tabular-nums mb-0.5 ${
+                            isDark ? 'text-zinc-500' : 'text-zinc-400'
+                          }`}
+                        >
+                          {item.time}
+                        </div>
+                        <div
+                          className={`text-[15px] sm:text-base font-normal tabular-nums leading-snug whitespace-normal break-words ${
+                            isDark ? 'text-zinc-300' : 'text-zinc-600'
+                          }`}
+                        >
+                          {item.expr}
+                        </div>
+                        <div
+                          className={`text-2xl sm:text-[26px] font-semibold tabular-nums tracking-tight leading-tight mt-0.5 whitespace-normal break-words ${
+                            isDark ? 'text-white' : 'text-zinc-950'
+                          }`}
+                        >
+                          <span className="text-[#C25215] mr-1">=</span>
+                          {item.res}
+                        </div>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="mobile-edge-calc w-full flex-1 flex flex-col sm:max-w-[460px] sm:mx-auto m-0 p-0">
@@ -450,8 +738,9 @@ export default function ScientificCalculator({
                     type="button"
                     onClick={() => {
                       setShowMenu(false);
+                      setShowClearConfirm(false);
+                      setShowHistoryPage(true);
                       triggerVibration('click');
-                      onOpenHistory?.();
                     }}
                     className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
                       isDark ? 'hover:bg-zinc-800' : 'hover:bg-black/5'
@@ -485,47 +774,56 @@ export default function ScientificCalculator({
           </div>
         </div>
 
-        {/* Prominent Multi-Line History Tape + Active Input / Result Display */}
+        {/* Display Area: Fading 2-Calculation Preview Above + Active Input / Result Display */}
         <div className="flex-1 min-h-[210px] sm:min-h-[240px] flex flex-col justify-end overflow-hidden px-1 pb-4 pt-1">
-          {/* Multi-Line Scrollable History Tape Above Input Area */}
-          {priorTapeEntries.length > 0 && (
+          {/* Small Preview of Last Two Calculations (Older Entries Fade Out) */}
+          {previewTapeEntries.length > 0 && (
             <div
-              ref={tapeScrollRef}
-              aria-label="Calculation history tape"
-              className={`flex-1 min-h-0 overflow-y-auto pr-1 pb-3 mb-3 border-b ${
-                isDark ? 'border-zinc-800/80' : 'border-zinc-300/80'
+              aria-label="Recent calculations preview"
+              className={`mb-2.5 pb-2.5 border-b overflow-hidden ${
+                isDark ? 'border-zinc-800/75' : 'border-zinc-300/75'
+              } ${
+                previewTapeEntries.length > 1
+                  ? '[mask-image:linear-gradient(to_bottom,rgba(0,0,0,0.2)_0%,rgba(0,0,0,0.9)_55%,rgba(0,0,0,1)_100%)]'
+                  : ''
               }`}
             >
-              <div className="min-h-full flex flex-col justify-end gap-3">
-                {priorTapeEntries.map((item, idx) => (
-                  <button
-                    key={`${item.expr}-${item.res}-${idx}`}
-                    type="button"
-                    onClick={() => {
-                      dispatch({ type: 'LOAD_TAPE', res: item.res });
-                      triggerVibration('click');
-                    }}
-                    className={`w-full text-right rounded-xl px-2 py-1 transition-colors cursor-pointer ${
-                      isDark ? 'hover:bg-white/5' : 'hover:bg-black/[0.04]'
-                    }`}
-                    title="Tap to insert result"
-                  >
-                    <div
-                      className={`text-lg sm:text-xl font-normal tabular-nums leading-snug whitespace-normal break-words ${
-                        isDark ? 'text-zinc-400' : 'text-zinc-500'
-                      }`}
-                    >
-                      {item.expr}
-                    </div>
-                    <div
-                      className={`text-xl sm:text-2xl font-medium tabular-nums leading-tight mt-0.5 whitespace-normal break-words ${
-                        isDark ? 'text-zinc-200' : 'text-zinc-700'
-                      }`}
-                    >
-                      = {item.res}
-                    </div>
-                  </button>
-                ))}
+              <div className="flex flex-col items-end gap-1.5">
+                <AnimatePresence initial={false} mode="popLayout">
+                  {previewTapeEntries.map((item, idx) => {
+                    const isOlderEntry = previewTapeEntries.length === 2 && idx === 0;
+                    return (
+                      <motion.button
+                        key={item.id ?? `${item.expr}-${item.res}-${item.time}-${idx}`}
+                        layout
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: isOlderEntry ? 0.4 : 0.8, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                        type="button"
+                        onClick={() => {
+                          dispatch({ type: 'LOAD_TAPE', res: item.res });
+                          triggerVibration('click');
+                        }}
+                        className={`w-full text-right rounded-lg px-1.5 py-0.5 transition-colors cursor-pointer hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] ${
+                          isDark ? 'hover:bg-white/5' : 'hover:bg-black/[0.04]'
+                        }`}
+                        title="Tap to insert result"
+                      >
+                        <div
+                          className={`text-xs sm:text-[13px] font-normal tabular-nums leading-snug whitespace-normal break-words ${
+                            isDark ? 'text-zinc-400' : 'text-zinc-500'
+                          }`}
+                        >
+                          {item.expr} ={' '}
+                          <span className={`font-medium ${isDark ? 'text-zinc-200' : 'text-zinc-700'}`}>
+                            {item.res}
+                          </span>
+                        </div>
+                      </motion.button>
+                    );
+                  })}
+                </AnimatePresence>
               </div>
             </div>
           )}

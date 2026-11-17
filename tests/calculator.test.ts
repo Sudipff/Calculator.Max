@@ -717,10 +717,18 @@ test('Calculator Reducer: successive = does not repeat, memory operations, paren
   ]);
   assert.equal(recGroup.evaluatedResult, '100');
 
-  // TOGGLE_ANGLE, LOAD_TAPE, CLEAR_TAPE
+  // TOGGLE_ANGLE, LOAD_TAPE, HYDRATE_TAPE, CLEAR_TAPE
   const toggledAngle = runSequence([{ type: 'TOGGLE_ANGLE' }], recGroup);
   assert.equal(toggledAngle.angleMode, 'RAD');
-  const loaded = calcReducer(toggledAngle, { type: 'LOAD_TAPE', res: '42' });
+  const hydrated = calcReducer(toggledAngle, {
+    type: 'HYDRATE_TAPE',
+    tape: [
+      { id: 't1', expr: '2 + 3', res: '5', time: '10:00 AM' },
+      { id: 't2', expr: '6 × 7', res: '42', time: '10:01 AM' },
+    ],
+  });
+  assert.equal(hydrated.tape.length, 2);
+  const loaded = calcReducer(hydrated, { type: 'LOAD_TAPE', res: '42' });
   assert.equal(loaded.currentInput, '42');
   assert.equal(calcReducer(loaded, { type: 'CLEAR_TAPE' }).tape.length, 0);
 });
