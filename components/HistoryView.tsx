@@ -51,7 +51,7 @@ import {
 } from '../lib/storageSyncClient';
 import type { NoteItem, TaskItem } from '../lib/types/notes-tasks';
 import { OfflineWifiIndicator } from '@/components/PwaRuntime';
-import { showNotification } from '@/lib/notifications';
+import { showNotification, suppressOfflineSyncNotifications } from '@/lib/notifications';
 
 export type HistoryCategoryFilter =
   | 'all'
@@ -397,6 +397,10 @@ export default function HistoryView({
       return;
     }
 
+    if (uid) {
+      suppressOfflineSyncNotifications(5000);
+    }
+
     const existingNotes = getLocalNotes(uid);
     const updatedNotes = [newNote, ...existingNotes];
     saveLocalNotes(updatedNotes, uid);
@@ -410,7 +414,7 @@ export default function HistoryView({
       window.dispatchEvent(new CustomEvent('calcmax:notes-tasks-updated'));
     }
 
-    showActionToast('Saved Note', 'note');
+    showActionToast('Saved to Note', 'note');
 
     if (navTimerRef.current) clearTimeout(navTimerRef.current);
     navTimerRef.current = setTimeout(() => {
@@ -418,8 +422,7 @@ export default function HistoryView({
     }, 260);
 
     if (uid) {
-      await removePromise;
-      void upsertNoteToSupabase(newNote, uid);
+      await Promise.all([removePromise, upsertNoteToSupabase(newNote, uid)]);
     }
   };
 
@@ -486,6 +489,10 @@ export default function HistoryView({
       return;
     }
 
+    if (uid) {
+      suppressOfflineSyncNotifications(5000);
+    }
+
     const existingTasks = getLocalTasks(uid);
     const updatedTasks = [newTask, ...existingTasks];
     saveLocalTasks(updatedTasks, uid);
@@ -499,7 +506,7 @@ export default function HistoryView({
       window.dispatchEvent(new CustomEvent('calcmax:notes-tasks-updated'));
     }
 
-    showActionToast('Saved Task', 'task');
+    showActionToast('Saved to Task', 'task');
 
     if (navTimerRef.current) clearTimeout(navTimerRef.current);
     navTimerRef.current = setTimeout(() => {
@@ -507,8 +514,7 @@ export default function HistoryView({
     }, 260);
 
     if (uid) {
-      await removePromise;
-      void upsertTaskToSupabase(newTask, uid);
+      await Promise.all([removePromise, upsertTaskToSupabase(newTask, uid)]);
     }
   };
 

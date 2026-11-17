@@ -54,6 +54,7 @@ import {
   dismissNotification,
   setBottomNavVisible,
   showNotification,
+  suppressOfflineSyncNotifications,
 } from '../lib/notifications';
 import { createClient } from '@/utils/supabase/client';
 import {
@@ -1357,6 +1358,7 @@ export default function RetailCalc() {
         }
       }
 
+      suppressOfflineSyncNotifications(5000);
       setIsNoteFullScreen(false);
       setIsManagerSubOverlayOpen(false);
       showNotification({

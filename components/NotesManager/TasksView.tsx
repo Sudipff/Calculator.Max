@@ -37,7 +37,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { TaskItem, TaskList, TaskPriority, type SourceHistoryMeta } from '@/lib/types/notes-tasks';
 import { formatTasksForShare, shareTextContent } from '@/lib/shareUtils';
-import { showNotification } from '@/lib/notifications';
+import { showNotification, suppressOfflineSyncNotifications } from '@/lib/notifications';
 import {
   fetchTasks,
   getLocalTasks,
@@ -329,18 +329,9 @@ export default function TasksView({
       }
     );
 
-    const handleSyncUpdated = (event: Event) => {
-      const detail = (event as CustomEvent)?.detail;
+    const handleSyncUpdated = () => {
       setTaskLists(getLocalTaskLists(currentUser?.id));
       setTasks(getLocalTasks(currentUser?.id));
-      if (detail?.syncedCount > 0) {
-        showNotification({
-          id: 'tasks-sync',
-          message: `Synced ${detail.syncedCount} offline item${detail.syncedCount === 1 ? '' : 's'}`,
-          type: 'success',
-          duration: 2600,
-        });
-      }
     };
 
     window.addEventListener('calcmax:sync-updated', handleSyncUpdated);
@@ -622,6 +613,7 @@ export default function TasksView({
     }
 
     setIsReturningToHistory(true);
+    suppressOfflineSyncNotifications(5000);
     try {
       const updated = tasks.filter((t) => t.id !== taskSnapshot.id);
       setTasks(updated);
@@ -641,13 +633,16 @@ export default function TasksView({
       }
 
       triggerVibration?.('success');
-      await onReturnToHistory?.(source, taskSnapshot);
-      showNotification({
-        id: 'tasks-return-history',
-        message: 'Returned to History',
-        type: 'success',
-        duration: 2200,
-      });
+      if (onReturnToHistory) {
+        await onReturnToHistory(source, taskSnapshot);
+      } else {
+        showNotification({
+          id: 'tasks-return-history',
+          message: 'Returned to History',
+          type: 'success',
+          duration: 2200,
+        });
+      }
     } finally {
       setIsReturningToHistory(false);
     }

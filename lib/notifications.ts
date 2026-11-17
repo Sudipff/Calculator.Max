@@ -33,9 +33,24 @@ const DEFAULT_DURATIONS: Record<NotificationType, number> = {
 let currentNotification: AppNotification | null = null;
 let bottomNavVisible = false;
 let autoDismissTimer: ReturnType<typeof setTimeout> | null = null;
+let offlineSyncSuppressedUntil = 0;
 
 const notificationListeners = new Set<NotificationListener>();
 const bottomNavListeners = new Set<BottomNavListener>();
+
+export function suppressOfflineSyncNotifications(durationMs = 5000): void {
+  const until = Date.now() + Math.max(0, durationMs);
+  if (until > offlineSyncSuppressedUntil) {
+    offlineSyncSuppressedUntil = until;
+  }
+  if (currentNotification?.id === 'cloud-sync') {
+    dismissNotification('cloud-sync');
+  }
+}
+
+export function isOfflineSyncNotificationSuppressed(): boolean {
+  return Date.now() < offlineSyncSuppressedUntil;
+}
 
 function emitNotification() {
   for (const listener of notificationListeners) {
@@ -51,6 +66,10 @@ function clearAutoDismissTimer() {
 }
 
 export function showNotification(options: ShowNotificationOptions): string {
+  if (options.id === 'cloud-sync' && isOfflineSyncNotificationSuppressed()) {
+    return options.id;
+  }
+
   const type: NotificationType = options.type ?? 'info';
   const duration =
     typeof options.duration === 'number'

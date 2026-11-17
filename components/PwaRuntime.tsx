@@ -3,7 +3,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { WifiOff } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
-import { dismissNotification, showNotification } from '@/lib/notifications';
+import {
+  dismissNotification,
+  isOfflineSyncNotificationSuppressed,
+  showNotification,
+} from '@/lib/notifications';
 import {
   flushOfflineSyncQueue,
   getLocalNotes,
@@ -84,7 +88,8 @@ export default function PwaRuntime() {
       return;
     }
     const beforePending = calculateAllPendingCount(uid);
-    if (beforePending > 0) {
+    const shouldNotifySync = beforePending > 0 && !isOfflineSyncNotificationSuppressed();
+    if (shouldNotifySync) {
       showNotification({
         id: 'cloud-sync',
         message: `Syncing ${beforePending} offline item${beforePending === 1 ? '' : 's'}...`,
@@ -102,18 +107,18 @@ export default function PwaRuntime() {
 
       const totalSynced = notesSynced + calcSynced;
 
-      if (totalSynced > 0) {
+      if (totalSynced > 0 && !isOfflineSyncNotificationSuppressed()) {
         showNotification({
           id: 'cloud-sync',
           message: `Synced ${totalSynced} offline item${totalSynced === 1 ? '' : 's'}`,
           type: 'success',
           duration: 3000,
         });
-      } else if (beforePending > 0) {
+      } else if (shouldNotifySync) {
         dismissNotification('cloud-sync');
       }
     } catch {
-      if (beforePending > 0) {
+      if (shouldNotifySync) {
         dismissNotification('cloud-sync');
       }
     }

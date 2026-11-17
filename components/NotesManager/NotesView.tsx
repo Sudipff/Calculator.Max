@@ -23,7 +23,6 @@ import {
   MoreVertical,
   MoreHorizontal,
   Save,
-  CloudOff,
   User,
   ChevronRight,
   History,
@@ -32,7 +31,7 @@ import {
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { NoteItem, NOTE_COLORS, type SourceHistoryMeta } from '@/lib/types/notes-tasks';
 import { formatNotesForShare, shareTextContent } from '@/lib/shareUtils';
-import { showNotification } from '@/lib/notifications';
+import { showNotification, suppressOfflineSyncNotifications } from '@/lib/notifications';
 import {
   fetchNotes,
   getLocalNotes,
@@ -295,18 +294,9 @@ export default function NotesView({
       }
     });
 
-    const handleSyncUpdated = (event: Event) => {
-      const detail = (event as CustomEvent)?.detail;
+    const handleSyncUpdated = () => {
       const freshLocal = getLocalNotes(currentUser?.id);
       setNotes(freshLocal);
-      if (detail?.syncedCount > 0) {
-        showNotification({
-          id: 'notes-sync',
-          message: `Synced ${detail.syncedCount} offline change${detail.syncedCount === 1 ? '' : 's'}`,
-          type: 'success',
-          duration: 2600,
-        });
-      }
     };
 
     window.addEventListener('calcmax:sync-updated', handleSyncUpdated);
@@ -535,6 +525,7 @@ export default function NotesView({
 
   const handleTogglePin = async (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    suppressOfflineSyncNotifications(3000);
     const updated = notes.map((n) =>
       n.id === id ? { ...n, isPinned: !n.isPinned, syncStatus: 'unsynced' as const, updatedAt: new Date().toISOString() } : n
     );
@@ -727,6 +718,7 @@ export default function NotesView({
     }
 
     setIsReturningToHistory(true);
+    suppressOfflineSyncNotifications(5000);
     try {
       const updated = notes.filter((n) => n.id !== noteSnapshot.id);
       setNotes(updated);
@@ -748,13 +740,16 @@ export default function NotesView({
       }
 
       triggerVibration?.('success');
-      await onReturnToHistory?.(source, noteSnapshot);
-      showNotification({
-        id: 'notes-return-history',
-        message: 'Returned to History',
-        type: 'success',
-        duration: 2200,
-      });
+      if (onReturnToHistory) {
+        await onReturnToHistory(source, noteSnapshot);
+      } else {
+        showNotification({
+          id: 'notes-return-history',
+          message: 'Returned to History',
+          type: 'success',
+          duration: 2200,
+        });
+      }
     } finally {
       setIsReturningToHistory(false);
     }
@@ -1994,14 +1989,6 @@ export default function NotesView({
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
-            {currentUser?.id && note.syncStatus === 'unsynced' && (
-              <span
-                title="Saved offline — pending cloud sync"
-                className="text-amber-700 flex items-center justify-center"
-              >
-                <CloudOff className="w-3 h-3" />
-              </span>
-            )}
             <button
               type="button"
               onClick={(e) => handleTogglePin(note.id, e)}
