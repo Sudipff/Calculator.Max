@@ -1,6 +1,6 @@
-const CACHE_PREFIX = 'calculator-max-pwa-v5';
+const CACHE_PREFIX = 'calculator-max-pwa-v7';
 let activeCacheName = CACHE_PREFIX;
-let activeDeploymentVersion = 'v5';
+let activeDeploymentVersion = 'v7';
 
 const PUSH_DB_NAME = 'calcMaxPushDB';
 const PUSH_DB_VERSION = 1;
@@ -18,6 +18,12 @@ const PRECACHE_URLS = [
   '/apple-touch-icon.png',
 ];
 
+const DYNAMIC_SWR_API_PATHS = [
+  '/api/calculations',
+  '/api/storage',
+  '/api/backup-settings',
+];
+
 const OFFLINE_SHELL_HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -25,18 +31,25 @@ const OFFLINE_SHELL_HTML = `<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Calculator Max • Offline</title>
   <style>
-    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f8fafc; color: #0f172a; padding: 24px; }
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; min-height: 100dvh; display: flex; flex-direction: column; justify-content: space-between; align-items: center; background: #f8fafc; color: #0f172a; padding: 32px 24px; box-sizing: border-box; }
+    .spacer { height: 24px; }
     .card { max-width: 360px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 24px; text-align: center; box-shadow: 0 10px 30px rgba(15,23,42,0.06); }
     h1 { font-size: 18px; margin: 0 0 8px; }
     p { font-size: 14px; color: #475569; margin: 0 0 16px; line-height: 1.5; }
     button { background: #2563eb; color: #fff; border: 0; border-radius: 12px; padding: 10px 18px; font-weight: 600; cursor: pointer; }
+    .brand-footer { text-align: center; padding-bottom: 8px; }
+    .brand-name { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; color: #0f172a; margin: 0; }
   </style>
 </head>
 <body>
+  <div class="spacer"></div>
   <div class="card">
-    <h1>Calculator Max</h1>
+    <h1>Offline Mode Ready</h1>
     <p>You are currently offline. Reconnect or tap Retry to reload the cached workspace.</p>
     <button onclick="window.location.reload()">Retry</button>
+  </div>
+  <div class="brand-footer">
+    <p class="brand-name">Calculator Max</p>
   </div>
 </body>
 </html>`;
@@ -118,20 +131,130 @@ async function hydrateSavedCacheVersion() {
   }
 }
 
+function extractStaticAssetUrlsFromHtml(htmlText) {
+  if (!htmlText || typeof htmlText !== 'string') return [];
+  const discovered = new Set();
+  const assetRegex = /(?:href|src)=["'](\/_next\/static\/[^"'?#\\\s]+)["']/gi;
+  for (const match of htmlText.matchAll(assetRegex)) {
+    const candidate = match[1];
+    if (
+      candidate &&
+      !candidate.includes('/webpack/') &&
+      /\.(?:js|css|woff2?)$/i.test(candidate)
+    ) {
+      discovered.add(candidate);
+    }
+  }
+  return Array.from(discovered);
+}
+
+/**
+ * Validates that a Response has a safe status and a Content-Type matching the Request expectation.
+ * Prevents HTML error/fallback pages from ever being cached or served as JavaScript/CSS/JSON.
+ */
+function isValidResponseForRequest(request, url, response, isRscRequest = false) {
+  if (!response || response.status !== 200) return false;
+  if (response.type !== 'basic' && response.type !== 'cors') return false;
+
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+
+  // Never allow HTML to be served for JS scripts (prevents Uncaught SyntaxError: Unexpected token '<')
+  if (
+    request.destination === 'script' ||
+    /\.m?js$/i.test(url.pathname)
+  ) {
+    return (
+      contentType.includes('javascript') ||
+      contentType.includes('ecmascript')
+    );
+  }
+
+  // Stylesheets must be text/css
+  if (
+    request.destination === 'style' ||
+    /\.css$/i.test(url.pathname)
+  ) {
+    return contentType.includes('text/css');
+  }
+
+  // RSC flight requests must never be HTML documents
+  if (isRscRequest) {
+    return !contentType.includes('text/html');
+  }
+
+  // Page navigations must be text/html
+  if (request.mode === 'navigate') {
+    return contentType.includes('text/html');
+  }
+
+  // JSON / Manifest / API endpoints must return JSON or manifest content-type
+  if (
+    url.pathname === '/manifest.webmanifest' ||
+    url.pathname === '/manifest.json' ||
+    /\.json$/i.test(url.pathname) ||
+    DYNAMIC_SWR_API_PATHS.some((p) => url.pathname.startsWith(p))
+  ) {
+    return (
+      contentType.includes('json') ||
+      contentType.includes('manifest')
+    );
+  }
+
+  // For images/fonts/icons, ensure it is not an HTML error page
+  return !contentType.includes('text/html');
+}
+
 async function precacheCoreAssets(cacheName) {
   const cache = await caches.open(cacheName);
+  let rootHtmlText = '';
+
   await Promise.allSettled(
-    PRECACHE_URLS.map(async (url) => {
+    PRECACHE_URLS.map(async (urlPath) => {
       try {
-        const response = await fetch(new Request(url, { cache: 'reload' }));
+        const req = new Request(urlPath, { cache: 'reload' });
+        const response = await fetch(req);
+        const parsedUrl = new URL(urlPath, self.location.origin);
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
         if (response && response.status === 200) {
-          await cache.put(url, response.clone());
+          if (urlPath === '/' && contentType.includes('text/html')) {
+            try {
+              rootHtmlText = await response.clone().text();
+            } catch {
+              // Ignore text extraction error
+            }
+            await cache.put(urlPath, response.clone());
+          } else if (urlPath !== '/' && !contentType.includes('text/html')) {
+            await cache.put(urlPath, response.clone());
+          }
         }
       } catch {
         // Ignore offline/unreachable URLs during background install
       }
     })
   );
+
+  // Also precache core Next.js static JS/CSS/font bundles referenced by the root app shell
+  if (rootHtmlText) {
+    const bundleUrls = extractStaticAssetUrlsFromHtml(rootHtmlText);
+    if (bundleUrls.length > 0) {
+      await Promise.allSettled(
+        bundleUrls.map(async (bundleUrl) => {
+          try {
+            const existing = await cache.match(bundleUrl);
+            if (existing) return;
+            const req = new Request(bundleUrl, { cache: 'force-cache' });
+            const res = await fetch(req);
+            const parsedUrl = new URL(bundleUrl, self.location.origin);
+            if (isValidResponseForRequest(req, parsedUrl, res, false)) {
+              await cache.put(bundleUrl, res.clone());
+            }
+          } catch {
+            // Ignore individual chunk fetch failure
+          }
+        })
+      );
+    }
+  }
 }
 
 async function purgeOutdatedCaches(keepCacheName) {
@@ -156,7 +279,7 @@ async function syncDeploymentVersionInSW(forceRefresh = false) {
     const serverVersion =
       data && typeof data.version === 'string' && data.version.trim()
         ? data.version.trim()
-        : 'v5';
+        : 'v7';
     const nextCacheName = `${CACHE_PREFIX}-${serverVersion}`;
     const versionChanged =
       serverVersion !== activeDeploymentVersion || activeCacheName !== nextCacheName;
@@ -490,25 +613,153 @@ self.addEventListener('periodicsync', (event) => {
   }
 });
 
+/**
+ * Stale-While-Revalidate helper:
+ * Serves validated cached response immediately if present for instant loading on slow connections,
+ * while concurrently fetching fresh content in the background and updating the active cache.
+ */
+function respondWithStaleWhileRevalidate(event, request, url, options = {}) {
+  const {
+    ignoreSearch = false,
+    cacheRootAlias = false,
+    navigationFallback = false,
+    allowCors = false,
+    isRscRequest = false,
+  } = options;
+
+  event.respondWith(
+    (async () => {
+      const cache = await caches.open(activeCacheName);
+      let cachedResponse =
+        (await cache.match(request, { ignoreSearch })) ||
+        (await caches.match(request, { ignoreSearch }));
+
+      if (
+        cachedResponse &&
+        !isValidResponseForRequest(request, url, cachedResponse, isRscRequest)
+      ) {
+        await cache.delete(request, { ignoreSearch }).catch(() => {});
+        cachedResponse = null;
+      }
+
+      const revalidatePromise = (async () => {
+        try {
+          let networkResponse;
+          if (allowCors || request.mode === 'navigate') {
+            networkResponse = await fetch(request);
+          } else {
+            networkResponse = await fetch(new Request(request, { cache: 'no-cache' }));
+          }
+
+          if (
+            networkResponse &&
+            isValidResponseForRequest(request, url, networkResponse, isRscRequest)
+          ) {
+            await cache.put(request, networkResponse.clone());
+            if (cacheRootAlias) {
+              await cache.put('/', networkResponse.clone());
+            }
+          }
+          return networkResponse;
+        } catch {
+          return null;
+        }
+      })();
+
+      // Keep background revalidation alive even after returning cached response immediately
+      event.waitUntil(revalidatePromise);
+
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+
+      const freshResponse = await revalidatePromise;
+      if (freshResponse) {
+        return freshResponse;
+      }
+
+      if (navigationFallback) {
+        const cachedRoot =
+          (await cache.match('/')) ||
+          (await caches.match('/'));
+        if (
+          cachedRoot &&
+          isValidResponseForRequest(request, url, cachedRoot, false)
+        ) {
+          return cachedRoot;
+        }
+
+        return new Response(OFFLINE_SHELL_HTML, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+
+      return Response.error();
+    })()
+  );
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-
-  if (request.method !== 'GET') return;
-
   const url = new URL(request.url);
+
+  // If a mutating API request occurs (POST/PUT/DELETE/PATCH), invalidate cached GET data for that path
+  if (request.method !== 'GET') {
+    if (
+      url.origin === self.location.origin &&
+      DYNAMIC_SWR_API_PATHS.some((p) => url.pathname.startsWith(p))
+    ) {
+      event.waitUntil(
+        caches.open(activeCacheName).then((cache) =>
+          cache.delete(url.pathname, { ignoreSearch: true })
+        )
+      );
+    }
+    return;
+  }
+
+  // External live Currency Exchange Rate API: Stale-While-Revalidate for instant offline/slow-network FX rates
+  if (
+    url.origin !== self.location.origin &&
+    url.hostname.includes('exchangerate-api.com')
+  ) {
+    respondWithStaleWhileRevalidate(event, request, url, {
+      ignoreSearch: false,
+      allowCors: true,
+    });
+    return;
+  }
+
   if (url.origin !== self.location.origin) return;
 
-  // Never intercept or cache API, auth, or dev HMR routes
+  // Never intercept or cache auth, sw-version check, or Next.js dev/HMR/webpack runtime routes
   if (
-    url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/auth/') ||
+    url.pathname.startsWith('/api/auth/') ||
+    url.pathname === '/api/sw-version' ||
+    url.pathname.startsWith('/_next/static/webpack/') ||
+    url.pathname.startsWith('/__nextjs') ||
     url.pathname.includes('webpack-hmr') ||
     url.pathname.includes('hot-update')
   ) {
     return;
   }
 
-  // Next.js App Router RSC flight requests: always Network-First (no-store) and never mix with HTML cache
+  // Read-only dynamic API content (/api/calculations, /api/storage, /api/backup-settings): Stale-While-Revalidate
+  if (DYNAMIC_SWR_API_PATHS.some((p) => url.pathname.startsWith(p))) {
+    respondWithStaleWhileRevalidate(event, request, url, {
+      ignoreSearch: false,
+    });
+    return;
+  }
+
+  // Other API routes (e.g. POST-only or non-cached endpoints): pass through
+  if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
+  // Next.js App Router RSC flight & dynamic data requests: Stale-While-Revalidate
   const isRscRequest =
     request.headers.get('RSC') === '1' ||
     request.headers.get('Next-Router-Prefetch') === '1' ||
@@ -516,113 +767,45 @@ self.addEventListener('fetch', (event) => {
     url.pathname.startsWith('/_next/data/');
 
   if (isRscRequest) {
-    event.respondWith(
-      fetch(new Request(request, { cache: 'no-store' })).catch(async () => {
-        const cached = await caches.match(request);
-        return cached || Response.error();
-      })
-    );
+    respondWithStaleWhileRevalidate(event, request, url, {
+      ignoreSearch: false,
+      isRscRequest: true,
+    });
     return;
   }
 
-  // Manifest files: always Network-First (no-cache) so updates apply immediately without stale metadata
+  // Manifest files: Stale-While-Revalidate so app metadata loads instantly and updates in background
   if (url.pathname === '/manifest.webmanifest' || url.pathname === '/manifest.json') {
-    event.respondWith(
-      fetch(new Request(request, { cache: 'no-cache' }))
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const responseClone = networkResponse.clone();
-            caches.open(activeCacheName).then((cache) => cache.put(request, responseClone));
-          }
-          return networkResponse;
-        })
-        .catch(async () => {
-          const cached = await caches.match(request);
-          return cached || Response.error();
-        })
-    );
+    respondWithStaleWhileRevalidate(event, request, url, {
+      ignoreSearch: true,
+    });
     return;
   }
 
-  // Network-first (no-cache) for HTML page navigations so every online load fetches the latest deployed shell
+  // HTML page navigations: Stale-While-Revalidate for instant startup on slow connections + background cache update
   if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(new Request(request, { cache: 'no-cache' }))
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-            const responseClone = networkResponse.clone();
-            const rootClone = url.pathname === '/' ? networkResponse.clone() : null;
-            caches.open(activeCacheName).then((cache) => {
-              cache.put(request, responseClone);
-              if (rootClone) {
-                cache.put('/', rootClone);
-              }
-            });
-          }
-          return networkResponse;
-        })
-        .catch(async () => {
-          const currentCache = await caches.open(activeCacheName);
-          const cachedPage =
-            (await currentCache.match(request, { ignoreSearch: true })) ||
-            (await caches.match(request, { ignoreSearch: true }));
-          if (cachedPage) return cachedPage;
-          const cachedRoot =
-            (await currentCache.match('/', { ignoreSearch: true })) ||
-            (await caches.match('/', { ignoreSearch: true }));
-          if (cachedRoot) return cachedRoot;
-          return new Response(OFFLINE_SHELL_HTML, {
-            status: 200,
-            headers: { 'Content-Type': 'text/html; charset=utf-8' },
-          });
-        })
-    );
+    respondWithStaleWhileRevalidate(event, request, url, {
+      ignoreSearch: false,
+      cacheRootAlias: url.pathname === '/',
+      navigationFallback: true,
+    });
     return;
   }
 
-  // Network-first for JS/CSS and Next.js bundles with fresh cache update and offline fallback
-  const isCodeBundle =
+  // JS/CSS, Next.js static bundles, icons, images, and fonts: Stale-While-Revalidate
+  const isStaticOrMediaAsset =
     url.pathname.startsWith('/_next/static/') ||
-    /\.(?:js|css)$/i.test(url.pathname);
+    /\.(?:js|css|png|jpg|jpeg|svg|webp|ico|woff2?|json)$/i.test(url.pathname);
 
-  if (isCodeBundle) {
-    event.respondWith(
-      fetch(new Request(request, { cache: 'no-cache' }))
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-            const responseClone = networkResponse.clone();
-            caches.open(activeCacheName).then((cache) => cache.put(request, responseClone));
-          }
-          return networkResponse;
-        })
-        .catch(async () => {
-          const currentCache = await caches.open(activeCacheName);
-          const cachedResponse =
-            (await currentCache.match(request)) || (await caches.match(request));
-          return cachedResponse || Response.error();
-        })
-    );
+  if (isStaticOrMediaAsset) {
+    respondWithStaleWhileRevalidate(event, request, url, {
+      ignoreSearch: false,
+    });
     return;
   }
 
-  // Stale-while-revalidate (with no-cache background fetch) for icons, images, and fonts
-  const isMediaOrFont = /\.(?:png|jpg|jpeg|svg|webp|ico|woff2?)$/i.test(url.pathname);
-
-  if (isMediaOrFont) {
-    event.respondWith(
-      caches.open(activeCacheName).then(async (cache) => {
-        const cachedResponse = (await cache.match(request)) || (await caches.match(request));
-        const networkPromise = fetch(new Request(request, { cache: 'no-cache' }))
-          .then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-              cache.put(request, networkResponse.clone());
-            }
-            return networkResponse;
-          })
-          .catch(() => cachedResponse || Response.error());
-
-        return cachedResponse || networkPromise;
-      })
-    );
-  }
+  // Default fallback for any other same-origin GET dynamic content: Stale-While-Revalidate
+  respondWithStaleWhileRevalidate(event, request, url, {
+    ignoreSearch: false,
+  });
 });

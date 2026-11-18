@@ -147,6 +147,22 @@ function getTagColorClass(label: string): string {
   return TAG_COLOR_PALETTES[hash % TAG_COLOR_PALETTES.length];
 }
 
+function formatDynamicItemDateTime(isoString?: string | null, fallbackMs?: number): string {
+  const rawDate = isoString ? new Date(isoString) : new Date(fallbackMs ?? Date.now());
+  const validDate = Number.isNaN(rawDate.getTime()) ? new Date(fallbackMs ?? Date.now()) : rawDate;
+  const datePart = validDate.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const timePart = validDate.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return `${datePart} • ${timePart}`;
+}
+
 export default function NotesView({
   currentUser,
   triggerVibration,
@@ -189,6 +205,7 @@ export default function NotesView({
   const [showFullPageReminder, setShowFullPageReminder] = useState(false);
   const [showManagerMenu, setShowManagerMenu] = useState(false);
   const [notificationPerm, setNotificationPerm] = useState<NotificationPermission | 'unsupported'>('default');
+  const [liveClockMs, setLiveClockMs] = useState<number>(() => Date.now());
 
   const managerMenuRef = useRef<HTMLDivElement>(null);
   const threeDotMenuRef = useRef<HTMLDivElement>(null);
@@ -252,6 +269,17 @@ export default function NotesView({
       onFullScreenChange?.(false);
     }
   }, [editingNote, onFullScreenChange]);
+
+  // Keep dynamic timestamp fresh while full-page note editor is open
+  const isEditingNoteOpen = Boolean(editingNote);
+  useEffect(() => {
+    if (!isEditingNoteOpen) return;
+    setLiveClockMs(Date.now());
+    const interval = setInterval(() => {
+      setLiveClockMs(Date.now());
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [isEditingNoteOpen]);
 
   const hasOpenSubOverlay = Boolean(editingNote || confirmDeleteTarget || selectedNoteIds.length > 0);
   useEffect(() => {
@@ -429,9 +457,15 @@ export default function NotesView({
   };
 
   const updateEditingNote = (updater: (prev: NoteItem) => NoteItem) => {
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    setLiveClockMs(nowMs);
     setEditingNote((prev) => {
       if (!prev) return prev;
-      return updater(prev);
+      return {
+        ...updater(prev),
+        updatedAt: nowIso,
+      };
     });
     setHasUnsavedChanges(true);
   };
@@ -1309,21 +1343,38 @@ export default function NotesView({
               }}
               className="fixed inset-0 z-[99999] w-screen h-[100dvh] flex flex-col overscroll-none select-text touch-manipulation transition-colors duration-200"
             >
-          {/* Minimalist Top Bar: Back Trigger on Left, Three-Dot Menu Trigger on Right */}
+          {/* Minimalist Top Bar: Back Trigger + Dynamic Date & 12h AM/PM Timestamp on Left, Three-Dot Menu Trigger on Right */}
           <header className="sticky top-0 z-30 px-3 sm:px-6 pt-[max(0.75rem,env(safe-area-inset-top))] pb-1.5 flex items-center justify-between gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={handleCloseEditor}
-              className={`min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl transition-colors cursor-pointer active:scale-95 shrink-0 ${
-                isDark
-                  ? 'text-slate-100 hover:bg-white/10'
-                  : 'text-slate-700 hover:bg-black/5'
-              }`}
-              aria-label="Back to notes"
-              title="Back to notes"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+              <button
+                type="button"
+                onClick={handleCloseEditor}
+                className={`min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl transition-colors cursor-pointer active:scale-95 shrink-0 ${
+                  isDark
+                    ? 'text-slate-100 hover:bg-white/10'
+                    : 'text-slate-700 hover:bg-black/5'
+                }`}
+                aria-label="Back to notes"
+                title="Back to notes"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+
+              <time
+                dateTime={editingNote.updatedAt || editingNote.createdAt || undefined}
+                data-item-edit-timestamp="note"
+                className={`text-xs sm:text-[13px] font-semibold tabular-nums tracking-tight truncate select-none ${
+                  isDark ? 'text-slate-300' : 'text-slate-600'
+                }`}
+              >
+                {formatDynamicItemDateTime(
+                  isNewDraft || hasUnsavedChanges
+                    ? new Date(liveClockMs).toISOString()
+                    : editingNote.updatedAt || editingNote.createdAt,
+                  liveClockMs
+                )}
+              </time>
+            </div>
 
             {/* Three-Dot Overflow Menu (Delete, Pin, Save, Add Label/Tags, Set Reminder, Note Color, Return to History) */}
             <div ref={threeDotMenuRef} className="relative shrink-0">

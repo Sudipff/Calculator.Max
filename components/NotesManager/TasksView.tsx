@@ -137,6 +137,22 @@ function formatDueDateShort(iso?: string | null): string | null {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function formatDynamicItemDateTime(isoString?: string | null, fallbackMs?: number): string {
+  const rawDate = isoString ? new Date(isoString) : new Date(fallbackMs ?? Date.now());
+  const validDate = Number.isNaN(rawDate.getTime()) ? new Date(fallbackMs ?? Date.now()) : rawDate;
+  const datePart = validDate.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const timePart = validDate.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return `${datePart} • ${timePart}`;
+}
+
 export default function TasksView({
   currentUser,
   triggerVibration,
@@ -192,6 +208,7 @@ export default function TasksView({
   const [isAddingNoteInDetail, setIsAddingNoteInDetail] = useState(false);
   const [detailQuickNote, setDetailQuickNote] = useState('');
   const [showDetailMenu, setShowDetailMenu] = useState(false);
+  const [liveClockMs, setLiveClockMs] = useState<number>(() => Date.now());
 
   // New List Modal
   const [showNewListModal, setShowNewListModal] = useState(false);
@@ -253,6 +270,17 @@ export default function TasksView({
       onFullScreenChange?.(false);
     }
   }, [detailTask, onFullScreenChange]);
+
+  // Keep dynamic timestamp fresh while full-page task detail/edit view is open
+  const isDetailTaskOpen = Boolean(detailTask);
+  useEffect(() => {
+    if (!isDetailTaskOpen) return;
+    setLiveClockMs(Date.now());
+    const interval = setInterval(() => {
+      setLiveClockMs(Date.now());
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [isDetailTaskOpen, isEditingDetail]);
 
   // Lock background scroll while partial overlay for creating new tasks is open without hiding main layout
   useEffect(() => {
@@ -1552,19 +1580,36 @@ export default function TasksView({
               }}
               className="fixed inset-0 z-[99999] w-screen h-[100dvh] flex flex-col overscroll-none touch-manipulation"
             >
-          {/* Minimalist Detail Top Bar: < Back on left, Consolidated Three-Dot Menu on right */}
+          {/* Minimalist Detail Top Bar: < Back + Dynamic Date & 12h AM/PM Timestamp on left, Consolidated Three-Dot Menu on right */}
           <header className="sticky top-0 z-20 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-2 shrink-0 pt-[max(0.75rem,env(safe-area-inset-top))]">
-            <button
-              type="button"
-              onClick={() => handleCloseDetailFromBackRef.current?.()}
-              className={`min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center transition-colors cursor-pointer active:scale-95 shrink-0 ${
-                isDark ? 'text-slate-100 hover:bg-white/10' : 'text-slate-800 hover:bg-black/5'
-              }`}
-              aria-label="Back to tasks"
-              title="Back to tasks"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+              <button
+                type="button"
+                onClick={() => handleCloseDetailFromBackRef.current?.()}
+                className={`min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center transition-colors cursor-pointer active:scale-95 shrink-0 ${
+                  isDark ? 'text-slate-100 hover:bg-white/10' : 'text-slate-800 hover:bg-black/5'
+                }`}
+                aria-label="Back to tasks"
+                title="Back to tasks"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+
+              <time
+                dateTime={detailTask.updatedAt || detailTask.createdAt || undefined}
+                data-item-edit-timestamp="task"
+                className={`text-xs sm:text-[13px] font-semibold tabular-nums tracking-tight truncate select-none ${
+                  isDark ? 'text-slate-300' : 'text-slate-600'
+                }`}
+              >
+                {formatDynamicItemDateTime(
+                  isEditingDetail
+                    ? new Date(liveClockMs).toISOString()
+                    : detailTask.updatedAt || detailTask.createdAt,
+                  liveClockMs
+                )}
+              </time>
+            </div>
 
             {/* Three-Dot Overflow Menu within Task View (Consolidates Edit/Save, Delete, Complete toggle, Return to History) */}
             <div ref={detailMenuRef} className="relative shrink-0">
@@ -1707,7 +1752,10 @@ export default function TasksView({
                     type="text"
                     autoFocus
                     value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
+                    onChange={(e) => {
+                      setEditTitle(e.target.value);
+                      setLiveClockMs(Date.now());
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
@@ -1754,7 +1802,10 @@ export default function TasksView({
                   <input
                     type="datetime-local"
                     value={editDueDate}
-                    onChange={(e) => setEditDueDate(e.target.value)}
+                    onChange={(e) => {
+                      setEditDueDate(e.target.value);
+                      setLiveClockMs(Date.now());
+                    }}
                     className="bg-white/90 border border-slate-300 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-slate-800"
                   />
                 ) : (
@@ -1798,7 +1849,10 @@ export default function TasksView({
                   {isEditingDetail ? (
                     <textarea
                       value={editDesc}
-                      onChange={(e) => setEditDesc(e.target.value)}
+                      onChange={(e) => {
+                        setEditDesc(e.target.value);
+                        setLiveClockMs(Date.now());
+                      }}
                       rows={4}
                       placeholder="Add detailed task description or notes..."
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs sm:text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none leading-relaxed"

@@ -33,7 +33,7 @@ function getDeploymentVersion(): string {
     }
   }
 
-  resolvedBuildVersion = `v5-${process.env.NODE_ENV || 'prod'}`;
+  resolvedBuildVersion = `v7-${process.env.NODE_ENV || 'prod'}`;
   return resolvedBuildVersion;
 }
 
@@ -44,7 +44,7 @@ export async function GET() {
   const version = getDeploymentVersion();
   return NextResponse.json(
     {
-      cachePrefix: 'calculator-max-pwa-v5',
+      cachePrefix: 'calculator-max-pwa-v7',
       version,
       timestamp: Date.now(),
     },

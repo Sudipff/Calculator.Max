@@ -121,6 +121,17 @@ const TAB_ORDER: Record<ActiveTab, number> = {
 
 const BOTTOM_NAV_TABS = new Set<ActiveTab>(['home', 'history', 'notes', 'tasks']);
 
+const RIGHT_SWIPE_HOME_TABS = new Set<ActiveTab>([
+  'age',
+  'calculator',
+  'emi',
+  'discount',
+  'wishlist',
+  'weight',
+  'unit',
+  'currency',
+]);
+
 const CURRENCIES = [
   { symbol: '৳', code: 'BDT', name: 'Bangladesh Taka', country: 'Bangladesh', flag: '🇧🇩' },
   { symbol: '₹', code: 'INR', name: 'Indian Rupee', country: 'India', flag: '🇮🇳' },
@@ -342,6 +353,7 @@ export default function RetailCalc() {
   const [currency, setCurrency] = useState('₹');
   const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const [isClient, setIsClient] = useState(false);
+  const [showStartupSplash, setShowStartupSplash] = useState(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [direction, setDirection] = useState<number>(1);
   const [tabTransitionMode, setTabTransitionMode] = useState<'slide' | 'zoom'>('slide');
@@ -711,6 +723,9 @@ export default function RetailCalc() {
 
   useEffect(() => {
     setIsClient(true);
+    const splashTimer = setTimeout(() => {
+      setShowStartupSplash(false);
+    }, 320);
     const savedCurrency = localStorage.getItem('retail-calc-currency');
     if (savedCurrency) setCurrency(savedCurrency);
 
@@ -772,6 +787,7 @@ export default function RetailCalc() {
     window.addEventListener(HAPTIC_CHANGED_EVENT, handleHapticSync);
 
     return () => {
+      clearTimeout(splashTimer);
       window.removeEventListener('calcmax:theme-changed', handleThemeSync);
       window.removeEventListener(HAPTIC_CHANGED_EVENT, handleHapticSync);
     };
@@ -1234,6 +1250,107 @@ export default function RetailCalc() {
       window.removeEventListener('touchcancel', finishPull);
     };
   }, []);
+
+  // Right-swipe gesture to return to the Home screen for Age, Scientific, EMI, Discount, Wishlist, Price by Weight, Unit Converter, and Currency Exchange tools
+  const handleTabChangeRef = useRef(handleTabChange);
+  useEffect(() => {
+    handleTabChangeRef.current = handleTabChange;
+  }, [handleTabChange]);
+
+  const swipeStartRef = useRef<{
+    x: number;
+    y: number;
+    time: number;
+    blocked: boolean;
+  } | null>(null);
+  const lastRightSwipeHandledAtRef = useRef<number>(0);
+
+  const isRightSwipeIgnoredTarget = useCallback((target: EventTarget | null): boolean => {
+    let el = target instanceof HTMLElement ? target : null;
+    while (el && el !== document.body && el !== document.documentElement) {
+      if (el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'range') {
+        return true;
+      }
+      if (el.hasAttribute('data-no-swipe')) {
+        return true;
+      }
+      const style = window.getComputedStyle(el);
+      const overflowX = style.overflowX;
+      if (
+        (overflowX === 'auto' || overflowX === 'scroll') &&
+        el.scrollWidth > el.clientWidth + 4 &&
+        el.scrollLeft > 2
+      ) {
+        return true;
+      }
+      el = el.parentElement;
+    }
+    return false;
+  }, []);
+
+  const evaluateRightSwipeToHome = useCallback(
+    (endX: number, endY: number) => {
+      const start = swipeStartRef.current;
+      swipeStartRef.current = null;
+      if (!start || start.blocked) return;
+      if (!RIGHT_SWIPE_HOME_TABS.has(activeTabRef.current)) return;
+      if (isOverlayBlockedRef.current || isPullRefreshingRef.current) return;
+
+      const now = Date.now();
+      if (now - lastRightSwipeHandledAtRef.current < 250) return;
+
+      const dx = endX - start.x;
+      const dy = endY - start.y;
+      const elapsed = now - start.time;
+
+      if (elapsed <= 900 && dx >= 56 && dx > Math.abs(dy) * 1.3) {
+        lastRightSwipeHandledAtRef.current = now;
+        handleTabChangeRef.current('home');
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const onSwipeTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) {
+        swipeStartRef.current = null;
+        return;
+      }
+      if (!RIGHT_SWIPE_HOME_TABS.has(activeTabRef.current) || isOverlayBlockedRef.current) {
+        swipeStartRef.current = null;
+        return;
+      }
+      swipeStartRef.current = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+        time: Date.now(),
+        blocked: isRightSwipeIgnoredTarget(e.target),
+      };
+    };
+
+    const onSwipeTouchEnd = (e: TouchEvent) => {
+      if (!swipeStartRef.current || e.changedTouches.length === 0) return;
+      const touch = e.changedTouches[0];
+      evaluateRightSwipeToHome(touch.clientX, touch.clientY);
+    };
+
+    const onSwipeTouchCancel = () => {
+      swipeStartRef.current = null;
+    };
+
+    window.addEventListener('touchstart', onSwipeTouchStart, { passive: true });
+    window.addEventListener('touchend', onSwipeTouchEnd, { passive: true });
+    window.addEventListener('touchcancel', onSwipeTouchCancel, { passive: true });
+
+    return () => {
+      window.removeEventListener('touchstart', onSwipeTouchStart);
+      window.removeEventListener('touchend', onSwipeTouchEnd);
+      window.removeEventListener('touchcancel', onSwipeTouchCancel);
+    };
+  }, [evaluateRightSwipeToHome, isRightSwipeIgnoredTarget]);
 
   const handleFocusDashboardSearch = () => {
     triggerVibration('click');
@@ -2616,8 +2733,69 @@ export default function RetailCalc() {
           }}
         />
 
+        {/* Startup Loading Screen Overlay: Displays "Calculator Max" clearly at the bottom during startup */}
+        <AnimatePresence>
+          {showStartupSplash && (
+            <motion.div
+              key="calcmax-startup-overlay"
+              role="status"
+              aria-live="polite"
+              aria-label="Calculator Max loading screen"
+              initial={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.22, ease: 'easeOut' }}
+              className="fixed inset-0 z-[95] flex flex-col items-center justify-between bg-gradient-to-b from-[#f8fafc] via-[#f1f5f9] to-[#eef2ff] dark:from-[#0b0f19] dark:via-[#0f172a] dark:to-[#111827] px-6 py-10 select-none pointer-events-none"
+            >
+              <div className="h-12" aria-hidden="true" />
+              <div className="flex flex-col items-center justify-center gap-5">
+                <div className="relative flex items-center justify-center">
+                  <span
+                    aria-hidden="true"
+                    className="absolute -inset-2.5 rounded-[28px] border-2 border-blue-500/25 border-t-blue-600 dark:border-blue-400/20 dark:border-t-blue-400 animate-spin"
+                  />
+                  <div className="w-20 h-20 rounded-3xl bg-white dark:bg-slate-900 shadow-[0_12px_32px_rgba(37,99,235,0.16)] border border-slate-200/80 dark:border-slate-800 flex items-center justify-center p-2">
+                    <Image
+                      src="/pwa-192x192.png"
+                      alt="Calculator Max Logo"
+                      width={64}
+                      height={64}
+                      className="w-16 h-16 rounded-2xl object-contain"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="w-full flex flex-col items-center justify-end pb-4 sm:pb-6 text-center">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-blue-600 dark:text-blue-400 mb-1">
+                  Smart Retail &amp; Math Suite
+                </p>
+                <p className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white leading-tight m-0">
+                  Calculator Max
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Main Content Area (Invariant outer container prevents 116px upward layout jumps during screen transitions) */}
-        <main className="flex-1 flex flex-col relative overflow-x-clip p-0">
+        <main
+          className="flex-1 flex flex-col relative overflow-x-clip p-0"
+          onTouchStart={(e) => {
+            if (e.touches.length !== 1) return;
+            if (!RIGHT_SWIPE_HOME_TABS.has(activeTab) || isOverlayBlockedRef.current) return;
+            swipeStartRef.current = {
+              x: e.touches[0].clientX,
+              y: e.touches[0].clientY,
+              time: Date.now(),
+              blocked: isRightSwipeIgnoredTarget(e.target),
+            };
+          }}
+          onTouchEnd={(e) => {
+            if (e.changedTouches.length === 0) return;
+            const t = e.changedTouches[0];
+            evaluateRightSwipeToHome(t.clientX, t.clientY);
+          }}
+        >
           {/* Pull-to-Refresh Physical Gesture Indicator (Scoped strictly to active pull/refreshing gesture) */}
           {(pullDistance > 8 || isPullRefreshing) && !isNoteFullScreen && (
             <div
@@ -2823,6 +3001,7 @@ export default function RetailCalc() {
                       onToggleHaptic={handleToggleHaptic}
                       onSaveHistory={(type, details, result) => saveHistoryItem(type, details, result)}
                       onBackHome={() => handleTabChange('home')}
+                      onHistoryOpenChange={(isOpen) => setIsManagerSubOverlayOpen(isOpen)}
                     />
                   </CalculatorErrorBoundary>
                 </section>
