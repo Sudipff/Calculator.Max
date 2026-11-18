@@ -523,7 +523,23 @@ self.addEventListener('message', (event) => {
   } else if (payload.type === 'SKIP_WAITING') {
     self.skipWaiting();
   } else if (payload.type === 'CHECK_FOR_UPDATES') {
-    event.waitUntil(syncDeploymentVersionInSW(Boolean(payload.forceRefresh)));
+    event.waitUntil(
+      (async () => {
+        const updated = await syncDeploymentVersionInSW(Boolean(payload.forceRefresh));
+        const clients = await self.clients.matchAll({
+          type: 'window',
+          includeUncontrolled: true,
+        });
+        clients.forEach((client) => {
+          client.postMessage({
+            type: 'CALCMAX_SW_CHECK_COMPLETE',
+            updated,
+            version: activeDeploymentVersion,
+            cacheName: activeCacheName,
+          });
+        });
+      })()
+    );
   }
 });
 

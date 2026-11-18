@@ -123,6 +123,8 @@ export default function ProfileSettingsView({
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedText, setLastSyncedText] = useState('Ready to sync');
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [isUpdatingApp, setIsUpdatingApp] = useState(false);
+  const [appUpdateStatusText, setAppUpdateStatusText] = useState('Stale-while-revalidate active');
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default');
   const [skipBlockedPushPopup, setSkipBlockedPushPopup] = useState(true);
   const prevCloseSignalRef = useRef<number>(closeSubViewSignal);
@@ -479,6 +481,98 @@ export default function ProfileSettingsView({
       });
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const handleManualAppUpdate = async () => {
+    if (isUpdatingApp) return;
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showNotification({
+        id: 'sw-manual-update',
+        message: 'Offline — connect to the internet to check for app updates',
+        type: 'warning',
+        duration: 2800,
+      });
+      return;
+    }
+
+    setIsUpdatingApp(true);
+    setAppUpdateStatusText('Checking for updates...');
+
+    try {
+      let foundNewWorker = false;
+
+      if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+        let registration = await navigator.serviceWorker.getRegistration('/');
+        if (!registration) {
+          registration = await navigator.serviceWorker.getRegistration();
+        }
+        if (!registration) {
+          registration = await navigator.serviceWorker.register('/sw.js', {
+            scope: '/',
+            updateViaCache: 'none',
+          });
+        }
+
+        if (registration) {
+          await registration.update();
+
+          if (registration.waiting) {
+            foundNewWorker = true;
+            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+          } else if (registration.installing) {
+            foundNewWorker = true;
+            const installing = registration.installing;
+            installing.addEventListener('statechange', () => {
+              if (installing.state === 'installed') {
+                (registration?.waiting || installing).postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          }
+
+          registration.active?.postMessage({
+            type: 'CHECK_FOR_UPDATES',
+            forceRefresh: true,
+          });
+        }
+      }
+
+      // Ensure smooth visible loading state while background revalidation completes
+      await new Promise((resolve) => setTimeout(resolve, 650));
+
+      const checkedAt = new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      if (foundNewWorker) {
+        setAppUpdateStatusText(`Updated • ${checkedAt}`);
+        showNotification({
+          id: 'sw-manual-update',
+          message: 'New app version downloaded & cache updated',
+          type: 'success',
+          duration: 2600,
+        });
+      } else {
+        setAppUpdateStatusText(`Up to date • ${checkedAt}`);
+        showNotification({
+          id: 'sw-manual-update',
+          message: 'App is up to date — latest version cached',
+          type: 'success',
+          duration: 2400,
+        });
+      }
+    } catch {
+      setAppUpdateStatusText('Update check failed');
+      showNotification({
+        id: 'sw-manual-update',
+        message: 'Could not check for updates right now',
+        type: 'error',
+        duration: 2600,
+      });
+    } finally {
+      setIsUpdatingApp(false);
     }
   };
 
@@ -1056,6 +1150,34 @@ export default function ProfileSettingsView({
             </div>
             <span className="text-[11px] font-medium text-slate-500 text-right shrink-0">
               {isSyncing ? 'Syncing...' : lastSyncedText}
+            </span>
+          </button>
+
+          {/* Update App (Manual Service Worker registration.update() check + Stale-While-Revalidate cache refresh) */}
+          <button
+            type="button"
+            onClick={handleManualAppUpdate}
+            disabled={isUpdatingApp}
+            aria-busy={isUpdatingApp}
+            className="w-full px-4 py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors cursor-pointer text-left disabled:opacity-60"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                <RefreshCw className={`w-4 h-4 ${isUpdatingApp ? 'animate-spin' : ''}`} />
+              </span>
+              <div className="min-w-0">
+                <span className="block text-sm font-semibold text-slate-800 truncate">
+                  Update App
+                </span>
+                <span className="block text-[11px] text-slate-500 truncate">
+                  {isUpdatingApp
+                    ? 'Checking service worker & refreshing cache...'
+                    : 'Check for latest version & refresh offline cache'}
+                </span>
+              </div>
+            </div>
+            <span className="text-[11px] font-medium text-slate-500 text-right shrink-0">
+              {isUpdatingApp ? 'Updating...' : appUpdateStatusText}
             </span>
           </button>
         </div>
