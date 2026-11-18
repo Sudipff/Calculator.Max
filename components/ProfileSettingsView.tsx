@@ -124,14 +124,22 @@ export default function ProfileSettingsView({
   const [lastSyncedText, setLastSyncedText] = useState('Ready to sync');
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [isUpdatingApp, setIsUpdatingApp] = useState(false);
-  const [appUpdateStatusText, setAppUpdateStatusText] = useState('Stale-while-revalidate active');
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
+  const [appUpdateStatusText, setAppUpdateStatusText] = useState('');
+  const [pendingUpdateModal, setPendingUpdateModal] = useState<{
+    version: string;
+    releaseVersion: string;
+    title: string;
+    notes: string[];
+  } | null>(null);
+  const swRegistrationForUpdateRef = useRef<ServiceWorkerRegistration | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default');
   const [skipBlockedPushPopup, setSkipBlockedPushPopup] = useState(true);
   const prevCloseSignalRef = useRef<number>(closeSubViewSignal);
   const authProvider = getAuthProviderInfo(currentUser);
 
   const hasSubOverlay = Boolean(
-    showSubscriptionView || expandedAccount !== null
+    showSubscriptionView || expandedAccount !== null || pendingUpdateModal !== null
   );
 
   useEffect(() => {
@@ -145,6 +153,12 @@ export default function ProfileSettingsView({
     if (closeSubViewSignal === prevCloseSignalRef.current) return;
     prevCloseSignalRef.current = closeSubViewSignal;
 
+    if (pendingUpdateModal !== null) {
+      if (!isInstallingUpdate) {
+        setPendingUpdateModal(null);
+      }
+      return;
+    }
     if (showSubscriptionView && showBackupSettingsView) {
       setCloseBackupSignal((n) => n + 1);
       if (typeof window !== 'undefined') {
@@ -165,6 +179,8 @@ export default function ProfileSettingsView({
   }, [
     closeSubViewSignal,
     expandedAccount,
+    isInstallingUpdate,
+    pendingUpdateModal,
     showBackupSettingsView,
     showSubscriptionView,
   ]);
@@ -485,7 +501,7 @@ export default function ProfileSettingsView({
   };
 
   const handleManualAppUpdate = async () => {
-    if (isUpdatingApp) return;
+    if (isUpdatingApp || isInstallingUpdate) return;
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       showNotification({
@@ -498,13 +514,21 @@ export default function ProfileSettingsView({
     }
 
     setIsUpdatingApp(true);
-    setAppUpdateStatusText('Checking for updates...');
+    setAppUpdateStatusText('Checking...');
+
+    const defaultReleaseNotes = [
+      'Offline-first PWA caching with Stale-While-Revalidate for instant startup on slow connections.',
+      'Right-swipe gesture navigation across all 8 calculators and converter tools to quickly return Home.',
+      'Single-screen Scientific Calculator layout with smooth top-fading history and tactile keypad feedback.',
+      'Dynamic 12-hour AM/PM timestamps in Note and Task editor headers with multi-select sharing.',
+    ];
 
     try {
-      let foundNewWorker = false;
+      let registration: ServiceWorkerRegistration | undefined;
+      let hasWaitingOrInstallingWorker = false;
 
       if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-        let registration = await navigator.serviceWorker.getRegistration('/');
+        registration = await navigator.serviceWorker.getRegistration('/');
         if (!registration) {
           registration = await navigator.serviceWorker.getRegistration();
         }
@@ -516,49 +540,73 @@ export default function ProfileSettingsView({
         }
 
         if (registration) {
+          swRegistrationForUpdateRef.current = registration;
           await registration.update();
-
-          if (registration.waiting) {
-            foundNewWorker = true;
-            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-          } else if (registration.installing) {
-            foundNewWorker = true;
-            const installing = registration.installing;
-            installing.addEventListener('statechange', () => {
-              if (installing.state === 'installed') {
-                (registration?.waiting || installing).postMessage({ type: 'SKIP_WAITING' });
-              }
-            });
+          if (registration.waiting || registration.installing) {
+            hasWaitingOrInstallingWorker = true;
           }
-
-          registration.active?.postMessage({
-            type: 'CHECK_FOR_UPDATES',
-            forceRefresh: true,
-          });
         }
       }
 
-      // Ensure smooth visible loading state while background revalidation completes
-      await new Promise((resolve) => setTimeout(resolve, 650));
+      let serverVersion = 'v7';
+      let releaseVersion = 'v2.4.0';
+      let releaseTitle = 'Calculator Max v2.4.0';
+      let releaseNotes = defaultReleaseNotes;
 
-      const checkedAt = new Date().toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      });
+      try {
+        const res = await fetch('/api/sw-version', {
+          method: 'GET',
+          cache: 'no-store',
+          headers: { Accept: 'application/json' },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data?.version === 'string' && data.version.trim()) {
+            serverVersion = data.version.trim();
+          }
+          if (typeof data?.releaseVersion === 'string' && data.releaseVersion.trim()) {
+            releaseVersion = data.releaseVersion.trim();
+          }
+          if (typeof data?.releaseTitle === 'string' && data.releaseTitle.trim()) {
+            releaseTitle = data.releaseTitle.trim();
+          }
+          if (Array.isArray(data?.releaseNotes) && data.releaseNotes.length > 0) {
+            releaseNotes = data.releaseNotes.filter((n: unknown): n is string => typeof n === 'string');
+          }
+        }
+      } catch {
+        // Fallback to built-in release notes metadata
+      }
 
-      if (foundNewWorker) {
-        setAppUpdateStatusText(`Updated • ${checkedAt}`);
-        showNotification({
-          id: 'sw-manual-update',
-          message: 'New app version downloaded & cache updated',
-          type: 'success',
-          duration: 2600,
+      // Smooth visible loading check
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const confirmedKey = `${releaseVersion}:${serverVersion}`;
+      const previouslyConfirmed =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('calcmax_confirmed_app_version')
+          : null;
+
+      const isNewVersionAvailable =
+        hasWaitingOrInstallingWorker || previouslyConfirmed !== confirmedKey;
+
+      if (isNewVersionAvailable) {
+        setAppUpdateStatusText(`Update available (${releaseVersion})`);
+        setPendingUpdateModal({
+          version: confirmedKey,
+          releaseVersion,
+          title: releaseTitle,
+          notes: releaseNotes,
         });
       } else {
+        const checkedAt = new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
         setAppUpdateStatusText(`Up to date • ${checkedAt}`);
         showNotification({
           id: 'sw-manual-update',
-          message: 'App is up to date — latest version cached',
+          message: `Calculator Max is up to date (${releaseVersion})`,
           type: 'success',
           duration: 2400,
         });
@@ -573,6 +621,68 @@ export default function ProfileSettingsView({
       });
     } finally {
       setIsUpdatingApp(false);
+    }
+  };
+
+  const handleConfirmAppUpdate = async () => {
+    if (!pendingUpdateModal || isInstallingUpdate) return;
+    setIsInstallingUpdate(true);
+    setAppUpdateStatusText('Installing...');
+
+    try {
+      const registration =
+        swRegistrationForUpdateRef.current ||
+        (typeof window !== 'undefined' && 'serviceWorker' in navigator
+          ? await navigator.serviceWorker.getRegistration('/')
+          : undefined);
+
+      if (registration) {
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        } else if (registration.installing) {
+          const installing = registration.installing;
+          installing.addEventListener('statechange', () => {
+            if (installing.state === 'installed') {
+              (registration.waiting || installing).postMessage({ type: 'SKIP_WAITING' });
+            }
+          });
+        }
+
+        registration.active?.postMessage({
+          type: 'CHECK_FOR_UPDATES',
+          forceRefresh: true,
+        });
+      } else if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.controller?.postMessage({
+          type: 'CHECK_FOR_UPDATES',
+          forceRefresh: true,
+        });
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 650));
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('calcmax_confirmed_app_version', pendingUpdateModal.version);
+      }
+
+      const installedVer = pendingUpdateModal.releaseVersion;
+      setPendingUpdateModal(null);
+      setAppUpdateStatusText(`Updated • ${installedVer}`);
+      showNotification({
+        id: 'sw-manual-update',
+        message: `Update ${installedVer} installed & offline cache refreshed`,
+        type: 'success',
+        duration: 2800,
+      });
+    } catch {
+      showNotification({
+        id: 'sw-manual-update',
+        message: 'Failed to complete update installation',
+        type: 'error',
+        duration: 2600,
+      });
+    } finally {
+      setIsInstallingUpdate(false);
     }
   };
 
@@ -1153,31 +1263,28 @@ export default function ProfileSettingsView({
             </span>
           </button>
 
-          {/* Update App (Manual Service Worker registration.update() check + Stale-While-Revalidate cache refresh) */}
+          {/* Update App (No subtitle text; checks for new version and opens Release Notes popup) */}
           <button
             type="button"
             onClick={handleManualAppUpdate}
-            disabled={isUpdatingApp}
-            aria-busy={isUpdatingApp}
+            disabled={isUpdatingApp || isInstallingUpdate}
+            aria-busy={isUpdatingApp || isInstallingUpdate}
             className="w-full px-4 py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors cursor-pointer text-left disabled:opacity-60"
           >
             <div className="flex items-center gap-3 min-w-0">
               <span className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
-                <RefreshCw className={`w-4 h-4 ${isUpdatingApp ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-4 h-4 ${isUpdatingApp || isInstallingUpdate ? 'animate-spin' : ''}`} />
               </span>
-              <div className="min-w-0">
-                <span className="block text-sm font-semibold text-slate-800 truncate">
-                  Update App
-                </span>
-                <span className="block text-[11px] text-slate-500 truncate">
-                  {isUpdatingApp
-                    ? 'Checking service worker & refreshing cache...'
-                    : 'Check for latest version & refresh offline cache'}
-                </span>
-              </div>
+              <span className="text-sm font-semibold text-slate-800 truncate">
+                Update App
+              </span>
             </div>
             <span className="text-[11px] font-medium text-slate-500 text-right shrink-0">
-              {isUpdatingApp ? 'Updating...' : appUpdateStatusText}
+              {isUpdatingApp
+                ? 'Checking...'
+                : isInstallingUpdate
+                ? 'Installing...'
+                : appUpdateStatusText}
             </span>
           </button>
         </div>
@@ -1377,6 +1484,114 @@ export default function ProfileSettingsView({
                       className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold shadow-md transition-all cursor-pointer shrink-0"
                     >
                       Verify Permission Now
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+
+      {/* Popup Modal for Available App Update with Release Notes & Confirm Update Button */}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <AnimatePresence>
+            {pendingUpdateModal && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="app-update-release-notes-title"
+                onClick={() => {
+                  if (!isInstallingUpdate) {
+                    setPendingUpdateModal(null);
+                  }
+                }}
+                className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs"
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.94, y: 14 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.94, y: 14 }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-md bg-white rounded-3xl border border-slate-200/90 shadow-2xl p-6 space-y-4 relative overflow-hidden"
+                >
+                  {/* Top Header */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <span className="w-11 h-11 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0 border border-indigo-200/80">
+                        <Sparkles className="w-5 h-5" />
+                      </span>
+                      <div className="min-w-0">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/70 text-[10px] font-extrabold uppercase tracking-wider mb-1">
+                          New Version Available · {pendingUpdateModal.releaseVersion}
+                        </span>
+                        <h3
+                          id="app-update-release-notes-title"
+                          className="text-base sm:text-lg font-extrabold text-slate-900 leading-snug"
+                        >
+                          {pendingUpdateModal.title} Release Notes
+                        </h3>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isInstallingUpdate}
+                      onClick={() => setPendingUpdateModal(null)}
+                      aria-label="Close update dialog"
+                      className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      <X className="w-4.5 h-4.5" />
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    A new version of Calculator Max is ready to install. Review what&apos;s new below and tap <strong className="text-slate-900">Confirm Update</strong> to apply the update:
+                  </p>
+
+                  {/* Release Notes List */}
+                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-2.5 max-h-56 overflow-y-auto">
+                    <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
+                      What&apos;s New
+                    </p>
+                    <ul className="space-y-2 text-xs text-slate-700 font-medium">
+                      {pendingUpdateModal.notes.map((note, idx) => (
+                        <li key={idx} className="flex items-start gap-2.5">
+                          <span className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                          </span>
+                          <span className="leading-relaxed">{note}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex items-center justify-end gap-2.5 pt-1">
+                    <button
+                      type="button"
+                      disabled={isInstallingUpdate}
+                      onClick={() => setPendingUpdateModal(null)}
+                      className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      Later
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isInstallingUpdate}
+                      onClick={handleConfirmAppUpdate}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-md transition-all cursor-pointer shrink-0 disabled:opacity-60"
+                    >
+                      {isInstallingUpdate ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Installing...</span>
+                        </>
+                      ) : (
+                        <span>Confirm Update</span>
+                      )}
                     </button>
                   </div>
                 </motion.div>

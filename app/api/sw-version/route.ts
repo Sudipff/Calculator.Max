@@ -4,6 +4,15 @@ import path from 'path';
 
 let resolvedBuildVersion: string | null = null;
 
+const LATEST_RELEASE_VERSION = 'v2.4.0';
+const LATEST_RELEASE_TITLE = 'Calculator Max v2.4.0';
+const LATEST_RELEASE_NOTES = [
+  'Offline-first PWA caching with Stale-While-Revalidate for instant startup on slow connections.',
+  'Right-swipe gesture navigation across all 8 calculators and converter tools to quickly return Home.',
+  'Single-screen Scientific Calculator layout with smooth top-fading history and tactile keypad feedback.',
+  'Dynamic 12-hour AM/PM timestamps in Note and Task editor headers with multi-select sharing.',
+];
+
 function getDeploymentVersion(): string {
   if (resolvedBuildVersion) return resolvedBuildVersion;
 
@@ -46,6 +55,9 @@ export async function GET() {
     {
       cachePrefix: 'calculator-max-pwa-v7',
       version,
+      releaseVersion: LATEST_RELEASE_VERSION,
+      releaseTitle: LATEST_RELEASE_TITLE,
+      releaseNotes: LATEST_RELEASE_NOTES,
       timestamp: Date.now(),
     },
     {
