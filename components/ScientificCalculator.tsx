@@ -82,14 +82,16 @@ export default function ScientificCalculator({
   }>({ viewportHeight: 844, isDesktop: false });
   const [measuredHeights, setMeasuredHeights] = useState<{
     topBar: number;
+    displayArea: number;
     activeInput: number;
     keypad: number;
-  }>({ topBar: 44, activeInput: 108, keypad: 396 });
+  }>({ topBar: 44, displayArea: 0, activeInput: 108, keypad: 396 });
 
   const [livePreview, setLivePreview] = useState<string | null>(null);
   const computeReqIdRef = useRef<number>(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const topBarRef = useRef<HTMLDivElement | null>(null);
+  const displayAreaRef = useRef<HTMLDivElement | null>(null);
   const activeInputRef = useRef<HTMLDivElement | null>(null);
   const keypadRef = useRef<HTMLDivElement | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -232,20 +234,30 @@ export default function ScientificCalculator({
     if (typeof ResizeObserver !== 'undefined') {
       const syncElementHeights = () => {
         const nextTopBar = Math.round(topBarRef.current?.getBoundingClientRect().height || 44);
+        const nextDisplayArea = Math.round(
+          displayAreaRef.current?.getBoundingClientRect().height || 0
+        );
         const nextActiveInput = Math.round(
           activeInputRef.current?.getBoundingClientRect().height || 108
         );
         const nextKeypad = Math.round(keypadRef.current?.getBoundingClientRect().height || 396);
         setMeasuredHeights((prev) =>
           prev.topBar === nextTopBar &&
+          prev.displayArea === nextDisplayArea &&
           prev.activeInput === nextActiveInput &&
           prev.keypad === nextKeypad
             ? prev
-            : { topBar: nextTopBar, activeInput: nextActiveInput, keypad: nextKeypad }
+            : {
+                topBar: nextTopBar,
+                displayArea: nextDisplayArea,
+                activeInput: nextActiveInput,
+                keypad: nextKeypad,
+              }
         );
       };
       observer = new ResizeObserver(syncElementHeights);
       if (topBarRef.current) observer.observe(topBarRef.current);
+      if (displayAreaRef.current) observer.observe(displayAreaRef.current);
       if (activeInputRef.current) observer.observe(activeInputRef.current);
       if (keypadRef.current) observer.observe(keypadRef.current);
       syncElementHeights();
@@ -597,19 +609,21 @@ export default function ScientificCalculator({
   // History height & visible entry count dynamically adapt to available screen height & input growth.
   const availableHistoryHeightPx = useMemo(() => {
     const shellBudget = viewportMetrics.isDesktop
-      ? Math.min(Math.max(viewportMetrics.viewportHeight - 28, 660), 880)
+      ? Math.min(Math.max(viewportMetrics.viewportHeight - 24, 660), 880)
       : viewportMetrics.viewportHeight;
-    const chromePadding = viewportMetrics.isDesktop ? 56 : 38;
-    return Math.max(
-      0,
-      Math.floor(
-        shellBudget -
-          measuredHeights.topBar -
-          measuredHeights.keypad -
-          measuredHeights.activeInput -
-          chromePadding
-      )
+    const chromePadding = viewportMetrics.isDesktop ? 14 : 6;
+    const fallbackBudget = Math.floor(
+      shellBudget -
+        measuredHeights.topBar -
+        measuredHeights.keypad -
+        measuredHeights.activeInput -
+        chromePadding
     );
+    const measuredDisplayBudget =
+      measuredHeights.displayArea > 0
+        ? Math.floor(measuredHeights.displayArea - measuredHeights.activeInput - 6)
+        : fallbackBudget;
+    return Math.max(0, Math.max(fallbackBudget, measuredDisplayBudget));
   }, [viewportMetrics, measuredHeights]);
 
   const resLen = mainResultDisplay.length;
@@ -637,7 +651,7 @@ export default function ScientificCalculator({
     const exprLen = equationDisplay.length;
     const exprTier = exprLen <= 18 ? 0 : exprLen <= 36 ? 1 : exprLen <= 64 ? 2 : 3;
     const tightBudgetTier =
-      availableHistoryHeightPx < 56 ? 2 : availableHistoryHeightPx < 110 ? 1 : 0;
+      availableHistoryHeightPx < 44 ? 2 : availableHistoryHeightPx < 88 ? 1 : 0;
     const eqTier = Math.min(3, Math.max(exprTier, resTier, tightBudgetTier > 1 ? 1 : 0)) as
       | 0
       | 1
@@ -653,12 +667,12 @@ export default function ScientificCalculator({
         ? 'text-[17px] sm:text-[19px] leading-[1.22]'
         : 'text-[15px] sm:text-[17px] leading-[1.22]';
 
-    const estimatedRowHeight = eqTier === 0 ? 32 : eqTier === 1 ? 29 : 26;
+    const estimatedRowHeight = eqTier === 0 ? 25 : eqTier === 1 ? 23 : 21;
     const heightBasedLimit =
-      availableHistoryHeightPx < 36
+      availableHistoryHeightPx < 24
         ? 0
-        : Math.max(1, Math.floor(availableHistoryHeightPx / estimatedRowHeight));
-    const tierMaxEntries = eqTier === 0 ? 8 : eqTier === 1 ? 5 : eqTier === 2 ? 3 : 1;
+        : Math.max(1, Math.ceil(availableHistoryHeightPx / estimatedRowHeight) + 1);
+    const tierMaxEntries = eqTier === 0 ? 14 : eqTier === 1 ? 10 : eqTier === 2 ? 7 : 4;
     const entryLimit = Math.min(heightBasedLimit, tierMaxEntries);
 
     return {
@@ -679,78 +693,85 @@ export default function ScientificCalculator({
           return {
             exprClass: 'text-[18px] sm:text-[20px] leading-[1.24]',
             resClass: 'text-[19px] sm:text-[21px]',
-            opacity: 0.86,
+            opacity: 0.96,
           };
         }
         if (effectiveAge === 1) {
           return {
-            exprClass: 'text-[16px] sm:text-[18px] leading-[1.22]',
-            resClass: 'text-[17px] sm:text-[19px]',
-            opacity: 0.64,
+            exprClass: 'text-[16.5px] sm:text-[18.5px] leading-[1.22]',
+            resClass: 'text-[17.5px] sm:text-[19.5px]',
+            opacity: 0.9,
           };
         }
         if (effectiveAge === 2) {
           return {
-            exprClass: 'text-[14px] sm:text-[16px] leading-[1.2]',
-            resClass: 'text-[15px] sm:text-[17px]',
-            opacity: 0.44,
+            exprClass: 'text-[15px] sm:text-[16.5px] leading-[1.2]',
+            resClass: 'text-[16px] sm:text-[17.5px]',
+            opacity: 0.84,
+          };
+        }
+        if (effectiveAge === 3) {
+          return {
+            exprClass: 'text-[14.5px] sm:text-[15.5px] leading-[1.2]',
+            resClass: 'text-[15px] sm:text-[16.5px]',
+            opacity: 0.78,
           };
         }
         return {
-          exprClass: 'text-[13px] sm:text-[14px] leading-[1.18]',
-          resClass: 'text-[13.5px] sm:text-[14.5px]',
-          opacity: Math.max(0.16, 0.3 - (effectiveAge - 3) * 0.045),
+          exprClass: 'text-[14px] sm:text-[15px] leading-[1.18]',
+          resClass: 'text-[14.5px] sm:text-[15.5px]',
+          opacity: Math.max(0.64, 0.74 - (effectiveAge - 4) * 0.04),
         };
       }
 
       if (eqTier === 1) {
         if (effectiveAge === 0) {
           return {
-            exprClass: 'text-[16px] sm:text-[18px] leading-[1.22]',
-            resClass: 'text-[17px] sm:text-[19px]',
-            opacity: 0.82,
+            exprClass: 'text-[16.5px] sm:text-[18.5px] leading-[1.22]',
+            resClass: 'text-[17.5px] sm:text-[19.5px]',
+            opacity: 0.95,
           };
         }
         if (effectiveAge === 1) {
           return {
-            exprClass: 'text-[14.5px] sm:text-[16px] leading-[1.2]',
-            resClass: 'text-[15px] sm:text-[17px]',
-            opacity: 0.56,
+            exprClass: 'text-[15px] sm:text-[16.5px] leading-[1.2]',
+            resClass: 'text-[16px] sm:text-[17.5px]',
+            opacity: 0.88,
           };
         }
         return {
-          exprClass: 'text-[13px] sm:text-[14px] leading-[1.18]',
-          resClass: 'text-[13.5px] sm:text-[14.5px]',
-          opacity: Math.max(0.18, 0.36 - (effectiveAge - 2) * 0.06),
+          exprClass: 'text-[14px] sm:text-[15px] leading-[1.18]',
+          resClass: 'text-[14.5px] sm:text-[15.5px]',
+          opacity: Math.max(0.64, 0.8 - (effectiveAge - 2) * 0.05),
         };
       }
 
       if (eqTier === 2) {
         if (effectiveAge === 0) {
           return {
-            exprClass: 'text-[14.5px] sm:text-[16px] leading-[1.2]',
-            resClass: 'text-[15px] sm:text-[17px]',
-            opacity: 0.78,
+            exprClass: 'text-[15px] sm:text-[16.5px] leading-[1.2]',
+            resClass: 'text-[16px] sm:text-[17.5px]',
+            opacity: 0.94,
           };
         }
         return {
-          exprClass: 'text-[13px] sm:text-[14px] leading-[1.18]',
-          resClass: 'text-[13.5px] sm:text-[14.5px]',
-          opacity: Math.max(0.22, 0.46 - (effectiveAge - 1) * 0.08),
+          exprClass: 'text-[14px] sm:text-[15px] leading-[1.18]',
+          resClass: 'text-[14.5px] sm:text-[15.5px]',
+          opacity: Math.max(0.64, 0.82 - (effectiveAge - 1) * 0.06),
         };
       }
 
       if (effectiveAge === 0) {
         return {
-          exprClass: 'text-[13px] sm:text-[14px] leading-[1.18]',
-          resClass: 'text-[13.5px] sm:text-[14.5px]',
-          opacity: 0.72,
+          exprClass: 'text-[14px] sm:text-[15px] leading-[1.18]',
+          resClass: 'text-[14.5px] sm:text-[15.5px]',
+          opacity: 0.92,
         };
       }
       return {
-        exprClass: 'text-[12px] sm:text-[13px] leading-[1.16]',
-        resClass: 'text-[12.5px] sm:text-[13.5px]',
-        opacity: 0.38,
+        exprClass: 'text-[13px] sm:text-[14px] leading-[1.16]',
+        resClass: 'text-[13.5px] sm:text-[14.5px]',
+        opacity: 0.72,
       };
     },
     [displayScale]
@@ -1163,21 +1184,23 @@ export default function ScientificCalculator({
         </div>
 
         {/* Display Area: Height-Adaptive History Above + Graduated Equation & Largest Main Result */}
-        <div className="flex-1 min-h-[168px] sm:min-h-[210px] flex flex-col justify-end overflow-hidden px-1 pb-4 pt-1">
-          {/* Dynamic History Section: Adapts to available screen height & scales back as active input grows */}
-          {previewTapeEntries.length > 0 && displayScale.historyMaxHeightPx >= 36 && (
+        <div
+          ref={displayAreaRef}
+          className="flex-1 min-h-[168px] sm:min-h-[210px] -mt-1 flex flex-col justify-end overflow-hidden px-1 pb-3.5 pt-0"
+        >
+          {/* Dynamic History Section: Extends right up toward the three-dot menu & gently fades at the very top edge */}
+          {previewTapeEntries.length > 0 && displayScale.historyMaxHeightPx >= 24 && (
             <div
               aria-label="Recent calculations preview"
-              style={{ maxHeight: `${displayScale.historyMaxHeightPx}px` }}
-              className={`mb-2.5 pb-2.5 border-b overflow-hidden flex flex-col justify-end transition-all duration-200 ${
+              className={`flex-1 min-h-0 mb-2 pb-1.5 pt-0.5 border-b overflow-hidden flex flex-col justify-end transition-all duration-200 ${
                 isDark ? 'border-zinc-800/75' : 'border-zinc-300/75'
               } ${
                 previewTapeEntries.length > 1
-                  ? '[mask-image:linear-gradient(to_bottom,transparent_0%,rgba(0,0,0,0.45)_34%,rgba(0,0,0,1)_82%)]'
-                  : '[mask-image:linear-gradient(to_bottom,rgba(0,0,0,0.65)_0%,rgba(0,0,0,1)_45%)]'
+                  ? '[mask-image:linear-gradient(to_bottom,transparent_0%,rgba(0,0,0,0.68)_6%,rgba(0,0,0,0.92)_14%,rgba(0,0,0,1)_22%)]'
+                  : '[mask-image:linear-gradient(to_bottom,rgba(0,0,0,0.95)_0%,rgba(0,0,0,1)_10%)]'
               }`}
             >
-              <div className="flex flex-col items-end justify-end gap-1.5">
+              <div className="flex flex-col items-end justify-end gap-0.5">
                 <AnimatePresence initial={false} mode="popLayout">
                   {previewTapeEntries.map((item, idx) => {
                     const ageFromBottom = previewTapeEntries.length - 1 - idx;
@@ -1203,12 +1226,12 @@ export default function ScientificCalculator({
                         <div
                           className={`font-normal tabular-nums whitespace-normal break-words transition-all duration-150 ${
                             entryTypo.exprClass
-                          } ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}
+                          } ${isDark ? 'text-zinc-200' : 'text-slate-700'}`}
                         >
                           {item.expr} ={' '}
                           <span
                             className={`font-medium ${entryTypo.resClass} ${
-                              isDark ? 'text-zinc-200' : 'text-zinc-700'
+                              isDark ? 'text-white' : 'text-slate-900'
                             }`}
                           >
                             {item.res}
