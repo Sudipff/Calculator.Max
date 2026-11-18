@@ -64,7 +64,11 @@ import {
 } from '@/lib/reminderService';
 import { useTheme } from '@/components/ThemeProvider';
 import { OfflineWifiIndicator } from '@/components/PwaRuntime';
-import { resolveTaskSourceHistory } from '@/lib/historyProvenance';
+import {
+  resolveTaskSourceHistory,
+  formatCleanBodyText,
+  parseFormattedDetailLines,
+} from '@/lib/historyProvenance';
 
 interface TasksViewProps {
   currentUser: any;
@@ -202,12 +206,13 @@ export default function TasksView({
   const [editDesc, setEditDesc] = useState('');
   const [editDueDate, setEditDueDate] = useState('');
   const [editPriority, setEditPriority] = useState<TaskPriority>('medium');
-  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(true);
   const [isAddingSubtaskInDetail, setIsAddingSubtaskInDetail] = useState(false);
   const [detailSubtaskTitle, setDetailSubtaskTitle] = useState('');
   const [isAddingNoteInDetail, setIsAddingNoteInDetail] = useState(false);
   const [detailQuickNote, setDetailQuickNote] = useState('');
   const [showDetailMenu, setShowDetailMenu] = useState(false);
+  const [showDetailPriorityMenu, setShowDetailPriorityMenu] = useState(false);
+  const [showDetailDueMenu, setShowDetailDueMenu] = useState(false);
   const [liveClockMs, setLiveClockMs] = useState<number>(() => Date.now());
 
   // New List Modal
@@ -216,9 +221,12 @@ export default function TasksView({
 
   const [showManagerMenu, setShowManagerMenu] = useState(false);
 
-  // Long-press refs
+  // Long-press & auto-resize refs
   const managerMenuRef = useRef<HTMLDivElement | null>(null);
   const detailMenuRef = useRef<HTMLDivElement | null>(null);
+  const detailTitleRef = useRef<HTMLTextAreaElement | null>(null);
+  const detailDescRef = useRef<HTMLTextAreaElement | null>(null);
+  const newTaskTitleRef = useRef<HTMLTextAreaElement | null>(null);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isLongPressFiredRef = useRef<boolean>(false);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -231,6 +239,8 @@ export default function TasksView({
       }
       if (showDetailMenu && detailMenuRef.current && !detailMenuRef.current.contains(event.target as Node)) {
         setShowDetailMenu(false);
+        setShowDetailPriorityMenu(false);
+        setShowDetailDueMenu(false);
       }
     };
     document.addEventListener('mousedown', onOutsideClick);
@@ -281,6 +291,31 @@ export default function TasksView({
     }, 15000);
     return () => clearInterval(interval);
   }, [isDetailTaskOpen, isEditingDetail]);
+
+  // Auto-resize task title & description textareas so multi-line titles/details never clip
+  useLayoutEffect(() => {
+    if (!isDetailTaskOpen || !isEditingDetail) return;
+    const syncHeights = () => {
+      if (detailTitleRef.current) {
+        detailTitleRef.current.style.height = 'auto';
+        detailTitleRef.current.style.height = `${detailTitleRef.current.scrollHeight}px`;
+      }
+      if (detailDescRef.current) {
+        detailDescRef.current.style.height = 'auto';
+        detailDescRef.current.style.height = `${Math.max(140, detailDescRef.current.scrollHeight)}px`;
+      }
+    };
+    syncHeights();
+    window.addEventListener('resize', syncHeights);
+    return () => window.removeEventListener('resize', syncHeights);
+  }, [isDetailTaskOpen, isEditingDetail, detailTaskId, editTitle, editDesc]);
+
+  useLayoutEffect(() => {
+    if (!isCreateModalOpen || !newTaskTitleRef.current) return;
+    const el = newTaskTitleRef.current;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [isCreateModalOpen, newTaskTitle]);
 
   // Lock background scroll while partial overlay for creating new tasks is open without hiding main layout
   useEffect(() => {
@@ -404,11 +439,12 @@ export default function TasksView({
     setDetailTaskId(task.id);
     setIsEditingDetail(false);
     setShowDetailMenu(false);
+    setShowDetailPriorityMenu(false);
+    setShowDetailDueMenu(false);
     setEditTitle(task.title);
-    setEditDesc(task.description || '');
+    setEditDesc(formatCleanBodyText(task.description || ''));
     setEditPriority(pri);
     setEditDueDate(task.dueDate ? new Date(task.dueDate).toISOString().slice(0, 16) : '');
-    setIsDescriptionExpanded(true);
     setIsAddingSubtaskInDetail(false);
     setDetailSubtaskTitle('');
     setIsAddingNoteInDetail(false);
@@ -696,7 +732,6 @@ export default function TasksView({
     setEditDesc(combinedDesc);
     setDetailQuickNote('');
     setIsAddingNoteInDetail(false);
-    setIsDescriptionExpanded(true);
 
     if (currentUser?.id) {
       const res = await upsertTaskToSupabase(updatedTask, currentUser.id);
@@ -713,6 +748,32 @@ export default function TasksView({
       ...detailTask,
       priority: nextPriority,
       isStarred: nextPriority === 'high',
+      syncStatus: 'unsynced',
+      updatedAt: new Date().toISOString(),
+    };
+    const updated = tasks.map((t) => (t.id === detailTask.id ? updatedTask : t));
+    setTasks(updated);
+    saveLocalTasks(updated, currentUser?.id);
+
+    if (currentUser?.id) {
+      const res = await upsertTaskToSupabase(updatedTask, currentUser.id);
+      setTasks((prev) => prev.map((t) => (t.id === detailTask.id ? { ...t, syncStatus: res.syncStatus } : t)));
+    }
+  };
+
+  // Update due date directly from Three-Dot Menu
+  const handleChangeDetailDueDate = async (nextLocalValue: string) => {
+    setEditDueDate(nextLocalValue);
+    if (!detailTask) return;
+    const dueIso = nextLocalValue ? new Date(nextLocalValue).toISOString() : null;
+    if (dueIso && alertsEnabled && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      void requestNotificationPermission(currentUser?.id);
+    }
+
+    const updatedTask: TaskItem = {
+      ...detailTask,
+      dueDate: dueIso,
+      reminderAt: dueIso,
       syncStatus: 'unsynced',
       updatedAt: new Date().toISOString(),
     };
@@ -1066,7 +1127,7 @@ export default function TasksView({
                 <ArrowLeft className="w-5 h-5" />
               </button>
             )}
-            <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase truncate">
+            <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight uppercase truncate">
               Tasks Manager
             </h2>
           </div>
@@ -1374,23 +1435,23 @@ export default function TasksView({
         )}
       </div>
 
-      {/* Compact Multi-Column Task Grid */}
+      {/* Clean Multi-Column Task Grid */}
       {loading ? (
         <div
           aria-busy="true"
           aria-label="Loading tasks"
-          className="min-h-[420px] grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3.5 w-full min-w-0 items-start"
+          className="min-h-[420px] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 w-full min-w-0 items-start"
         >
-          {[0, 1, 2, 3].map((slot) => (
+          {[0, 1, 2].map((slot) => (
             <div
               key={slot}
-              className="rounded-2xl p-3 sm:p-3.5 border border-slate-200/70 bg-white/60 min-h-[124px] sm:min-h-[136px] animate-pulse flex flex-col justify-between"
+              className="rounded-2xl p-4 sm:p-5 border border-slate-200/70 bg-white/60 min-h-[140px] sm:min-h-[156px] animate-pulse flex flex-col justify-between"
             >
-              <div className="space-y-2">
-                <div className="h-3.5 w-3/4 rounded-md bg-slate-200/80" />
-                <div className="h-2.5 w-full rounded-md bg-slate-100" />
+              <div className="space-y-2.5">
+                <div className="h-4.5 w-3/4 rounded-md bg-slate-200/80" />
+                <div className="h-3.5 w-full rounded-md bg-slate-100" />
               </div>
-              <div className="h-4 w-16 rounded-md bg-slate-200/70 mt-4" />
+              <div className="h-5 w-16 rounded-md bg-slate-200/70 mt-4" />
             </div>
           ))}
         </div>
@@ -1399,17 +1460,17 @@ export default function TasksView({
           <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto border border-blue-100">
             <ListTodo className="w-6 h-6" />
           </div>
-          <h3 className="text-sm font-bold text-slate-800">
+          <h3 className="text-base font-bold text-slate-800">
             {searchQuery || activeFilter !== 'all' ? 'No matching tasks' : 'No tasks in this list'}
           </h3>
-          <p className="text-xs text-slate-500 leading-relaxed">
+          <p className="text-sm text-slate-500 leading-relaxed">
             {searchQuery || activeFilter !== 'all'
               ? 'Try clearing your search or switching the active filter.'
               : 'Tap the + button below to create a task with priority and due date.'}
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3.5 w-full min-w-0">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 w-full min-w-0 items-stretch">
           {filteredTasks.map((task) => renderTaskCard(task))}
         </div>
       )}
@@ -1476,13 +1537,20 @@ export default function TasksView({
             </div>
 
             <div className="space-y-3">
-              <input
-                type="text"
+              <textarea
+                ref={newTaskTitleRef}
+                rows={1}
                 autoFocus
                 value={newTaskTitle}
-                onChange={(e) => setNewTaskTitle(e.target.value)}
+                onChange={(e) => {
+                  const target = e.target;
+                  target.style.height = 'auto';
+                  target.style.height = `${target.scrollHeight}px`;
+                  setNewTaskTitle(target.value);
+                }}
                 placeholder="Task title (e.g. Finish Q3 Report)"
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                aria-label="Task title"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-base font-bold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 resize-none overflow-hidden whitespace-pre-wrap break-words leading-[1.35]"
               />
 
               <textarea
@@ -1490,7 +1558,7 @@ export default function TasksView({
                 onChange={(e) => setNewTaskDesc(e.target.value)}
                 placeholder="Description or quick note..."
                 rows={3}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 resize-none leading-relaxed"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm sm:text-base text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 resize-none leading-relaxed"
               />
 
               {/* Priority Selector */}
@@ -1598,7 +1666,7 @@ export default function TasksView({
               <time
                 dateTime={detailTask.updatedAt || detailTask.createdAt || undefined}
                 data-item-edit-timestamp="task"
-                className={`text-xs sm:text-[13px] font-semibold tabular-nums tracking-tight truncate select-none ${
+                className={`text-[13px] sm:text-sm font-semibold tabular-nums tracking-tight truncate select-none ${
                   isDark ? 'text-slate-300' : 'text-slate-600'
                 }`}
               >
@@ -1611,394 +1679,578 @@ export default function TasksView({
               </time>
             </div>
 
-            {/* Three-Dot Overflow Menu within Task View (Consolidates Edit/Save, Delete, Complete toggle, Return to History) */}
-            <div ref={detailMenuRef} className="relative shrink-0">
-              <button
-                type="button"
-                id="task-detail-three-dot-btn"
-                onClick={() => setShowDetailMenu((prev) => !prev)}
-                aria-label="Task actions menu"
-                aria-expanded={showDetailMenu}
-                title="Task Actions"
-                className={`min-h-[40px] min-w-[44px] px-2.5 rounded-xl border flex items-center justify-center transition-all cursor-pointer shrink-0 active:scale-95 shadow-2xs ${
-                  showDetailMenu
-                    ? 'bg-slate-900 text-white border-slate-900'
-                    : 'bg-white/85 backdrop-blur-sm border-black/10 text-slate-700 hover:bg-white'
-                }`}
-              >
-                <MoreHorizontal className="w-5 h-5" />
-              </button>
+            {/* Right Controls: Save pill (when editing) + Consolidated Three-Dot Overflow Menu */}
+            <div className="flex items-center gap-2 shrink-0">
+              {isEditingDetail && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await handleSaveDetailChanges();
+                    showNotification({
+                      id: 'tasks-save',
+                      message: 'Task saved',
+                      type: 'success',
+                      duration: 2000,
+                    });
+                  }}
+                  className="min-h-[40px] px-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <span>Save</span>
+                </button>
+              )}
 
-              <AnimatePresence>
-                {showDetailMenu && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -6, scale: 0.9 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -6, scale: 0.9 }}
-                    transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-                    className="absolute right-0 top-full mt-2 w-56 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-2xl overflow-hidden divide-y divide-slate-100 z-50 origin-top-right"
-                  >
-                    {/* 1. Edit / Save */}
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setShowDetailMenu(false);
-                        if (isEditingDetail) {
-                          await handleSaveDetailChanges();
-                          showNotification({
-                            id: 'tasks-save',
-                            message: 'Task saved',
-                            type: 'success',
-                            duration: 2000,
-                          });
-                        } else {
-                          setIsEditingDetail(true);
-                        }
-                      }}
-                      className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 flex items-center gap-3 transition-colors cursor-pointer"
+              <div ref={detailMenuRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  id="task-detail-three-dot-btn"
+                  onClick={() => {
+                    setShowDetailMenu((prev) => {
+                      const next = !prev;
+                      if (!next) {
+                        setShowDetailPriorityMenu(false);
+                        setShowDetailDueMenu(false);
+                      }
+                      return next;
+                    });
+                  }}
+                  aria-label="Task actions menu"
+                  aria-expanded={showDetailMenu}
+                  title="Task Actions"
+                  className={`min-h-[40px] min-w-[44px] px-2.5 rounded-xl border flex items-center justify-center transition-all cursor-pointer shrink-0 active:scale-95 shadow-2xs ${
+                    showDetailMenu
+                      ? 'bg-slate-900 text-white border-slate-900'
+                      : 'bg-white/85 backdrop-blur-sm border-black/10 text-slate-700 hover:bg-white'
+                  }`}
+                >
+                  <MoreHorizontal className="w-5 h-5" />
+                </button>
+
+                <AnimatePresence>
+                  {showDetailMenu && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -6, scale: 0.9 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.9 }}
+                      transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                      className="absolute right-0 top-full mt-2 w-64 max-h-[75dvh] overflow-y-auto bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-2xl divide-y divide-slate-100 z-50 origin-top-right"
                     >
-                      {isEditingDetail ? (
-                        <>
-                          <Save className="w-4 h-4 text-emerald-600 shrink-0" />
-                          <span>Save Changes</span>
-                        </>
-                      ) : (
-                        <>
-                          <Edit3 className="w-4 h-4 text-slate-700 shrink-0" />
-                          <span>Edit</span>
-                        </>
-                      )}
-                    </button>
-
-                    {/* 2. Delete */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        setShowDetailMenu(false);
-                        promptDeleteSingle(detailTask, e);
-                      }}
-                      className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-rose-50 hover:text-rose-700 flex items-center gap-3 transition-colors cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4 text-slate-700 shrink-0" />
-                      <span>Delete</span>
-                    </button>
-
-                    {/* 3. Toggle Complete */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowDetailMenu(false);
-                        void handleToggleComplete(detailTask.id);
-                      }}
-                      className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 flex items-center gap-3 transition-colors cursor-pointer"
-                    >
-                      <CheckCircle2 className="w-4 h-4 text-slate-700 shrink-0" />
-                      <span>{detailTask.completed ? 'Mark as Active' : 'Mark Completed'}</span>
-                    </button>
-
-                    {/* 4. Share */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowDetailMenu(false);
-                        void handleShareTasks([detailTask], true);
-                      }}
-                      className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-sky-50/70 flex items-center gap-3 transition-colors cursor-pointer"
-                    >
-                      <Share2 className="w-4 h-4 text-sky-600 shrink-0" />
-                      <span>Share</span>
-                    </button>
-
-                    {/* 4. Conditional Return to History */}
-                    {activeTaskSourceHistory && (
+                      {/* 1. Edit / Save */}
                       <button
                         type="button"
-                        onClick={() => void handleReturnTaskToHistory()}
-                        disabled={isReturningToHistory}
-                        className="w-full px-4 py-3 text-left text-sm font-semibold text-blue-700 hover:bg-blue-50 flex items-center gap-3 transition-colors cursor-pointer disabled:opacity-50"
+                        onClick={async () => {
+                          setShowDetailMenu(false);
+                          setShowDetailPriorityMenu(false);
+                          setShowDetailDueMenu(false);
+                          if (isEditingDetail) {
+                            await handleSaveDetailChanges();
+                            showNotification({
+                              id: 'tasks-save',
+                              message: 'Task saved',
+                              type: 'success',
+                              duration: 2000,
+                            });
+                          } else {
+                            setIsEditingDetail(true);
+                          }
+                        }}
+                        className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 flex items-center gap-3 transition-colors cursor-pointer"
                       >
-                        <History className="w-4 h-4 text-blue-600 shrink-0" />
-                        <span>{isReturningToHistory ? 'Returning...' : 'Return to History'}</span>
+                        {isEditingDetail ? (
+                          <>
+                            <Save className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <span>Save Changes</span>
+                          </>
+                        ) : (
+                          <>
+                            <Edit3 className="w-4 h-4 text-slate-700 shrink-0" />
+                            <span>Edit Task</span>
+                          </>
+                        )}
                       </button>
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
+
+                      {/* 2. Status Toggle (Active / Completed) */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowDetailMenu(false);
+                          void handleToggleComplete(detailTask.id);
+                        }}
+                        className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 flex items-center justify-between gap-2 transition-colors cursor-pointer"
+                      >
+                        <span className="flex items-center gap-3">
+                          <CheckCircle2 className="w-4 h-4 text-slate-700 shrink-0" />
+                          <span>{detailTask.completed ? 'Mark as Active' : 'Mark Completed'}</span>
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-bold shrink-0 ${
+                            detailTask.completed
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          {detailTask.completed ? 'Completed' : 'Active'}
+                        </span>
+                      </button>
+
+                      {/* 3. Priority Tags Selector inside Menu */}
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowDetailPriorityMenu((prev) => !prev);
+                            setShowDetailDueMenu(false);
+                          }}
+                          aria-expanded={showDetailPriorityMenu}
+                          className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 flex items-center justify-between gap-2 transition-colors cursor-pointer"
+                        >
+                          <span className="flex items-center gap-3">
+                            <Flag className="w-4 h-4 text-slate-700 shrink-0" />
+                            <span>Priority</span>
+                          </span>
+                          <span className="flex items-center gap-1.5 shrink-0">
+                            <span
+                              className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${
+                                getPriorityBadgeConfig(resolvePriority(detailTask)).className
+                              }`}
+                            >
+                              {getPriorityBadgeConfig(resolvePriority(detailTask)).label}
+                            </span>
+                            <ChevronRight
+                              className={`w-4 h-4 text-slate-400 transition-transform duration-150 ${
+                                showDetailPriorityMenu ? 'rotate-90 text-slate-700' : ''
+                              }`}
+                            />
+                          </span>
+                        </button>
+
+                        {showDetailPriorityMenu && (
+                          <div className="px-3 pb-3 pt-1 flex items-center gap-1.5 bg-slate-50/70">
+                            {(['high', 'medium', 'low'] as TaskPriority[]).map((pri) => {
+                              const badge = getPriorityBadgeConfig(pri);
+                              const isCurrent = resolvePriority(detailTask) === pri;
+                              return (
+                                <button
+                                  key={pri}
+                                  type="button"
+                                  onClick={() => {
+                                    void handleChangeDetailPriority(pri);
+                                    setShowDetailPriorityMenu(false);
+                                    setShowDetailMenu(false);
+                                  }}
+                                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                    isCurrent
+                                      ? `${badge.className} ring-2 ring-slate-900/20 shadow-2xs`
+                                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  {badge.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 4. Due Date & Reminder Picker inside Menu */}
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowDetailDueMenu((prev) => !prev);
+                            setShowDetailPriorityMenu(false);
+                          }}
+                          aria-expanded={showDetailDueMenu}
+                          className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 flex items-center justify-between gap-2 transition-colors cursor-pointer"
+                        >
+                          <span className="flex items-center gap-3">
+                            <Clock className="w-4 h-4 text-slate-700 shrink-0" />
+                            <span>Due Date</span>
+                          </span>
+                          <span className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[11px] font-semibold text-slate-500">
+                              {formatDueDateShort(detailTask.dueDate) || 'None'}
+                            </span>
+                            <ChevronRight
+                              className={`w-4 h-4 text-slate-400 transition-transform duration-150 ${
+                                showDetailDueMenu ? 'rotate-90 text-slate-700' : ''
+                              }`}
+                            />
+                          </span>
+                        </button>
+
+                        {showDetailDueMenu && (
+                          <div className="px-3 pb-3 pt-1 space-y-2 bg-slate-50/70">
+                            <input
+                              type="datetime-local"
+                              value={editDueDate}
+                              onChange={(e) => {
+                                void handleChangeDetailDueDate(e.target.value);
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800"
+                            />
+                            {editDueDate && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void handleChangeDetailDueDate('');
+                                  setShowDetailDueMenu(false);
+                                }}
+                                className="w-full py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                              >
+                                Clear Due Date
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 5. Add Subtask */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowDetailMenu(false);
+                          setShowDetailPriorityMenu(false);
+                          setShowDetailDueMenu(false);
+                          setIsAddingSubtaskInDetail(true);
+                          setDetailSubtaskTitle('');
+                        }}
+                        className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 flex items-center gap-3 transition-colors cursor-pointer"
+                      >
+                        <ListTodo className="w-4 h-4 text-slate-700 shrink-0" />
+                        <span>Add Subtask</span>
+                      </button>
+
+                      {/* 6. Add Note */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowDetailMenu(false);
+                          setShowDetailPriorityMenu(false);
+                          setShowDetailDueMenu(false);
+                          setIsAddingNoteInDetail(true);
+                          setDetailQuickNote('');
+                        }}
+                        className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 flex items-center gap-3 transition-colors cursor-pointer"
+                      >
+                        <FileText className="w-4 h-4 text-slate-700 shrink-0" />
+                        <span>Add Note</span>
+                      </button>
+
+                      {/* 7. Share */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowDetailMenu(false);
+                          void handleShareTasks([detailTask], true);
+                        }}
+                        className="w-full px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-sky-50/70 flex items-center gap-3 transition-colors cursor-pointer"
+                      >
+                        <Share2 className="w-4 h-4 text-sky-600 shrink-0" />
+                        <span>Share</span>
+                      </button>
+
+                      {/* 8. Conditional Return to History */}
+                      {activeTaskSourceHistory && (
+                        <button
+                          type="button"
+                          onClick={() => void handleReturnTaskToHistory()}
+                          disabled={isReturningToHistory}
+                          className="w-full px-4 py-3 text-left text-sm font-semibold text-blue-700 hover:bg-blue-50 flex items-center gap-3 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          <History className="w-4 h-4 text-blue-600 shrink-0" />
+                          <span>{isReturningToHistory ? 'Returning...' : 'Return to History'}</span>
+                        </button>
+                      )}
+
+                      {/* 9. Delete */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          setShowDetailMenu(false);
+                          promptDeleteSingle(detailTask, e);
+                        }}
+                        className="w-full px-4 py-3 text-left text-sm font-medium text-rose-700 hover:bg-rose-50 flex items-center gap-3 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span>Delete</span>
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
           </header>
 
-          {/* Detail Body */}
-          <div className="flex-1 overflow-y-auto overscroll-contain w-full max-w-2xl mx-auto px-4 sm:px-6 py-4 space-y-4 pb-[max(2rem,env(safe-area-inset-bottom))]">
-            {/* Title, Checkbox & Metadata Row */}
-            <div className="space-y-3">
-              <div className="flex items-start gap-3">
-                <button
-                  type="button"
-                  onClick={(e) => handleToggleComplete(detailTask.id, e)}
-                  aria-label={detailTask.completed ? 'Mark task incomplete' : 'Mark task complete'}
-                  className="mt-1 shrink-0 cursor-pointer"
-                >
-                  {detailTask.completed ? (
-                    <span className="w-6 h-6 rounded-lg bg-slate-900 text-white flex items-center justify-center shadow-2xs">
-                      <Check className="w-4 h-4 stroke-[3]" />
-                    </span>
-                  ) : (
-                    <span className="w-6 h-6 rounded-lg border-2 border-slate-500 bg-white/90 flex items-center justify-center hover:border-slate-800" />
-                  )}
-                </button>
-
-                {isEditingDetail ? (
-                  <input
-                    type="text"
-                    autoFocus
-                    value={editTitle}
-                    onChange={(e) => {
-                      setEditTitle(e.target.value);
-                      setLiveClockMs(Date.now());
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        void handleSaveDetailChanges();
-                      }
-                    }}
-                    placeholder="Task title"
-                    className="w-full bg-white/90 border border-slate-300 rounded-xl px-3 py-2 text-lg sm:text-2xl font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                ) : (
-                  <h2
-                    className={`text-xl sm:text-2xl font-black tracking-tight leading-snug break-words ${
-                      detailTask.completed ? 'line-through text-slate-500' : 'text-slate-900'
-                    }`}
-                  >
-                    {detailTask.title}
-                  </h2>
-                )}
-              </div>
-
-              {/* Priority Selector & Due Date Status */}
-              <div className="flex flex-wrap items-center gap-2 pl-9">
-                {(['high', 'medium', 'low'] as TaskPriority[]).map((pri) => {
-                  const currentPri = isEditingDetail ? editPriority : resolvePriority(detailTask);
-                  const badge = getPriorityBadgeConfig(pri);
-                  const isCurrent = currentPri === pri;
-                  return (
-                    <button
-                      key={pri}
-                      type="button"
-                      onClick={() => handleChangeDetailPriority(pri)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                        isCurrent
-                          ? `${badge.className} ring-2 ring-slate-900/20 shadow-2xs`
-                          : 'bg-white/75 text-slate-600 border border-black/10 hover:bg-white'
-                      }`}
-                    >
-                      {badge.label}
-                    </button>
-                  );
-                })}
-
-                {isEditingDetail ? (
-                  <input
-                    type="datetime-local"
-                    value={editDueDate}
-                    onChange={(e) => {
-                      setEditDueDate(e.target.value);
-                      setLiveClockMs(Date.now());
-                    }}
-                    className="bg-white/90 border border-slate-300 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-slate-800"
-                  />
-                ) : (
-                  detailTask.dueDate && (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/80 text-slate-700 border border-black/10 text-[11px] font-semibold">
-                      <Clock className="w-3 h-3 text-slate-500" />
-                      <span>Due {formatDueDateShort(detailTask.dueDate)}</span>
-                    </span>
-                  )
-                )}
-
-                <span
-                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold ${
-                    detailTask.completed
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-white/80 text-slate-700 border border-black/10'
-                  }`}
-                >
-                  {detailTask.completed ? 'Completed' : 'Active'}
-                </span>
-              </div>
-            </div>
-
-            {/* Collapsible Description Card */}
-            <div className="bg-white/90 rounded-2xl border border-black/10 shadow-2xs overflow-hidden">
+          {/* Simplified Individual Task Workspace */}
+          <div className="flex-1 overflow-y-auto overscroll-contain w-full max-w-2xl mx-auto px-5 sm:px-8 pt-2 pb-10 space-y-5 pb-[max(2.5rem,env(safe-area-inset-bottom))]">
+            {/* Multi-line Wrapping Title + Completion Checkbox */}
+            <div className="flex items-start gap-3 min-w-0">
               <button
                 type="button"
-                onClick={() => setIsDescriptionExpanded((prev) => !prev)}
-                className="w-full px-4 py-3 flex items-center justify-between text-left cursor-pointer hover:bg-black/[0.02]"
+                onClick={(e) => handleToggleComplete(detailTask.id, e)}
+                aria-label={detailTask.completed ? 'Mark task incomplete' : 'Mark task complete'}
+                className="mt-1.5 shrink-0 cursor-pointer"
               >
-                <span className="text-xs font-extrabold text-slate-900">Description</span>
-                {isDescriptionExpanded ? (
-                  <ChevronUp className="w-4 h-4 text-slate-500" />
+                {detailTask.completed ? (
+                  <span className="w-6.5 h-6.5 rounded-lg bg-slate-900 text-white flex items-center justify-center shadow-2xs">
+                    <Check className="w-4 h-4 stroke-[3]" />
+                  </span>
                 ) : (
-                  <ChevronDown className="w-4 h-4 text-slate-500" />
+                  <span className="w-6.5 h-6.5 rounded-lg border-2 border-slate-500 bg-white/90 flex items-center justify-center hover:border-slate-800" />
                 )}
               </button>
 
-              {isDescriptionExpanded && (
-                <div className="px-4 pb-3.5 pt-0.5">
-                  {isEditingDetail ? (
-                    <textarea
-                      value={editDesc}
-                      onChange={(e) => {
-                        setEditDesc(e.target.value);
-                        setLiveClockMs(Date.now());
-                      }}
-                      rows={4}
-                      placeholder="Add detailed task description or notes..."
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs sm:text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none leading-relaxed"
-                    />
-                  ) : (
-                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">
-                      {detailTask.description?.trim() || 'No description added yet. Tap Edit or Add note below.'}
-                    </p>
-                  )}
-                </div>
+              {isEditingDetail ? (
+                <textarea
+                  ref={detailTitleRef}
+                  rows={1}
+                  autoFocus
+                  value={editTitle}
+                  onChange={(e) => {
+                    const target = e.target;
+                    target.style.height = 'auto';
+                    target.style.height = `${target.scrollHeight}px`;
+                    setEditTitle(target.value);
+                    setLiveClockMs(Date.now());
+                  }}
+                  placeholder="Task title"
+                  aria-label="Task title"
+                  className={`flex-1 min-w-0 bg-transparent border-b-2 border-blue-500/70 py-0.5 text-[26px] sm:text-[32px] font-black tracking-tight leading-[1.25] focus:outline-none resize-none overflow-hidden whitespace-pre-wrap break-words ${
+                    isDark ? 'text-slate-100' : 'text-slate-900'
+                  }`}
+                />
+              ) : (
+                <h2
+                  className={`flex-1 min-w-0 text-[26px] sm:text-[32px] font-black tracking-tight leading-[1.25] whitespace-pre-wrap break-words ${
+                    detailTask.completed
+                      ? isDark
+                        ? 'line-through text-slate-400'
+                        : 'line-through text-slate-500'
+                      : isDark
+                      ? 'text-slate-100'
+                      : 'text-slate-900'
+                  }`}
+                >
+                  {detailTask.title}
+                </h2>
               )}
             </div>
 
-            {/* Subtasks Interactive Section */}
-            <div className="bg-white/90 rounded-2xl border border-black/10 shadow-2xs overflow-hidden">
-              {(detailTask.subtasks || []).length > 0 && (
-                <div className="px-4 pt-3 pb-2 space-y-2 border-b border-slate-100">
-                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                    Subtasks ({(detailTask.subtasks || []).filter((s) => s.completed).length}/
-                    {(detailTask.subtasks || []).length})
-                  </div>
-                  {(detailTask.subtasks || []).map((sub) => (
-                    <div key={sub.id} className="flex items-center justify-between gap-2 py-1">
-                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            {/* Main Body Details (Neatly aligned, prominent & readable) */}
+            <div
+              className={`rounded-2xl border p-4 sm:p-6 shadow-2xs ${
+                isDark
+                  ? 'bg-slate-800/70 border-slate-700/80'
+                  : 'bg-white/90 border-black/10'
+              }`}
+            >
+              {isEditingDetail ? (
+                <textarea
+                  ref={detailDescRef}
+                  value={editDesc}
+                  onChange={(e) => {
+                    const target = e.target;
+                    target.style.height = 'auto';
+                    target.style.height = `${Math.max(140, target.scrollHeight)}px`;
+                    setEditDesc(target.value);
+                    setLiveClockMs(Date.now());
+                  }}
+                  rows={5}
+                  placeholder="Add detailed task description or notes..."
+                  className={`w-full min-h-[140px] bg-transparent text-[19px] sm:text-[22px] placeholder:text-slate-400 focus:outline-none resize-none leading-[1.68] tracking-[-0.005em] whitespace-pre-wrap break-words ${
+                    isDark ? 'text-slate-100' : 'text-slate-800'
+                  }`}
+                />
+              ) : (
+                (() => {
+                  const formattedLines = parseFormattedDetailLines(detailTask.description);
+                  if (formattedLines.length === 0) {
+                    return (
+                      <p
+                        className={`text-[18px] sm:text-[20px] leading-[1.65] ${
+                          isDark ? 'text-slate-400' : 'text-slate-500'
+                        }`}
+                      >
+                        No details added yet. Open the menu (⋯) to edit or add a note.
+                      </p>
+                    );
+                  }
+                  return (
+                    <div className="space-y-2.5">
+                      {formattedLines.map((line, idx) =>
+                        line.isGap ? (
+                          <div key={idx} className="h-1.5" aria-hidden="true" />
+                        ) : line.label ? (
+                          <div
+                            key={idx}
+                            className={`text-[19px] sm:text-[22px] leading-[1.6] tracking-[-0.005em] break-words ${
+                              isDark ? 'text-slate-100' : 'text-slate-800'
+                            }`}
+                          >
+                            <span
+                              className={`font-bold ${
+                                isDark ? 'text-white' : 'text-slate-900'
+                              }`}
+                            >
+                              {line.label}:{' '}
+                            </span>
+                            <span className="font-normal">{line.text}</span>
+                          </div>
+                        ) : (
+                          <p
+                            key={idx}
+                            className={`text-[19px] sm:text-[22px] leading-[1.65] tracking-[-0.005em] whitespace-pre-wrap break-words ${
+                              isDark ? 'text-slate-100' : 'text-slate-800'
+                            }`}
+                          >
+                            {line.text}
+                          </p>
+                        )
+                      )}
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+
+            {/* Subtasks Section (Shown only when subtasks exist or Add Subtask was chosen from 3-dot menu) */}
+            {((detailTask.subtasks || []).length > 0 || isAddingSubtaskInDetail) && (
+              <div
+                className={`rounded-2xl border shadow-2xs overflow-hidden ${
+                  isDark
+                    ? 'bg-slate-800/70 border-slate-700/80'
+                    : 'bg-white/90 border-black/10'
+                }`}
+              >
+                {(detailTask.subtasks || []).length > 0 && (
+                  <div
+                    className={`px-4 sm:px-5 pt-4 pb-3 space-y-2.5 ${
+                      isAddingSubtaskInDetail
+                        ? isDark
+                          ? 'border-b border-slate-700/80'
+                          : 'border-b border-slate-100'
+                        : ''
+                    }`}
+                  >
+                    <div
+                      className={`text-xs sm:text-[13px] font-bold uppercase tracking-wider ${
+                        isDark ? 'text-slate-400' : 'text-slate-500'
+                      }`}
+                    >
+                      Subtasks ({(detailTask.subtasks || []).filter((s) => s.completed).length}/
+                      {(detailTask.subtasks || []).length})
+                    </div>
+                    {(detailTask.subtasks || []).map((sub) => (
+                      <div key={sub.id} className="flex items-start justify-between gap-2.5 py-1.5">
+                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSubtask(detailTask.id, sub.id)}
+                            className="mt-1 text-slate-500 hover:text-blue-600 cursor-pointer shrink-0"
+                          >
+                            {sub.completed ? (
+                              <CheckCircle2 className="w-5 h-5 text-blue-600" />
+                            ) : (
+                              <Circle className="w-5 h-5" />
+                            )}
+                          </button>
+                          <span
+                            className={`text-[17px] sm:text-[19px] leading-snug break-words min-w-0 flex-1 ${
+                              sub.completed
+                                ? 'line-through text-slate-400'
+                                : isDark
+                                ? 'text-slate-100 font-medium'
+                                : 'text-slate-800 font-medium'
+                            }`}
+                          >
+                            {sub.title}
+                          </span>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => handleToggleSubtask(detailTask.id, sub.id)}
-                          className="text-slate-500 hover:text-blue-600 cursor-pointer shrink-0"
+                          onClick={() => handleDeleteSubtask(detailTask.id, sub.id)}
+                          className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer shrink-0"
+                          title="Delete subtask"
                         >
-                          {sub.completed ? (
-                            <CheckCircle2 className="w-4 h-4 text-blue-600" />
-                          ) : (
-                            <Circle className="w-4 h-4" />
-                          )}
+                          <X className="w-4 h-4" />
                         </button>
-                        <span
-                          className={`text-xs sm:text-sm truncate ${
-                            sub.completed ? 'line-through text-slate-400' : 'text-slate-800 font-medium'
-                          }`}
-                        >
-                          {sub.title}
-                        </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteSubtask(detailTask.id, sub.id)}
-                        className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer shrink-0"
-                        title="Delete subtask"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
 
-              {isAddingSubtaskInDetail ? (
-                <div className="p-3 flex items-center gap-2">
-                  <input
-                    type="text"
-                    autoFocus
-                    value={detailSubtaskTitle}
-                    onChange={(e) => setDetailSubtaskTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAddSubtask(detailTask.id, detailSubtaskTitle);
-                      }
-                    }}
-                    placeholder="Subtask title..."
-                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleAddSubtask(detailTask.id, detailSubtaskTitle)}
-                    className="px-3.5 py-2 bg-slate-900 text-white font-bold text-xs rounded-xl cursor-pointer"
-                  >
-                    Add
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingSubtaskInDetail(false)}
-                    className="p-2 text-slate-400 hover:text-slate-700 cursor-pointer"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAddingSubtaskInDetail(true);
-                    setDetailSubtaskTitle('');
-                  }}
-                  className="w-full px-4 py-3 flex items-center gap-2.5 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-black/[0.02] cursor-pointer"
-                >
-                  <Plus className="w-4 h-4 text-slate-600" />
-                  <span>Add subtask</span>
-                </button>
-              )}
-            </div>
-
-            {/* Add Note Action Row */}
-            <div className="bg-white/90 rounded-2xl border border-black/10 shadow-2xs overflow-hidden">
-              {isAddingNoteInDetail ? (
-                <div className="p-3 space-y-2">
-                  <textarea
-                    autoFocus
-                    value={detailQuickNote}
-                    onChange={(e) => setDetailQuickNote(e.target.value)}
-                    rows={2}
-                    placeholder="Write a quick note for this task..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
-                  />
-                  <div className="flex justify-end gap-2">
+                {isAddingSubtaskInDetail && (
+                  <div className="p-3.5 sm:p-4 flex items-center gap-2">
+                    <input
+                      type="text"
+                      autoFocus
+                      value={detailSubtaskTitle}
+                      onChange={(e) => setDetailSubtaskTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddSubtask(detailTask.id, detailSubtaskTitle);
+                        }
+                      }}
+                      placeholder="Subtask title..."
+                      className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-base text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
                     <button
                       type="button"
-                      onClick={() => setIsAddingNoteInDetail(false)}
-                      className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                      onClick={() => handleAddSubtask(detailTask.id, detailSubtaskTitle)}
+                      className="px-4 py-2.5 bg-slate-900 text-white font-bold text-sm rounded-xl cursor-pointer"
                     >
-                      Cancel
+                      Add
                     </button>
                     <button
                       type="button"
-                      onClick={handleAppendNoteInDetail}
-                      disabled={!detailQuickNote.trim()}
-                      className="px-3.5 py-1.5 bg-slate-900 disabled:opacity-40 text-white font-bold text-xs rounded-lg cursor-pointer"
+                      onClick={() => setIsAddingSubtaskInDetail(false)}
+                      className="p-2 text-slate-400 hover:text-slate-700 cursor-pointer"
                     >
-                      Save Note
+                      <X className="w-4 h-4" />
                     </button>
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* Quick Note Composer (Shown only when Add Note is triggered from 3-dot menu) */}
+            {isAddingNoteInDetail && (
+              <div
+                className={`rounded-2xl border shadow-2xs overflow-hidden p-4 space-y-3 ${
+                  isDark
+                    ? 'bg-slate-800/70 border-slate-700/80'
+                    : 'bg-white/90 border-black/10'
+                }`}
+              >
+                <textarea
+                  autoFocus
+                  value={detailQuickNote}
+                  onChange={(e) => setDetailQuickNote(e.target.value)}
+                  rows={3}
+                  placeholder="Write a quick note for this task..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-[17px] sm:text-[19px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none leading-relaxed"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingNoteInDetail(false)}
+                    className="px-3.5 py-1.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAppendNoteInDetail}
+                    disabled={!detailQuickNote.trim()}
+                    className="px-4 py-1.5 bg-slate-900 disabled:opacity-40 text-white font-bold text-sm rounded-lg cursor-pointer"
+                  >
+                    Save Note
+                  </button>
                 </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAddingNoteInDetail(true);
-                    setDetailQuickNote('');
-                  }}
-                  className="w-full px-4 py-3 flex items-center gap-2.5 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-black/[0.02] cursor-pointer"
-                >
-                  <FileText className="w-4 h-4 text-slate-600" />
-                  <span>Add note</span>
-                </button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
             </motion.div>
           )}
@@ -2166,19 +2418,19 @@ export default function TasksView({
           backgroundColor: surface.bg,
           borderColor: isSelected ? '#3b82f6' : surface.border,
         }}
-        className={`group relative rounded-2xl p-3 sm:p-3.5 border transition-all duration-150 hover:shadow-md hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between min-h-[124px] sm:min-h-[136px] shadow-[0_2px_8px_rgba(15,23,42,0.04)] select-none overflow-hidden ${
+        className={`group relative rounded-2xl p-4 sm:p-5 border transition-all duration-150 hover:shadow-md hover:-translate-y-0.5 cursor-pointer flex flex-col justify-between min-h-[140px] sm:min-h-[156px] shadow-[0_2px_8px_rgba(15,23,42,0.04)] select-none overflow-hidden ${
           isSelected ? 'ring-2 ring-blue-500 shadow-md scale-[1.01]' : ''
         }`}
       >
-        {/* Top Section: Checkbox + Concise Title + Preview */}
-        <div className="min-w-0 space-y-1.5">
-          <div className="flex items-start gap-2">
+        {/* Top Section: Checkbox + Multi-line Wrapping Title + Cleanly Aligned Body Preview */}
+        <div className="min-w-0 space-y-2">
+          <div className="flex items-start gap-2.5">
             {selectedTaskIds.length > 0 ? (
               <button
                 type="button"
                 onClick={(e) => handleToggleSelectTask(task.id, e)}
                 aria-label={isSelected ? 'Deselect task' : 'Select task'}
-                className={`mt-0.5 shrink-0 cursor-pointer transition-transform hover:scale-110 ${
+                className={`mt-1 shrink-0 cursor-pointer transition-transform hover:scale-110 ${
                   isSelected ? 'text-blue-600' : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
@@ -2193,7 +2445,7 @@ export default function TasksView({
                 type="button"
                 onClick={(e) => handleToggleComplete(task.id, e)}
                 aria-label={task.completed ? 'Mark task incomplete' : 'Mark task complete'}
-                className="w-7 h-7 -ml-1 -mt-1 rounded-md flex items-center justify-center shrink-0 cursor-pointer active:scale-90 transition-transform"
+                className="w-7 h-7 -ml-1 mt-0.5 rounded-md flex items-center justify-center shrink-0 cursor-pointer active:scale-90 transition-transform"
               >
                 {task.completed ? (
                   <span className="w-5 h-5 rounded-md bg-slate-900 text-white flex items-center justify-center shadow-2xs">
@@ -2206,24 +2458,38 @@ export default function TasksView({
             )}
 
             <h4
-              className={`font-bold text-[13px] sm:text-sm tracking-tight leading-snug line-clamp-2 break-words min-w-0 flex-1 ${
-                task.completed ? 'line-through text-slate-500' : 'text-slate-900'
+              className={`font-bold text-[17px] sm:text-[19px] tracking-tight leading-[1.35] whitespace-pre-wrap break-words min-w-0 flex-1 ${
+                task.completed
+                  ? isDark
+                    ? 'line-through text-slate-400'
+                    : 'line-through text-slate-500'
+                  : isDark
+                  ? 'text-slate-100'
+                  : 'text-slate-900'
               }`}
             >
               {task.title}
             </h4>
           </div>
 
-          {/* Concise Preview Line (Description or Due Date) */}
-          <div className="pl-7 space-y-0.5">
+          {/* Cleanly Aligned Body Preview + Due Date */}
+          <div className="pl-8 space-y-1">
             {task.description && (
-              <p className="text-[11px] text-slate-600 line-clamp-1 leading-snug">
-                {task.description}
+              <p
+                className={`text-[14px] sm:text-[15px] leading-[1.5] whitespace-pre-line line-clamp-3 break-words ${
+                  isDark ? 'text-slate-300' : 'text-slate-700'
+                }`}
+              >
+                {formatCleanBodyText(task.description)}
               </p>
             )}
             <div
-              className={`text-[11px] font-medium truncate ${
-                isOverdue ? 'text-rose-700 font-semibold' : 'text-slate-600'
+              className={`text-xs sm:text-[13px] font-medium truncate ${
+                isOverdue
+                  ? 'text-rose-700 font-semibold'
+                  : isDark
+                  ? 'text-slate-400'
+                  : 'text-slate-600'
               }`}
             >
               {dueLabel ? `${isOverdue ? 'Overdue' : 'Due'} ${dueLabel}` : 'No due date'}
@@ -2232,45 +2498,51 @@ export default function TasksView({
         </div>
 
         {/* Bottom Row: Priority Badge + Status Indicator */}
-        <div className="pt-2.5 mt-auto pl-7 flex items-center justify-between gap-1.5 min-w-0">
+        <div className="pt-3 mt-auto pl-8 flex items-center justify-between gap-2 min-w-0">
           <span
-            className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-bold shrink-0 ${badge.className}`}
+            className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] sm:text-xs font-bold shrink-0 ${badge.className}`}
           >
             {badge.label}
           </span>
 
-          <div className="flex items-center gap-1 text-[10px] font-bold shrink-0">
+          <div className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold shrink-0">
             {currentUser?.id && task.syncStatus === 'unsynced' && (
               <span
                 title="Saved offline — pending cloud sync"
                 className="text-red-500 flex items-center justify-center"
               >
-                <CloudOff className="w-3 h-3" />
+                <CloudOff className="w-3.5 h-3.5" />
               </span>
             )}
             {task.completed ? (
-              <span className="inline-flex items-center gap-0.5 text-emerald-700">
-                <CheckCircle2 className="w-3 h-3" />
+              <span className="inline-flex items-center gap-1 text-emerald-700">
+                <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>Done</span>
               </span>
             ) : subtaskCount > 0 ? (
-              <span className="inline-flex items-center gap-0.5 text-slate-600 tabular-nums">
-                <ListTodo className="w-3 h-3" />
+              <span
+                className={`inline-flex items-center gap-1 tabular-nums ${
+                  isDark ? 'text-slate-300' : 'text-slate-600'
+                }`}
+              >
+                <ListTodo className="w-3.5 h-3.5" />
                 <span>
                   {completedSubCount}/{subtaskCount}
                 </span>
               </span>
             ) : task.reminderAt || task.dueDate ? (
               <span
-                className={`inline-flex items-center gap-0.5 ${
+                className={`inline-flex items-center gap-1 ${
                   isOverdue ? 'text-rose-600' : 'text-slate-500'
                 }`}
                 title={isOverdue ? 'Overdue task' : 'Scheduled task'}
               >
-                <Bell className="w-3 h-3" />
+                <Bell className="w-3.5 h-3.5" />
               </span>
             ) : (
-              <span className="text-slate-500 font-semibold">Active</span>
+              <span className={isDark ? 'text-slate-400 font-semibold' : 'text-slate-500 font-semibold'}>
+                Active
+              </span>
             )}
           </div>
         </div>

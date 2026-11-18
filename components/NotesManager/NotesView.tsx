@@ -52,7 +52,7 @@ import {
   refreshLocalStorageSnapshot,
   triggerStorageFullPopup,
 } from '@/lib/storageSyncClient';
-import { resolveNoteSourceHistory } from '@/lib/historyProvenance';
+import { resolveNoteSourceHistory, formatCleanBodyText } from '@/lib/historyProvenance';
 import { getBackupPermissions } from '@/lib/backupPermissions';
 
 interface NotesViewProps {
@@ -209,6 +209,7 @@ export default function NotesView({
 
   const managerMenuRef = useRef<HTMLDivElement>(null);
   const threeDotMenuRef = useRef<HTMLDivElement>(null);
+  const noteTitleRef = useRef<HTMLTextAreaElement>(null);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isLongPressFiredRef = useRef<boolean>(false);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -280,6 +281,21 @@ export default function NotesView({
     }, 15000);
     return () => clearInterval(interval);
   }, [isEditingNoteOpen]);
+
+  // Auto-resize note title textarea so long or multi-line titles wrap cleanly without clipping
+  const editingNoteTitleValue = editingNote?.title ?? '';
+  const editingNoteIdValue = editingNote?.id ?? '';
+  useLayoutEffect(() => {
+    const el = noteTitleRef.current;
+    if (!el || !isEditingNoteOpen) return;
+    const syncHeight = () => {
+      el.style.height = 'auto';
+      el.style.height = `${el.scrollHeight}px`;
+    };
+    syncHeight();
+    window.addEventListener('resize', syncHeight);
+    return () => window.removeEventListener('resize', syncHeight);
+  }, [isEditingNoteOpen, editingNoteIdValue, editingNoteTitleValue]);
 
   const hasOpenSubOverlay = Boolean(editingNote || confirmDeleteTarget || selectedNoteIds.length > 0);
   useEffect(() => {
@@ -439,8 +455,11 @@ export default function NotesView({
   };
 
   const openExistingNoteEditor = (note: NoteItem) => {
+    const isImportedFromHistory = Boolean(resolveNoteSourceHistory(note));
+    const displayContent = isImportedFromHistory ? formatCleanBodyText(note.content) : note.content;
     setEditingNote({
       ...note,
+      content: displayContent,
       checklistItems: note.checklistItems.map((ci) => ({ ...ci })),
       labels: [...note.labels],
       sourceHistory: note.sourceHistory ? { ...note.sourceHistory } : null,
@@ -986,7 +1005,7 @@ export default function NotesView({
                 <ArrowLeft className="w-5 h-5" />
               </button>
             )}
-            <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase truncate">
+            <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight uppercase truncate">
               Notes Manager
             </h2>
           </div>
@@ -1256,24 +1275,24 @@ export default function NotesView({
         )}
       </div>
 
-      {/* Compact Multi-Column Notes Grid */}
+      {/* Clean Multi-Column Notes Grid */}
       {loading ? (
         <div
           aria-busy="true"
           aria-label="Loading notes"
-          className="min-h-[420px] grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3.5 w-full min-w-0 items-start"
+          className="min-h-[420px] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 w-full min-w-0 items-start"
         >
-          {[0, 1, 2, 3].map((slot) => (
+          {[0, 1, 2].map((slot) => (
             <div
               key={slot}
-              className="rounded-2xl p-3 sm:p-3.5 border border-slate-200/70 bg-white/60 min-h-[132px] sm:min-h-[144px] animate-pulse flex flex-col justify-between"
+              className="rounded-2xl p-4 sm:p-5 border border-slate-200/70 bg-white/60 min-h-[144px] sm:min-h-[160px] animate-pulse flex flex-col justify-between"
             >
-              <div className="space-y-2">
-                <div className="h-3.5 w-3/4 rounded-md bg-slate-200/80" />
-                <div className="h-2.5 w-full rounded-md bg-slate-100" />
-                <div className="h-2.5 w-5/6 rounded-md bg-slate-100" />
+              <div className="space-y-2.5">
+                <div className="h-4.5 w-3/4 rounded-md bg-slate-200/80" />
+                <div className="h-3.5 w-full rounded-md bg-slate-100" />
+                <div className="h-3.5 w-5/6 rounded-md bg-slate-100" />
               </div>
-              <div className="h-4 w-14 rounded-md bg-slate-200/70 mt-4" />
+              <div className="h-5 w-16 rounded-md bg-slate-200/70 mt-4" />
             </div>
           ))}
         </div>
@@ -1282,10 +1301,10 @@ export default function NotesView({
           <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200/60">
             <StickyNote className="w-6 h-6" />
           </div>
-          <h3 className="text-sm font-bold text-slate-800">
+          <h3 className="text-base font-bold text-slate-800">
             {searchQuery || selectedLabel || onlyPinned ? 'No matching notes found' : 'No notes yet'}
           </h3>
-          <p className="text-xs text-slate-500 leading-relaxed">
+          <p className="text-sm text-slate-500 leading-relaxed">
             {searchQuery || selectedLabel || onlyPinned
               ? 'Try clearing your search or filter selection.'
               : 'Tap the + button below to capture formulas, shopping lists, or quick notes.'}
@@ -1295,7 +1314,7 @@ export default function NotesView({
         <LayoutGroup id="notes-grid">
           <motion.div
             layout
-            className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3.5 w-full min-w-0 items-stretch"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 w-full min-w-0 items-stretch"
           >
             <AnimatePresence mode="popLayout" initial={false}>
               {filteredNotes.map((note) => renderNoteCard(note))}
@@ -1363,7 +1382,7 @@ export default function NotesView({
               <time
                 dateTime={editingNote.updatedAt || editingNote.createdAt || undefined}
                 data-item-edit-timestamp="note"
-                className={`text-xs sm:text-[13px] font-semibold tabular-nums tracking-tight truncate select-none ${
+                className={`text-[13px] sm:text-sm font-semibold tabular-nums tracking-tight truncate select-none ${
                   isDark ? 'text-slate-300' : 'text-slate-600'
                 }`}
               >
@@ -1407,7 +1426,7 @@ export default function NotesView({
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -6, scale: 0.9 }}
                     transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-                    className="absolute right-0 top-full mt-2 w-60 sm:w-64 z-50 space-y-2 origin-top-right"
+                    className="absolute right-0 top-full mt-2 w-60 sm:w-64 max-h-[75dvh] overflow-y-auto z-50 space-y-2 origin-top-right"
                   >
                     <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-2xl overflow-hidden divide-y divide-slate-100">
                       {/* 1. Delete */}
@@ -1724,14 +1743,21 @@ export default function NotesView({
 
           {/* Clutter-Free Minimalist Note Content Workspace */}
           <div className="flex-1 overflow-y-auto overscroll-contain w-full max-w-2xl mx-auto px-5 sm:px-8 pt-2 pb-10 flex flex-col gap-4 pb-[max(2.5rem,env(safe-area-inset-bottom))]">
-            <section className="space-y-3.5 flex-1 flex flex-col">
-              <input
-                type="text"
+            <section className="space-y-4 flex-1 flex flex-col min-w-0">
+              <textarea
+                ref={noteTitleRef}
+                rows={1}
                 autoFocus={isNewDraft}
                 value={editingNote.title}
-                onChange={(e) => updateEditingNote((prev) => ({ ...prev, title: e.target.value }))}
+                onChange={(e) => {
+                  const target = e.target;
+                  target.style.height = 'auto';
+                  target.style.height = `${target.scrollHeight}px`;
+                  updateEditingNote((prev) => ({ ...prev, title: target.value }));
+                }}
                 placeholder="Title"
-                className={`w-full bg-transparent font-black text-2xl sm:text-3xl placeholder:text-slate-400 focus:outline-none tracking-tight ${
+                aria-label="Note title"
+                className={`w-full bg-transparent font-black text-[26px] sm:text-[32px] leading-[1.25] py-0.5 placeholder:text-slate-400 focus:outline-none tracking-tight resize-none overflow-hidden whitespace-pre-wrap break-words ${
                   isDark ? 'text-slate-100' : 'text-slate-900'
                 }`}
               />
@@ -1742,14 +1768,14 @@ export default function NotesView({
                   onChange={(e) => updateEditingNote((prev) => ({ ...prev, content: e.target.value }))}
                   placeholder="Start writing your note..."
                   rows={12}
-                  className={`w-full flex-1 min-h-[280px] bg-transparent text-sm sm:text-base placeholder:text-slate-400 focus:outline-none resize-none leading-relaxed ${
-                    isDark ? 'text-slate-200' : 'text-slate-800'
+                  className={`w-full flex-1 min-h-[300px] bg-transparent text-[19px] sm:text-[22px] placeholder:text-slate-400 focus:outline-none resize-none leading-[1.68] tracking-[-0.005em] whitespace-pre-wrap break-words ${
+                    isDark ? 'text-slate-100' : 'text-slate-800'
                   }`}
                 />
               ) : (
                 <div className="bg-white/85 rounded-2xl border border-black/10 divide-y divide-black/5 overflow-hidden shadow-[0_1px_4px_rgba(15,23,42,0.03)]">
                   {editingNote.checklistItems.map((ci) => (
-                    <div key={ci.id} className="flex items-center gap-2.5 px-3 py-2 group">
+                    <div key={ci.id} className="flex items-center gap-2.5 px-3 py-2.5 group">
                       <button
                         type="button"
                         onClick={() => {
@@ -1781,7 +1807,7 @@ export default function NotesView({
                             ),
                           }));
                         }}
-                        className={`flex-1 min-w-0 bg-transparent text-sm sm:text-base focus:outline-none ${
+                        className={`flex-1 min-w-0 bg-transparent text-[19px] sm:text-[21px] leading-snug focus:outline-none ${
                           ci.completed ? 'line-through text-slate-400' : 'text-slate-900 font-medium'
                         }`}
                       />
@@ -1801,7 +1827,7 @@ export default function NotesView({
                     </div>
                   ))}
 
-                  <div className="flex items-center gap-2 px-3 py-2 bg-slate-50/70">
+                  <div className="flex items-center gap-2 px-3 py-2.5 bg-slate-50/70">
                     <Plus className="w-4 h-4 text-slate-400 shrink-0 ml-2.5" />
                     <input
                       type="text"
@@ -1814,7 +1840,7 @@ export default function NotesView({
                         }
                       }}
                       placeholder="Add list item..."
-                      className="flex-1 min-w-0 bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none py-2"
+                      className="flex-1 min-w-0 bg-transparent text-base sm:text-lg text-slate-900 placeholder:text-slate-400 focus:outline-none py-2"
                     />
                     <button
                       type="button"
@@ -1832,7 +1858,7 @@ export default function NotesView({
               {(editingNote.reminderAt || showFullPageReminder) && (
                 <div className="pt-2 space-y-2.5">
                   {editingNote.reminderAt && (
-                    <div className="flex items-center justify-between gap-2 p-2.5 bg-amber-50/95 text-amber-950 rounded-xl border border-amber-200/90 text-xs font-semibold">
+                    <div className="flex items-center justify-between gap-2 p-3 bg-amber-50/95 text-amber-950 rounded-xl border border-amber-200/90 text-sm font-semibold">
                       <span className="flex items-center gap-2 min-w-0">
                         <Clock className="w-4 h-4 text-amber-700 shrink-0" />
                         <span className="truncate">
@@ -2015,14 +2041,14 @@ export default function NotesView({
     const isOverdue = note.reminderAt && new Date(note.reminderAt) < new Date();
     const isSelected = selectedNoteIds.includes(note.id);
 
-    const previewText = note.isChecklist
+    const rawPreviewText = note.isChecklist
       ? note.checklistItems.length > 0
         ? note.checklistItems
-            .slice(0, 3)
+            .slice(0, 4)
             .map((ci) => `${ci.completed ? '✓' : '○'} ${ci.text}`)
-            .join(', ')
+            .join('\n')
         : 'Empty checklist'
-      : note.content.trim() || 'Tap to add details...';
+      : formatCleanBodyText(note.content) || 'Tap to add details...';
 
     const primaryLabel = note.labels[0] || null;
     const extraLabelsCount = note.labels.length > 1 ? note.labels.length - 1 : 0;
@@ -2062,41 +2088,45 @@ export default function NotesView({
         style={{
           backgroundColor: surface.bg,
           borderColor: isSelected ? '#3b82f6' : surface.border,
-          borderRadius: 16,
+          borderRadius: 18,
         }}
-        className={`group relative h-full rounded-2xl p-3 sm:p-3.5 border transition-shadow duration-150 hover:shadow-md cursor-pointer flex flex-col justify-between min-h-[132px] sm:min-h-[144px] shadow-[0_2px_8px_rgba(15,23,42,0.04)] select-none overflow-hidden ${
+        className={`group relative h-full rounded-2xl p-4 sm:p-5 border transition-shadow duration-150 hover:shadow-md cursor-pointer flex flex-col justify-between min-h-[144px] sm:min-h-[160px] shadow-[0_2px_8px_rgba(15,23,42,0.04)] select-none overflow-hidden ${
           isSelected ? 'ring-2 ring-blue-500 shadow-md' : ''
         }`}
       >
-        {/* Top Section: Title + Concise Body Preview */}
-        <div className="min-w-0">
-          <div className="flex items-start justify-between gap-1.5">
-            <div className="flex items-start gap-1.5 min-w-0 flex-1">
+        {/* Top Section: Multi-line Wrapping Title + Cleanly Aligned Body Preview */}
+        <div className="min-w-0 space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2 min-w-0 flex-1">
               {selectedNoteIds.length > 0 && (
                 <button
                   type="button"
                   onClick={(e) => handleToggleSelectNote(note.id, e)}
-                  className={`mt-0.5 rounded-md transition-transform hover:scale-110 cursor-pointer shrink-0 ${
+                  className={`mt-1 rounded-md transition-transform hover:scale-110 cursor-pointer shrink-0 ${
                     isSelected ? 'text-blue-600' : 'text-slate-500 hover:text-slate-700'
                   }`}
                   aria-label={isSelected ? 'Deselect note' : 'Select note'}
                 >
                   {isSelected ? (
-                    <CheckCircle2 className="w-4 h-4 fill-blue-600 text-white" />
+                    <CheckCircle2 className="w-4.5 h-4.5 fill-blue-600 text-white" />
                   ) : (
-                    <Square className="w-4 h-4 bg-white/90 rounded-sm" />
+                    <Square className="w-4.5 h-4.5 bg-white/90 rounded-sm" />
                   )}
                 </button>
               )}
 
-              <h4 className="font-bold text-slate-900 text-[13px] sm:text-sm tracking-tight leading-snug line-clamp-2 break-words">
-                {note.title || 'Untitled Note'}
+              <h4
+                className={`font-bold text-[17px] sm:text-[19px] tracking-tight leading-[1.35] whitespace-pre-wrap break-words min-w-0 flex-1 ${
+                  isDark ? 'text-slate-100' : 'text-slate-900'
+                }`}
+              >
+                {note.title?.trim() || 'Untitled Note'}
               </h4>
             </div>
 
             {note.reminderAt && (
               <span
-                className={`shrink-0 mt-0.5 ${
+                className={`shrink-0 mt-1 ${
                   note.isEmergency
                     ? 'text-rose-600'
                     : isOverdue
@@ -2108,35 +2138,39 @@ export default function NotesView({
                   timeStyle: 'short',
                 })}`}
               >
-                <Bell className="w-3.5 h-3.5" />
+                <Bell className="w-4 h-4" />
               </span>
             )}
           </div>
 
-          <p className="mt-1.5 text-[11px] sm:text-xs text-slate-600 leading-relaxed line-clamp-3 break-words font-normal">
-            {previewText}
+          <p
+            className={`text-[14px] sm:text-[15px] leading-[1.55] whitespace-pre-line line-clamp-4 break-words font-normal ${
+              isDark ? 'text-slate-300' : 'text-slate-700'
+            }`}
+          >
+            {rawPreviewText}
           </p>
         </div>
 
         {/* Footer Row: Color-Coded Tag Pill + Single-Tap Pin Status */}
-        <div className="pt-2.5 mt-auto flex items-center justify-between gap-1.5 min-w-0">
-          <div className="flex items-center gap-1 min-w-0">
+        <div className="pt-3 mt-auto flex items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
             {primaryLabel ? (
               <span
-                className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-bold truncate max-w-[100px] sm:max-w-[120px] ${getTagColorClass(
+                className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold truncate max-w-[140px] sm:max-w-[160px] ${getTagColorClass(
                   primaryLabel
                 )}`}
               >
                 {primaryLabel}
               </span>
             ) : (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-semibold bg-slate-900/10 text-slate-700 truncate">
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold bg-slate-900/10 text-slate-700 truncate">
                 {note.isChecklist ? 'Checklist' : 'Note'}
               </span>
             )}
 
             {extraLabelsCount > 0 && (
-              <span className="text-[10px] font-bold text-slate-500 shrink-0">
+              <span className="text-xs font-bold text-slate-500 shrink-0">
                 +{extraLabelsCount}
               </span>
             )}

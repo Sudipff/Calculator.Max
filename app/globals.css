@@ -477,7 +477,9 @@ html[data-theme='dark'] select {
 }
 
 html[data-theme='dark'] [data-note-editor="true"] input.bg-transparent,
-html[data-theme='dark'] [data-note-editor="true"] textarea.bg-transparent {
+html[data-theme='dark'] [data-note-editor="true"] textarea.bg-transparent,
+html[data-theme='dark'] [data-task-detail="true"] input.bg-transparent,
+html[data-theme='dark'] [data-task-detail="true"] textarea.bg-transparent {
   background-color: transparent !important;
   color: #f8fafc !important;
 }

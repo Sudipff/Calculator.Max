@@ -136,3 +136,68 @@ export function resolveTaskSourceHistory(task?: TaskItem | null): SourceHistoryM
     timestamp: timestamp || undefined,
   };
 }
+
+export interface FormattedDetailLine {
+  label?: string;
+  text: string;
+  isGap?: boolean;
+}
+
+/**
+ * Normalizes saved note/task body strings (converting inline ` | ` parameter separators
+ * into clean line breaks and collapsing excessive blank lines) so saved entries align neatly.
+ */
+export function formatCleanBodyText(raw?: string | null): string {
+  if (!raw) return '';
+  const normalized = raw.replace(/\r\n?/g, '\n');
+  const rawLines = normalized.split('\n');
+  const expanded: string[] = [];
+
+  for (const line of rawLines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (expanded.length > 0 && expanded[expanded.length - 1] !== '') {
+        expanded.push('');
+      }
+      continue;
+    }
+    if (/\s\|\s/.test(trimmed)) {
+      const parts = trimmed
+        .split(/\s*\|\s*/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+      expanded.push(...parts);
+    } else {
+      expanded.push(line.trimEnd());
+    }
+  }
+
+  while (expanded.length > 0 && expanded[0] === '') expanded.shift();
+  while (expanded.length > 0 && expanded[expanded.length - 1] === '') expanded.pop();
+
+  return expanded.join('\n');
+}
+
+/**
+ * Parses body text into cleanly structured lines for detail views, detecting optional `Label: Value`
+ * pairs (e.g. Expression, View Mode, Memory Status, Result, Recorded) without altering plain prose.
+ */
+export function parseFormattedDetailLines(raw?: string | null): FormattedDetailLine[] {
+  const cleaned = formatCleanBodyText(raw);
+  if (!cleaned) return [];
+
+  return cleaned.split('\n').map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return { text: '', isGap: true };
+    }
+    const kvMatch = trimmed.match(/^([A-Za-z][A-Za-z0-9 &/%().-]{1,32}):\s+(.+)$/);
+    if (kvMatch) {
+      return {
+        label: kvMatch[1].trim(),
+        text: kvMatch[2].trim(),
+      };
+    }
+    return { text: line };
+  });
+}

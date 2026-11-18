@@ -347,8 +347,13 @@ export default function HistoryView({
 
     const uid = currentUser?.id;
     const nowIso = new Date().toISOString();
+    const formattedDetailLines = (item.details || '')
+      .split(/\r?\n/)
+      .flatMap((line) => line.split(/\s*\|\s*/))
+      .map((line) => line.trim())
+      .filter(Boolean);
     const lines = [
-      item.details,
+      ...formattedDetailLines,
       '',
       `Result: ${cleanResult}`,
       ...(itemSavings > 0
@@ -453,8 +458,13 @@ export default function HistoryView({
     const lists = getLocalTaskLists(uid);
     const targetListId = lists[0]?.id || 'default-my-tasks';
 
+    const formattedTaskDetails = (item.details || '')
+      .split(/\r?\n/)
+      .flatMap((line) => line.split(/\s*\|\s*/))
+      .map((line) => line.trim())
+      .filter(Boolean);
     const descLines = [
-      item.details,
+      ...formattedTaskDetails,
       ...(itemSavings > 0
         ? [
             `Saved: ${currency}${itemSavings.toLocaleString(undefined, {
