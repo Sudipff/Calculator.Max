@@ -2591,8 +2591,16 @@ export default function RetailCalc() {
   );
 
   return (
-    <div className="min-h-[100dvh] w-full bg-gradient-to-br from-[#eef7ff] via-[#f6faf7] to-[#fdf6ef] text-slate-800 flex flex-col sm:items-center font-sans antialiased m-0 p-0">
-      <div className="mobile-edge-shell w-full max-w-5xl relative flex-1 flex flex-col min-h-[100dvh] m-0 p-0">
+    <div
+      className={`min-h-[100dvh] w-full bg-gradient-to-br from-[#eef7ff] via-[#f6faf7] to-[#fdf6ef] text-slate-800 flex flex-col sm:items-center font-sans antialiased m-0 p-0 ${
+        activeTab === 'calculator' ? 'h-[100dvh] max-h-[100dvh] overflow-hidden' : ''
+      }`}
+    >
+      <div
+        className={`mobile-edge-shell w-full max-w-5xl relative flex-1 flex flex-col min-h-[100dvh] m-0 p-0 ${
+          activeTab === 'calculator' ? 'h-[100dvh] max-h-[100dvh] overflow-hidden' : ''
+        }`}
+      >
         {/* Global Auth & Session Modal Manager (stays mounted across Home and all secondary screens) */}
         <AuthHeader
           headless
@@ -2683,7 +2691,7 @@ export default function RetailCalc() {
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
               className={`w-full min-h-[100dvh] flex-1 flex flex-col ${
                 activeTab === 'calculator'
-                  ? 'p-0 pb-0 sm:px-6 sm:py-3 space-y-0'
+                  ? 'h-[100dvh] max-h-[100dvh] overflow-hidden p-0 pb-0 sm:px-6 sm:py-2 space-y-0'
                   : activeTab === 'home'
                   ? 'p-0 pb-20 space-y-0'
                   : activeTab === 'notes' || activeTab === 'tasks' || activeTab === 'history'
@@ -2807,7 +2815,7 @@ export default function RetailCalc() {
 
               {/* TAB: SCIENTIFIC CALCULATOR */}
               {activeTab === 'calculator' && (
-                <section className="w-full flex-1 flex flex-col m-0 p-0">
+                <section className="w-full h-full max-h-full min-h-0 flex-1 flex flex-col overflow-hidden m-0 p-0">
                   <CalculatorErrorBoundary>
                     <ScientificCalculator
                       triggerVibration={triggerCalcVibration}

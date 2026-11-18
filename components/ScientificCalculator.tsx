@@ -606,24 +606,21 @@ export default function ScientificCalculator({
 
   // Graduated typographic scaling:
   // Main Result (largest) > Active Equation > Newest History > Older History
-  // History height & visible entry count dynamically adapt to available screen height & input growth.
+  // History height & visible entry count are strictly bounded so header, history, display & keypad fit on 1 screen.
   const availableHistoryHeightPx = useMemo(() => {
     const shellBudget = viewportMetrics.isDesktop
-      ? Math.min(Math.max(viewportMetrics.viewportHeight - 24, 660), 880)
+      ? Math.min(Math.max(viewportMetrics.viewportHeight - 16, 480), 820)
       : viewportMetrics.viewportHeight;
-    const chromePadding = viewportMetrics.isDesktop ? 14 : 6;
-    const fallbackBudget = Math.floor(
+    const chromePadding = viewportMetrics.isDesktop ? 28 : 20;
+    const strictBudget = Math.floor(
       shellBudget -
         measuredHeights.topBar -
         measuredHeights.keypad -
         measuredHeights.activeInput -
         chromePadding
     );
-    const measuredDisplayBudget =
-      measuredHeights.displayArea > 0
-        ? Math.floor(measuredHeights.displayArea - measuredHeights.activeInput - 6)
-        : fallbackBudget;
-    return Math.max(0, Math.max(fallbackBudget, measuredDisplayBudget));
+    const maxCap = viewportMetrics.isDesktop ? 120 : 104;
+    return Math.max(0, Math.min(strictBudget, maxCap));
   }, [viewportMetrics, measuredHeights]);
 
   const resLen = mainResultDisplay.length;
@@ -631,27 +628,27 @@ export default function ScientificCalculator({
 
   const mainResultSizeClass =
     resTier === 0
-      ? 'text-[48px] sm:text-[56px] leading-[1.05]'
+      ? 'text-[40px] sm:text-[46px] leading-[1.04]'
       : resTier === 1
-      ? 'text-[38px] sm:text-[46px] leading-[1.08]'
+      ? 'text-[34px] sm:text-[38px] leading-[1.06]'
       : resTier === 2
-      ? 'text-[30px] sm:text-[36px] leading-[1.12]'
-      : 'text-[24px] sm:text-[28px] leading-[1.15]';
+      ? 'text-[28px] sm:text-[32px] leading-[1.1]'
+      : 'text-[22px] sm:text-[26px] leading-[1.14]';
 
   const caretHeightClass =
     resTier === 0
-      ? 'h-11 sm:h-14'
-      : resTier === 1
       ? 'h-9 sm:h-11'
-      : resTier === 2
+      : resTier === 1
       ? 'h-8 sm:h-9'
+      : resTier === 2
+      ? 'h-7 sm:h-8'
       : 'h-6 sm:h-7';
 
   const displayScale = useMemo(() => {
     const exprLen = equationDisplay.length;
     const exprTier = exprLen <= 18 ? 0 : exprLen <= 36 ? 1 : exprLen <= 64 ? 2 : 3;
     const tightBudgetTier =
-      availableHistoryHeightPx < 44 ? 2 : availableHistoryHeightPx < 88 ? 1 : 0;
+      availableHistoryHeightPx < 36 ? 2 : availableHistoryHeightPx < 68 ? 1 : 0;
     const eqTier = Math.min(3, Math.max(exprTier, resTier, tightBudgetTier > 1 ? 1 : 0)) as
       | 0
       | 1
@@ -660,19 +657,19 @@ export default function ScientificCalculator({
 
     const equationClass =
       eqTier === 0
-        ? 'text-[22px] sm:text-[25px] leading-[1.24]'
+        ? 'text-[20px] sm:text-[22px] leading-[1.2]'
         : eqTier === 1
-        ? 'text-[19px] sm:text-[22px] leading-[1.24]'
+        ? 'text-[18px] sm:text-[20px] leading-[1.2]'
         : eqTier === 2
-        ? 'text-[17px] sm:text-[19px] leading-[1.22]'
-        : 'text-[15px] sm:text-[17px] leading-[1.22]';
+        ? 'text-[16px] sm:text-[18px] leading-[1.18]'
+        : 'text-[14px] sm:text-[16px] leading-[1.18]';
 
-    const estimatedRowHeight = eqTier === 0 ? 25 : eqTier === 1 ? 23 : 21;
+    const estimatedRowHeight = eqTier === 0 ? 24 : eqTier === 1 ? 22 : 20;
     const heightBasedLimit =
-      availableHistoryHeightPx < 24
+      availableHistoryHeightPx < 22
         ? 0
-        : Math.max(1, Math.ceil(availableHistoryHeightPx / estimatedRowHeight) + 1);
-    const tierMaxEntries = eqTier === 0 ? 14 : eqTier === 1 ? 10 : eqTier === 2 ? 7 : 4;
+        : Math.max(1, Math.floor(availableHistoryHeightPx / estimatedRowHeight));
+    const tierMaxEntries = eqTier === 0 ? 4 : eqTier === 1 ? 3 : eqTier === 2 ? 2 : 1;
     const entryLimit = Math.min(heightBasedLimit, tierMaxEntries);
 
     return {
@@ -788,7 +785,7 @@ export default function ScientificCalculator({
     : 'bg-white text-slate-900 sm:border sm:border-slate-200/80';
 
   const keyBase =
-    'min-h-[48px] sm:min-h-[54px] rounded-[20px] sm:rounded-[22px] flex items-center justify-center transition-all duration-150 active:scale-[0.94] cursor-pointer select-none touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215]';
+    'min-h-0 h-full rounded-[18px] sm:rounded-[20px] flex items-center justify-center transition-all duration-150 active:scale-[0.94] cursor-pointer select-none touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215]';
 
   const sciKeyClass = isDark
     ? `${keyBase} bg-[#1C1F26] hover:bg-[#252932] text-zinc-300 text-sm sm:text-[15px] font-medium border border-zinc-800/70`
@@ -816,12 +813,12 @@ export default function ScientificCalculator({
 
   if (showHistoryPage) {
     return (
-      <div className="mobile-edge-calc w-full flex-1 flex flex-col sm:max-w-[460px] sm:mx-auto m-0 p-0">
+      <div className="mobile-edge-calc w-full h-[100dvh] max-h-[100dvh] sm:h-[calc(100dvh-1rem)] sm:max-h-[820px] min-h-0 flex-1 flex flex-col overflow-hidden sm:max-w-[460px] sm:mx-auto m-0 p-0">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-          className={`flex-1 flex flex-col rounded-none sm:rounded-[34px] px-4 pt-2.5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-5 sm:shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition-colors ${shellBg}`}
+          className={`flex-1 min-h-0 h-full max-h-full overflow-hidden flex flex-col rounded-none sm:rounded-[32px] px-4 pt-2 pb-[max(0.85rem,env(safe-area-inset-bottom))] sm:p-4 sm:shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition-colors ${shellBg}`}
         >
           {/* Dedicated Histories Top Bar: Back Arrow Left, Histories Title, Clear Action Right */}
           <div className="flex items-center justify-between h-12 shrink-0">
@@ -1054,13 +1051,13 @@ export default function ScientificCalculator({
   }
 
   return (
-    <div className="mobile-edge-calc w-full flex-1 flex flex-col sm:max-w-[460px] sm:mx-auto m-0 p-0">
-      {/* Main Calculator Shell */}
+    <div className="mobile-edge-calc w-full h-[100dvh] max-h-[100dvh] sm:h-[calc(100dvh-1rem)] sm:max-h-[820px] min-h-0 flex-1 flex flex-col overflow-hidden sm:max-w-[460px] sm:mx-auto m-0 p-0">
+      {/* Main Calculator Shell (Locked to single screen without scrolling so header is always visible) */}
       <div
-        className={`flex-1 flex flex-col justify-between rounded-none sm:rounded-[34px] px-4 pt-2.5 pb-[max(0.85rem,env(safe-area-inset-bottom))] sm:p-5 sm:shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition-colors ${shellBg}`}
+        className={`flex-1 min-h-0 h-full max-h-full overflow-hidden flex flex-col justify-between rounded-none sm:rounded-[32px] px-3.5 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] sm:px-5 sm:py-3.5 sm:shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition-colors ${shellBg}`}
       >
         {/* Minimalist Top Bar: Back Arrow Left (Home), No Title, Visible Three-Dot Menu Right */}
-        <div ref={topBarRef} className="flex items-center justify-between h-11 shrink-0 relative z-30">
+        <div ref={topBarRef} className="flex items-center justify-between h-10 sm:h-11 shrink-0 relative z-30">
           <button
             type="button"
             onClick={() => {
@@ -1183,21 +1180,22 @@ export default function ScientificCalculator({
           </div>
         </div>
 
-        {/* Display Area: Height-Adaptive History Above + Graduated Equation & Largest Main Result */}
+        {/* Display Area: Shortened History Above + Graduated Equation & Largest Main Result */}
         <div
           ref={displayAreaRef}
-          className="flex-1 min-h-[168px] sm:min-h-[210px] -mt-1 flex flex-col justify-end overflow-hidden px-1 pb-3.5 pt-0"
+          className="flex-1 min-h-0 flex flex-col justify-end overflow-hidden px-1 pb-2 pt-0"
         >
-          {/* Dynamic History Section: Extends right up toward the three-dot menu & gently fades at the very top edge */}
-          {previewTapeEntries.length > 0 && displayScale.historyMaxHeightPx >= 24 && (
+          {/* Shortened History Section: Fits within remaining single-screen height & gently fades at top */}
+          {previewTapeEntries.length > 0 && displayScale.historyMaxHeightPx >= 22 && (
             <div
               aria-label="Recent calculations preview"
-              className={`flex-1 min-h-0 mb-2 pb-1.5 pt-0.5 border-b overflow-hidden flex flex-col justify-end transition-all duration-200 ${
+              style={{ maxHeight: `${displayScale.historyMaxHeightPx}px` }}
+              className={`flex-1 min-h-0 mb-1.5 pb-1 pt-0.5 border-b overflow-hidden flex flex-col justify-end transition-all duration-200 ${
                 isDark ? 'border-zinc-800/75' : 'border-zinc-300/75'
               } ${
                 previewTapeEntries.length > 1
-                  ? '[mask-image:linear-gradient(to_bottom,transparent_0%,rgba(0,0,0,0.68)_6%,rgba(0,0,0,0.92)_14%,rgba(0,0,0,1)_22%)]'
-                  : '[mask-image:linear-gradient(to_bottom,rgba(0,0,0,0.95)_0%,rgba(0,0,0,1)_10%)]'
+                  ? '[mask-image:linear-gradient(to_bottom,transparent_0%,rgba(0,0,0,0.68)_8%,rgba(0,0,0,0.92)_18%,rgba(0,0,0,1)_28%)]'
+                  : '[mask-image:linear-gradient(to_bottom,rgba(0,0,0,0.95)_0%,rgba(0,0,0,1)_12%)]'
               }`}
             >
               <div className="flex flex-col items-end justify-end gap-0.5">
@@ -1248,7 +1246,7 @@ export default function ScientificCalculator({
           {/* Active Input Area */}
           <div ref={activeInputRef} className="shrink-0">
             {openParenCount > 0 && (
-              <div className="flex justify-end mb-1.5">
+              <div className="flex justify-end mb-1">
                 <span
                   className={`px-2 py-0.5 rounded-md text-xs font-semibold tabular-nums ${
                     isDark ? 'bg-zinc-800 text-zinc-300' : 'bg-black/5 text-zinc-700'
@@ -1272,7 +1270,7 @@ export default function ScientificCalculator({
             )}
 
             {/* Primary Result / Active Value (largest) + Burnt-Orange Caret */}
-            <div className="mt-1.5 flex items-end justify-end gap-1.5">
+            <div className="mt-1 flex items-end justify-end gap-1.5">
               <span
                 className={`font-semibold tabular-nums tracking-tight text-right whitespace-normal break-all transition-all duration-150 ${mainResultSizeClass} ${
                   errorMessage
@@ -1292,9 +1290,9 @@ export default function ScientificCalculator({
 
             {/* Error Feedback Only (No Duplicate Readout Below Result) */}
             {errorMessage && (
-              <div className="mt-2 flex items-center justify-end">
-                <span className="inline-flex items-center gap-1.5 text-rose-500 text-sm font-medium text-right whitespace-normal break-words">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
+              <div className="mt-1.5 flex items-center justify-end">
+                <span className="inline-flex items-center gap-1.5 text-rose-500 text-xs sm:text-sm font-medium text-right whitespace-normal break-words">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                   <span>{errorMessage}</span>
                 </span>
               </div>
@@ -1302,10 +1300,10 @@ export default function ScientificCalculator({
           </div>
         </div>
 
-        {/* Keypad Grid (locked height across Scientific & Standard modes to prevent display shift) */}
+        {/* Keypad Grid (locked responsive height across Scientific & Standard modes to fit single screen) */}
         <div ref={keypadRef} className="shrink-0">
         {calculatorView === 'scientific' ? (
-          <div className="grid grid-cols-5 grid-rows-7 gap-2.5 sm:gap-3 h-[396px] sm:h-[450px] shrink-0">
+          <div className="grid grid-cols-5 grid-rows-7 gap-2 sm:gap-2.5 h-[clamp(304px,48dvh,380px)] sm:h-[clamp(320px,50dvh,400px)] shrink-0">
             {/* Row 1: 2nd, deg, sin, cos, tan */}
             <button
               type="button"
@@ -1560,7 +1558,7 @@ export default function ScientificCalculator({
           </div>
         ) : (
           /* Standard 4-Column Minimalist Keypad (identical height to Scientific grid) */
-          <div className="grid grid-cols-4 grid-rows-5 gap-2.5 sm:gap-3 h-[396px] sm:h-[450px] shrink-0">
+          <div className="grid grid-cols-4 grid-rows-5 gap-2 sm:gap-2.5 h-[clamp(304px,48dvh,380px)] sm:h-[clamp(320px,50dvh,400px)] shrink-0">
             {/* Row 1: C, Backspace, %, ÷ */}
             <button
               type="button"
