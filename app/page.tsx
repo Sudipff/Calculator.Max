@@ -1184,7 +1184,12 @@ export default function RetailCalc() {
       );
 
     const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1 || isOverlayBlockedRef.current || isPullRefreshingRef.current) {
+      if (
+        e.touches.length !== 1 ||
+        activeTabRef.current === 'calculator' ||
+        isOverlayBlockedRef.current ||
+        isPullRefreshingRef.current
+      ) {
         tracking = false;
         return;
       }
@@ -1251,7 +1256,7 @@ export default function RetailCalc() {
     };
   }, []);
 
-  // Right-swipe gesture to return to the Home screen for Age, Scientific, EMI, Discount, Wishlist, Price by Weight, Unit Converter, and Currency Exchange tools
+  // Deliberate left-edge right-swipe gesture to return to the Home screen for Age, Scientific, EMI, Discount, Wishlist, Price by Weight, Unit Converter, and Currency Exchange tools
   const handleTabChangeRef = useRef(handleTabChange);
   useEffect(() => {
     handleTabChangeRef.current = handleTabChange;
@@ -1297,13 +1302,23 @@ export default function RetailCalc() {
       if (isOverlayBlockedRef.current || isPullRefreshingRef.current) return;
 
       const now = Date.now();
-      if (now - lastRightSwipeHandledAtRef.current < 250) return;
+      if (now - lastRightSwipeHandledAtRef.current < 300) return;
 
       const dx = endX - start.x;
       const dy = endY - start.y;
       const elapsed = now - start.time;
+      const minSwipeDistancePx = Math.min(
+        160,
+        Math.max(115, Math.round((typeof window !== 'undefined' ? window.innerWidth : 390) * 0.3))
+      );
 
-      if (elapsed <= 900 && dx >= 56 && dx > Math.abs(dy) * 1.3) {
+      if (
+        elapsed >= 60 &&
+        elapsed <= 850 &&
+        dx >= minSwipeDistancePx &&
+        Math.abs(dy) <= 85 &&
+        dx > Math.abs(dy) * 1.8
+      ) {
         lastRightSwipeHandledAtRef.current = now;
         handleTabChangeRef.current('home');
       }
@@ -1313,6 +1328,7 @@ export default function RetailCalc() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    const LEFT_EDGE_ZONE_PX = 36;
 
     const onSwipeTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1) {
@@ -1323,8 +1339,13 @@ export default function RetailCalc() {
         swipeStartRef.current = null;
         return;
       }
+      const startX = e.touches[0].clientX;
+      if (startX > LEFT_EDGE_ZONE_PX) {
+        swipeStartRef.current = null;
+        return;
+      }
       swipeStartRef.current = {
-        x: e.touches[0].clientX,
+        x: startX,
         y: e.touches[0].clientY,
         time: Date.now(),
         blocked: isRightSwipeIgnoredTarget(e.target),
@@ -2778,24 +2799,7 @@ export default function RetailCalc() {
         </AnimatePresence>
 
         {/* Main Content Area (Invariant outer container prevents 116px upward layout jumps during screen transitions) */}
-        <main
-          className="flex-1 flex flex-col relative overflow-x-clip p-0"
-          onTouchStart={(e) => {
-            if (e.touches.length !== 1) return;
-            if (!RIGHT_SWIPE_HOME_TABS.has(activeTab) || isOverlayBlockedRef.current) return;
-            swipeStartRef.current = {
-              x: e.touches[0].clientX,
-              y: e.touches[0].clientY,
-              time: Date.now(),
-              blocked: isRightSwipeIgnoredTarget(e.target),
-            };
-          }}
-          onTouchEnd={(e) => {
-            if (e.changedTouches.length === 0) return;
-            const t = e.changedTouches[0];
-            evaluateRightSwipeToHome(t.clientX, t.clientY);
-          }}
-        >
+        <main className="flex-1 flex flex-col relative overflow-x-clip p-0">
           {/* Pull-to-Refresh Physical Gesture Indicator (Scoped strictly to active pull/refreshing gesture) */}
           {(pullDistance > 8 || isPullRefreshing) && !isNoteFullScreen && (
             <div

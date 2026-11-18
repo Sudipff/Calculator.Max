@@ -76,24 +76,13 @@ export default function ScientificCalculator({
   const [localHapticEnabled, setLocalHapticEnabled] = useState<boolean>(true);
   const isHapticOn = controlledHapticEnabled ?? localHapticEnabled;
 
-  const [viewportMetrics, setViewportMetrics] = useState<{
-    viewportHeight: number;
-    isDesktop: boolean;
-  }>({ viewportHeight: 844, isDesktop: false });
-  const [measuredHeights, setMeasuredHeights] = useState<{
-    topBar: number;
-    displayArea: number;
-    activeInput: number;
-    keypad: number;
-  }>({ topBar: 44, displayArea: 0, activeInput: 108, keypad: 396 });
-
   const [livePreview, setLivePreview] = useState<string | null>(null);
   const computeReqIdRef = useRef<number>(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const topBarRef = useRef<HTMLDivElement | null>(null);
   const displayAreaRef = useRef<HTMLDivElement | null>(null);
+  const historyScrollRef = useRef<HTMLDivElement | null>(null);
   const activeInputRef = useRef<HTMLDivElement | null>(null);
-  const keypadRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickHistoryToBottomRef = useRef<boolean>(true);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasHydratedTapeRef = useRef<boolean>(false);
@@ -212,61 +201,20 @@ export default function ScientificCalculator({
     return () => window.removeEventListener(HAPTIC_CHANGED_EVENT, onHapticChange);
   }, []);
 
-  // Measure viewport height and active input / chrome heights so history adapts dynamically
+  // Keep scrollable history pinned to bottom when active input grows and pushes the divisor line upward
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const updateViewport = () => {
-      const nextHeight = Math.round(window.visualViewport?.height ?? window.innerHeight);
-      const nextDesktop = window.innerWidth >= 640;
-      setViewportMetrics((prev) =>
-        prev.viewportHeight === nextHeight && prev.isDesktop === nextDesktop
-          ? prev
-          : { viewportHeight: nextHeight, isDesktop: nextDesktop }
-      );
+    if (typeof window === 'undefined' || typeof ResizeObserver === 'undefined') return;
+    const syncScrollOnResize = () => {
+      const container = historyScrollRef.current;
+      if (container && shouldStickHistoryToBottomRef.current) {
+        container.scrollTop = container.scrollHeight;
+      }
     };
-
-    updateViewport();
-    window.addEventListener('resize', updateViewport);
-    window.visualViewport?.addEventListener('resize', updateViewport);
-
-    let observer: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== 'undefined') {
-      const syncElementHeights = () => {
-        const nextTopBar = Math.round(topBarRef.current?.getBoundingClientRect().height || 44);
-        const nextDisplayArea = Math.round(
-          displayAreaRef.current?.getBoundingClientRect().height || 0
-        );
-        const nextActiveInput = Math.round(
-          activeInputRef.current?.getBoundingClientRect().height || 108
-        );
-        const nextKeypad = Math.round(keypadRef.current?.getBoundingClientRect().height || 396);
-        setMeasuredHeights((prev) =>
-          prev.topBar === nextTopBar &&
-          prev.displayArea === nextDisplayArea &&
-          prev.activeInput === nextActiveInput &&
-          prev.keypad === nextKeypad
-            ? prev
-            : {
-                topBar: nextTopBar,
-                displayArea: nextDisplayArea,
-                activeInput: nextActiveInput,
-                keypad: nextKeypad,
-              }
-        );
-      };
-      observer = new ResizeObserver(syncElementHeights);
-      if (topBarRef.current) observer.observe(topBarRef.current);
-      if (displayAreaRef.current) observer.observe(displayAreaRef.current);
-      if (activeInputRef.current) observer.observe(activeInputRef.current);
-      if (keypadRef.current) observer.observe(keypadRef.current);
-      syncElementHeights();
-    }
-
+    const observer = new ResizeObserver(syncScrollOnResize);
+    if (historyScrollRef.current) observer.observe(historyScrollRef.current);
+    if (activeInputRef.current) observer.observe(activeInputRef.current);
     return () => {
-      window.removeEventListener('resize', updateViewport);
-      window.visualViewport?.removeEventListener('resize', updateViewport);
-      observer?.disconnect();
+      observer.disconnect();
     };
   }, [calculatorView, showHistoryPage]);
 
@@ -604,180 +552,32 @@ export default function ScientificCalculator({
     });
   };
 
-  // Graduated typographic scaling:
-  // Main Result (largest) > Active Equation > Newest History > Older History
-  // History height & visible entry count are strictly bounded so header, history, display & keypad fit on 1 screen.
-  const availableHistoryHeightPx = useMemo(() => {
-    const shellBudget = viewportMetrics.isDesktop
-      ? Math.min(Math.max(viewportMetrics.viewportHeight - 16, 480), 820)
-      : viewportMetrics.viewportHeight;
-    const chromePadding = viewportMetrics.isDesktop ? 28 : 20;
-    const strictBudget = Math.floor(
-      shellBudget -
-        measuredHeights.topBar -
-        measuredHeights.keypad -
-        measuredHeights.activeInput -
-        chromePadding
-    );
-    const maxCap = viewportMetrics.isDesktop ? 120 : 104;
-    return Math.max(0, Math.min(strictBudget, maxCap));
-  }, [viewportMetrics, measuredHeights]);
+  // Fixed-size display typography & full scrollable history (oldest at top, newest just above divisor line)
+  const historyEntries = useMemo(() => {
+    return [...priorSource].reverse();
+  }, [priorSource]);
 
-  const resLen = mainResultDisplay.length;
-  const resTier = resLen <= 9 ? 0 : resLen <= 14 ? 1 : resLen <= 20 ? 2 : 3;
-
-  const mainResultSizeClass =
-    resTier === 0
-      ? 'text-[40px] sm:text-[46px] leading-[1.04]'
-      : resTier === 1
-      ? 'text-[34px] sm:text-[38px] leading-[1.06]'
-      : resTier === 2
-      ? 'text-[28px] sm:text-[32px] leading-[1.1]'
-      : 'text-[22px] sm:text-[26px] leading-[1.14]';
-
-  const caretHeightClass =
-    resTier === 0
-      ? 'h-9 sm:h-11'
-      : resTier === 1
-      ? 'h-8 sm:h-9'
-      : resTier === 2
-      ? 'h-7 sm:h-8'
-      : 'h-6 sm:h-7';
-
-  const displayScale = useMemo(() => {
-    const exprLen = equationDisplay.length;
-    const exprTier = exprLen <= 18 ? 0 : exprLen <= 36 ? 1 : exprLen <= 64 ? 2 : 3;
-    const tightBudgetTier =
-      availableHistoryHeightPx < 36 ? 2 : availableHistoryHeightPx < 68 ? 1 : 0;
-    const eqTier = Math.min(3, Math.max(exprTier, resTier, tightBudgetTier > 1 ? 1 : 0)) as
-      | 0
-      | 1
-      | 2
-      | 3;
-
-    const equationClass =
-      eqTier === 0
-        ? 'text-[20px] sm:text-[22px] leading-[1.2]'
-        : eqTier === 1
-        ? 'text-[18px] sm:text-[20px] leading-[1.2]'
-        : eqTier === 2
-        ? 'text-[16px] sm:text-[18px] leading-[1.18]'
-        : 'text-[14px] sm:text-[16px] leading-[1.18]';
-
-    const estimatedRowHeight = eqTier === 0 ? 24 : eqTier === 1 ? 22 : 20;
-    const heightBasedLimit =
-      availableHistoryHeightPx < 22
-        ? 0
-        : Math.max(1, Math.floor(availableHistoryHeightPx / estimatedRowHeight));
-    const tierMaxEntries = eqTier === 0 ? 4 : eqTier === 1 ? 3 : eqTier === 2 ? 2 : 1;
-    const entryLimit = Math.min(heightBasedLimit, tierMaxEntries);
-
-    return {
-      eqTier,
-      entryLimit,
-      historyMaxHeightPx: availableHistoryHeightPx,
-      equationClass,
-    };
-  }, [equationDisplay.length, resTier, availableHistoryHeightPx]);
-
-  const getHistoryEntryTypography = useCallback(
-    (ageFromBottom: number, isLongItem: boolean) => {
-      const effectiveAge = ageFromBottom + (isLongItem ? 1 : 0);
-      const { eqTier } = displayScale;
-
-      if (eqTier === 0) {
-        if (effectiveAge === 0) {
-          return {
-            exprClass: 'text-[18px] sm:text-[20px] leading-[1.24]',
-            resClass: 'text-[19px] sm:text-[21px]',
-            opacity: 0.96,
-          };
-        }
-        if (effectiveAge === 1) {
-          return {
-            exprClass: 'text-[16.5px] sm:text-[18.5px] leading-[1.22]',
-            resClass: 'text-[17.5px] sm:text-[19.5px]',
-            opacity: 0.9,
-          };
-        }
-        if (effectiveAge === 2) {
-          return {
-            exprClass: 'text-[15px] sm:text-[16.5px] leading-[1.2]',
-            resClass: 'text-[16px] sm:text-[17.5px]',
-            opacity: 0.84,
-          };
-        }
-        if (effectiveAge === 3) {
-          return {
-            exprClass: 'text-[14.5px] sm:text-[15.5px] leading-[1.2]',
-            resClass: 'text-[15px] sm:text-[16.5px]',
-            opacity: 0.78,
-          };
-        }
-        return {
-          exprClass: 'text-[14px] sm:text-[15px] leading-[1.18]',
-          resClass: 'text-[14.5px] sm:text-[15.5px]',
-          opacity: Math.max(0.64, 0.74 - (effectiveAge - 4) * 0.04),
-        };
+  // Snap history scroll to newest calculation whenever a new entry is added or active calculation grows
+  useEffect(() => {
+    shouldStickHistoryToBottomRef.current = true;
+    const container = historyScrollRef.current;
+    if (!container) return;
+    requestAnimationFrame(() => {
+      if (historyScrollRef.current) {
+        historyScrollRef.current.scrollTop = historyScrollRef.current.scrollHeight;
       }
+    });
+  }, [historyEntries.length]);
 
-      if (eqTier === 1) {
-        if (effectiveAge === 0) {
-          return {
-            exprClass: 'text-[16.5px] sm:text-[18.5px] leading-[1.22]',
-            resClass: 'text-[17.5px] sm:text-[19.5px]',
-            opacity: 0.95,
-          };
-        }
-        if (effectiveAge === 1) {
-          return {
-            exprClass: 'text-[15px] sm:text-[16.5px] leading-[1.2]',
-            resClass: 'text-[16px] sm:text-[17.5px]',
-            opacity: 0.88,
-          };
-        }
-        return {
-          exprClass: 'text-[14px] sm:text-[15px] leading-[1.18]',
-          resClass: 'text-[14.5px] sm:text-[15.5px]',
-          opacity: Math.max(0.64, 0.8 - (effectiveAge - 2) * 0.05),
-        };
+  useEffect(() => {
+    const container = historyScrollRef.current;
+    if (!container || !shouldStickHistoryToBottomRef.current) return;
+    requestAnimationFrame(() => {
+      if (historyScrollRef.current && shouldStickHistoryToBottomRef.current) {
+        historyScrollRef.current.scrollTop = historyScrollRef.current.scrollHeight;
       }
-
-      if (eqTier === 2) {
-        if (effectiveAge === 0) {
-          return {
-            exprClass: 'text-[15px] sm:text-[16.5px] leading-[1.2]',
-            resClass: 'text-[16px] sm:text-[17.5px]',
-            opacity: 0.94,
-          };
-        }
-        return {
-          exprClass: 'text-[14px] sm:text-[15px] leading-[1.18]',
-          resClass: 'text-[14.5px] sm:text-[15.5px]',
-          opacity: Math.max(0.64, 0.82 - (effectiveAge - 1) * 0.06),
-        };
-      }
-
-      if (effectiveAge === 0) {
-        return {
-          exprClass: 'text-[14px] sm:text-[15px] leading-[1.18]',
-          resClass: 'text-[14.5px] sm:text-[15.5px]',
-          opacity: 0.92,
-        };
-      }
-      return {
-        exprClass: 'text-[13px] sm:text-[14px] leading-[1.16]',
-        resClass: 'text-[13.5px] sm:text-[14.5px]',
-        opacity: 0.72,
-      };
-    },
-    [displayScale]
-  );
-
-  const previewTapeEntries = useMemo(() => {
-    if (displayScale.entryLimit <= 0) return [];
-    return [...priorSource.slice(0, displayScale.entryLimit)].reverse();
-  }, [priorSource, displayScale.entryLimit]);
+    });
+  }, [equationDisplay, mainResultDisplay, openParenCount, errorMessage]);
 
   // Adaptive color classes (Crisp white + soft tinted off-white keys in Light mode; Obsidian in Dark mode)
   const shellBg = isDark
@@ -1057,7 +857,7 @@ export default function ScientificCalculator({
         className={`flex-1 min-h-0 h-full max-h-full overflow-hidden flex flex-col justify-between rounded-none sm:rounded-[32px] px-3.5 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] sm:px-5 sm:py-3.5 sm:shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition-colors ${shellBg}`}
       >
         {/* Minimalist Top Bar: Back Arrow Left (Home), No Title, Visible Three-Dot Menu Right */}
-        <div ref={topBarRef} className="flex items-center justify-between h-10 sm:h-11 shrink-0 relative z-30">
+        <div className="flex items-center justify-between h-10 sm:h-11 shrink-0 relative z-30">
           <button
             type="button"
             onClick={() => {
@@ -1180,71 +980,70 @@ export default function ScientificCalculator({
           </div>
         </div>
 
-        {/* Display Area: Shortened History Above + Graduated Equation & Largest Main Result */}
+        {/* Display Area: Smoothly Scrollable Fixed-Size History Above + Upward-Growing Input Area & Divisor Line */}
         <div
           ref={displayAreaRef}
           className="flex-1 min-h-0 flex flex-col justify-end overflow-hidden px-1 pb-2 pt-0"
         >
-          {/* Shortened History Section: Fits within remaining single-screen height & gently fades at top */}
-          {previewTapeEntries.length > 0 && displayScale.historyMaxHeightPx >= 22 && (
+          {/* Scrollable History Section: Fixed font sizes, fills remaining space & gently fades at top */}
+          {historyEntries.length > 0 && (
             <div
-              aria-label="Recent calculations preview"
-              style={{ maxHeight: `${displayScale.historyMaxHeightPx}px` }}
-              className={`flex-1 min-h-0 mb-1.5 pb-1 pt-0.5 border-b overflow-hidden flex flex-col justify-end transition-all duration-200 ${
-                isDark ? 'border-zinc-800/75' : 'border-zinc-300/75'
-              } ${
-                previewTapeEntries.length > 1
+              ref={historyScrollRef}
+              aria-label="Recent calculations history"
+              data-calc-history-scroll="true"
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+                shouldStickHistoryToBottomRef.current = distanceFromBottom <= 16;
+              }}
+              className={`flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+                historyEntries.length > 1
                   ? '[mask-image:linear-gradient(to_bottom,transparent_0%,rgba(0,0,0,0.68)_8%,rgba(0,0,0,0.92)_18%,rgba(0,0,0,1)_28%)]'
                   : '[mask-image:linear-gradient(to_bottom,rgba(0,0,0,0.95)_0%,rgba(0,0,0,1)_12%)]'
               }`}
             >
-              <div className="flex flex-col items-end justify-end gap-0.5">
-                <AnimatePresence initial={false} mode="popLayout">
-                  {previewTapeEntries.map((item, idx) => {
-                    const ageFromBottom = previewTapeEntries.length - 1 - idx;
-                    const isLongHistoryItem = item.expr.length + item.res.length > 34;
-                    const entryTypo = getHistoryEntryTypography(ageFromBottom, isLongHistoryItem);
-                    return (
-                      <motion.button
-                        key={item.id ?? `${item.expr}-${item.res}-${item.time}-${idx}`}
-                        layout
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: entryTypo.opacity, y: 0 }}
-                        exit={{ opacity: 0, y: -12 }}
-                        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                        type="button"
-                        onClick={() => {
-                          dispatch({ type: 'LOAD_TAPE', res: item.res });
-                        }}
-                        className={`w-full text-right rounded-lg px-1.5 py-0.5 transition-colors cursor-pointer hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] ${
-                          isDark ? 'hover:bg-white/5' : 'hover:bg-black/[0.04]'
+              <div className="min-h-full flex flex-col items-end justify-end gap-1 pb-1.5 pt-2">
+                {historyEntries.map((item, idx) => (
+                  <button
+                    key={item.id ?? `${item.expr}-${item.res}-${item.time}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      dispatch({ type: 'LOAD_TAPE', res: item.res });
+                    }}
+                    className={`w-full text-right rounded-lg px-1.5 py-0.5 transition-colors cursor-pointer opacity-90 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C25215] ${
+                      isDark ? 'hover:bg-white/5' : 'hover:bg-black/[0.04]'
+                    }`}
+                    title="Tap to insert result"
+                  >
+                    <div
+                      className={`text-[16px] sm:text-[17px] leading-[1.3] font-normal tabular-nums whitespace-normal break-words ${
+                        isDark ? 'text-zinc-200' : 'text-slate-700'
+                      }`}
+                    >
+                      {item.expr} ={' '}
+                      <span
+                        className={`text-[17px] sm:text-[18px] font-medium ${
+                          isDark ? 'text-white' : 'text-slate-900'
                         }`}
-                        title="Tap to insert result"
                       >
-                        <div
-                          className={`font-normal tabular-nums whitespace-normal break-words transition-all duration-150 ${
-                            entryTypo.exprClass
-                          } ${isDark ? 'text-zinc-200' : 'text-slate-700'}`}
-                        >
-                          {item.expr} ={' '}
-                          <span
-                            className={`font-medium ${entryTypo.resClass} ${
-                              isDark ? 'text-white' : 'text-slate-900'
-                            }`}
-                          >
-                            {item.res}
-                          </span>
-                        </div>
-                      </motion.button>
-                    );
-                  })}
-                </AnimatePresence>
+                        {item.res}
+                      </span>
+                    </div>
+                  </button>
+                ))}
               </div>
             </div>
           )}
 
-          {/* Active Input Area */}
-          <div ref={activeInputRef} className="shrink-0">
+          {/* Divisor Line + Active Input Area (Moves upward smoothly as calculations grow, keeping text sizes fixed) */}
+          <div
+            ref={activeInputRef}
+            className={`shrink-0 max-h-[68%] overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+              historyEntries.length > 0
+                ? `pt-2 border-t ${isDark ? 'border-zinc-800/80' : 'border-zinc-300/80'}`
+                : ''
+            }`}
+          >
             {openParenCount > 0 && (
               <div className="flex justify-end mb-1">
                 <span
@@ -1258,21 +1057,21 @@ export default function ScientificCalculator({
               </div>
             )}
 
-            {/* Right-Aligned Wrapping Equation (gradually smaller than main result, larger than history) */}
+            {/* Right-Aligned Wrapping Equation (Fixed Size) */}
             {equationDisplay && (
               <div
-                className={`text-right font-normal tabular-nums tracking-tight whitespace-normal break-words transition-all duration-150 ${
-                  displayScale.equationClass
-                } ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}
+                className={`text-right text-[20px] sm:text-[22px] leading-[1.26] font-normal tabular-nums tracking-tight whitespace-normal break-words ${
+                  isDark ? 'text-zinc-300' : 'text-zinc-700'
+                }`}
               >
                 {equationDisplay}
               </div>
             )}
 
-            {/* Primary Result / Active Value (largest) + Burnt-Orange Caret */}
+            {/* Primary Result / Active Value (Fixed Size) + Burnt-Orange Caret */}
             <div className="mt-1 flex items-end justify-end gap-1.5">
               <span
-                className={`font-semibold tabular-nums tracking-tight text-right whitespace-normal break-all transition-all duration-150 ${mainResultSizeClass} ${
+                className={`text-[38px] sm:text-[42px] leading-[1.08] font-semibold tabular-nums tracking-tight text-right whitespace-normal break-all ${
                   errorMessage
                     ? 'text-rose-500'
                     : isDark
@@ -1284,7 +1083,7 @@ export default function ScientificCalculator({
               </span>
               <span
                 aria-hidden="true"
-                className={`w-[2.5px] ${caretHeightClass} mb-1 rounded-full bg-[#C25215] shrink-0 transition-all duration-150`}
+                className="w-[2.5px] h-9 sm:h-10 mb-1 rounded-full bg-[#C25215] shrink-0"
               />
             </div>
 
@@ -1301,7 +1100,7 @@ export default function ScientificCalculator({
         </div>
 
         {/* Keypad Grid (locked responsive height across Scientific & Standard modes to fit single screen) */}
-        <div ref={keypadRef} className="shrink-0">
+        <div className="shrink-0">
         {calculatorView === 'scientific' ? (
           <div className="grid grid-cols-5 grid-rows-7 gap-2 sm:gap-2.5 h-[clamp(304px,48dvh,380px)] sm:h-[clamp(320px,50dvh,400px)] shrink-0">
             {/* Row 1: 2nd, deg, sin, cos, tan */}
