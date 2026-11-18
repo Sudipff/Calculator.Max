@@ -128,6 +128,7 @@ export default function ProfileSettingsView({
   const [appUpdateStatusText, setAppUpdateStatusText] = useState('');
   const [pendingUpdateModal, setPendingUpdateModal] = useState<{
     version: string;
+    currentVersion: string;
     releaseVersion: string;
     title: string;
     notes: string[];
@@ -549,8 +550,9 @@ export default function ProfileSettingsView({
       }
 
       let serverVersion = 'v7';
+      let apiCurrentVersion = '';
       let releaseVersion = 'v2.4.0';
-      let releaseTitle = 'Calculator Max v2.4.0';
+      let releaseTitle = 'Calculator Max';
       let releaseNotes = defaultReleaseNotes;
 
       try {
@@ -563,6 +565,9 @@ export default function ProfileSettingsView({
           const data = await res.json();
           if (typeof data?.version === 'string' && data.version.trim()) {
             serverVersion = data.version.trim();
+          }
+          if (typeof data?.currentVersion === 'string' && data.currentVersion.trim()) {
+            apiCurrentVersion = data.currentVersion.trim();
           }
           if (typeof data?.releaseVersion === 'string' && data.releaseVersion.trim()) {
             releaseVersion = data.releaseVersion.trim();
@@ -577,6 +582,30 @@ export default function ProfileSettingsView({
       } catch {
         // Fallback to built-in release notes metadata
       }
+
+      // Dynamically resolve current installed version vs new available release version
+      const storedInstalledRelease =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('calcmax_installed_release_version')
+          : null;
+
+      const derivePriorVersion = (targetVer: string): string => {
+        const match = targetVer.match(/^v?(\d+)\.(\d+)\.(\d+)$/i);
+        if (!match) return 'v2.3.0';
+        const major = Number(match[1]);
+        const minor = Number(match[2]);
+        const patch = Number(match[3]);
+        if (patch > 0) return `v${major}.${minor}.${patch - 1}`;
+        if (minor > 0) return `v${major}.${minor - 1}.0`;
+        return `v${Math.max(1, major - 1)}.0.0`;
+      };
+
+      const resolvedCurrentVersion =
+        storedInstalledRelease && storedInstalledRelease !== releaseVersion
+          ? storedInstalledRelease
+          : apiCurrentVersion && apiCurrentVersion !== releaseVersion
+          ? apiCurrentVersion
+          : derivePriorVersion(releaseVersion);
 
       // Smooth visible loading check
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -594,6 +623,7 @@ export default function ProfileSettingsView({
         setAppUpdateStatusText(`Update available (${releaseVersion})`);
         setPendingUpdateModal({
           version: confirmedKey,
+          currentVersion: resolvedCurrentVersion,
           releaseVersion,
           title: releaseTitle,
           notes: releaseNotes,
@@ -663,6 +693,7 @@ export default function ProfileSettingsView({
 
       if (typeof window !== 'undefined') {
         localStorage.setItem('calcmax_confirmed_app_version', pendingUpdateModal.version);
+        localStorage.setItem('calcmax_installed_release_version', pendingUpdateModal.releaseVersion);
       }
 
       const installedVer = pendingUpdateModal.releaseVersion;
@@ -1519,20 +1550,25 @@ export default function ProfileSettingsView({
                 >
                   {/* Top Header */}
                   <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-3 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0">
                       <span className="w-11 h-11 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0 border border-indigo-200/80">
-                        <Sparkles className="w-5 h-5" />
+                        <RefreshCw className={`w-5 h-5 ${isInstallingUpdate ? 'animate-spin' : ''}`} />
                       </span>
                       <div className="min-w-0">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/70 text-[10px] font-extrabold uppercase tracking-wider mb-1">
-                          New Version Available · {pendingUpdateModal.releaseVersion}
-                        </span>
-                        <h3
-                          id="app-update-release-notes-title"
-                          className="text-base sm:text-lg font-extrabold text-slate-900 leading-snug"
-                        >
-                          {pendingUpdateModal.title} Release Notes
-                        </h3>
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          <h3
+                            id="app-update-release-notes-title"
+                            className="text-base sm:text-lg font-extrabold text-slate-900 leading-tight"
+                          >
+                            Calculator Max
+                          </h3>
+                          <span className="text-xs font-bold text-slate-500 tabular-nums">
+                            {pendingUpdateModal.currentVersion}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-xs font-extrabold text-indigo-600 tracking-tight tabular-nums">
+                          New Version Available {pendingUpdateModal.releaseVersion}
+                        </p>
                       </div>
                     </div>
 
